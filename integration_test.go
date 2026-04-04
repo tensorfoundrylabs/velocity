@@ -16,7 +16,7 @@ func TestIntegration(_ *testing.T) {
 
 	// Test with fields
 	log.Info("Server started",
-		StringField("addr", ":8080"),
+		String("addr", ":8080"),
 		Int("pid", os.Getpid()),
 		Bool("tls", true),
 	)
@@ -35,18 +35,8 @@ func TestIntegration(_ *testing.T) {
 			WithTheme(theme),
 			WithLevel(LevelInfo),
 		)
-		log.Info("Testing theme", StringField("theme", theme.Name))
+		log.Info("Testing theme", String("theme", theme.Name))
 	}
-}
-
-func TestProgressAndSpinner(_ *testing.T) {
-	// Test progress bar
-	pb := NewProgressBar(os.Stdout, 100, "Processing")
-	pb.Update(50)
-	pb.Complete()
-
-	// Test spinner - just verify it creates without error
-	_ = NewSpinner(os.Stdout, "Loading")
 }
 
 func TestMultiWriterIntegration(t *testing.T) {

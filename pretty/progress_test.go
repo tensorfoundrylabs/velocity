@@ -1,4 +1,4 @@
-package velocity
+package pretty
 
 import (
 	"io"

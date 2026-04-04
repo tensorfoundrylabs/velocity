@@ -34,16 +34,16 @@ func showTheme(theme *velocity.Theme) {
 	)
 
 	// Show all four everyday levels so the colour contrast is obvious.
-	log.Debug("initialising subsystems", velocity.StringField("phase", "boot"))
-	log.Info("service started", velocity.StringField("addr", ":9090"))
+	log.Debug("initialising subsystems", velocity.String("phase", "boot"))
+	log.Info("service started", velocity.String("addr", ":9090"))
 	log.Warn("memory pressure detected", velocity.Int("used_mb", 780))
-	log.Error("health check failed", velocity.StringField("target", "db.internal"))
+	log.Error("health check failed", velocity.String("target", "db.internal"))
 
 	// InfoDetailed forces tree-format for the fields, which shows how each
 	// theme colours key names and values separately.
 	log.InfoDetailed("deployment complete",
-		velocity.StringField("environment", "staging"),
-		velocity.StringField("version", "3.1.0"),
+		velocity.String("environment", "staging"),
+		velocity.String("version", "3.1.0"),
 		velocity.Int("instances", 5),
 		velocity.Duration("rollout", 32*time.Second),
 		velocity.Bool("canary", false),

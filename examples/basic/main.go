@@ -19,22 +19,22 @@ func main() {
 
 	// Logging at different levels. Each one has a distinct colour in the terminal
 	// so you can spot warnings and errors at a glance.
-	log.Debug("checking internal state", velocity.StringField("component", "startup"))
-	log.Info("server is ready", velocity.StringField("addr", ":8080"))
-	log.Warn("configuration missing, using defaults", velocity.StringField("key", "timeout"))
-	log.Error("failed to connect to cache", velocity.StringField("host", "redis:6379"))
+	log.Debug("checking internal state", velocity.String("component", "startup"))
+	log.Info("server is ready", velocity.String("addr", ":8080"))
+	log.Warn("configuration missing, using defaults", velocity.String("key", "timeout"))
+	log.Error("failed to connect to cache", velocity.String("host", "redis:6379"))
 
 	// Typed field constructors keep allocations off the heap on hot paths.
 	// Use the specific constructor when you know the type; F() is fine for
 	// less critical code where convenience matters more.
 	log.Info("request processed",
-		velocity.StringField("method", "GET"),
-		velocity.StringField("path", "/api/users"),
+		velocity.String("method", "GET"),
+		velocity.String("path", "/api/users"),
 		velocity.Int("status", 200),
 		velocity.Float64("latency_ms", 12.4),
 		velocity.Bool("cached", true),
 		velocity.Duration("elapsed", 12*time.Millisecond),
-		velocity.ErrorField("err", nil),
+		velocity.Error("err", nil),
 	)
 
 	// F() detects the type automatically. Handy for quick instrumentation
@@ -48,8 +48,8 @@ func main() {
 	// With() returns a child logger that stamps every subsequent entry with
 	// the given fields. Great for scoping a logger to a request or component.
 	reqLog := log.With(
-		velocity.StringField("request_id", "req-abc-123"),
-		velocity.StringField("user", "alice"),
+		velocity.String("request_id", "req-abc-123"),
+		velocity.String("user", "alice"),
 	)
 	reqLog.Info("handling request")
 	reqLog.Debug("fetching user record", velocity.Int("user_id", 7))
@@ -58,8 +58,8 @@ func main() {
 	// Nested errors show up nicely with ErrorField.
 	dbErr := errors.New("connection refused")
 	reqLog.Error("database query failed",
-		velocity.StringField("query", "SELECT * FROM users"),
-		velocity.ErrorField("err", dbErr),
+		velocity.String("query", "SELECT * FROM users"),
+		velocity.Error("err", dbErr),
 	)
 
 	// SetLevel changes the minimum level dynamically. Anything below the new
@@ -76,8 +76,8 @@ func main() {
 	// InfoDetailed forces a tree-format display for the fields, which is much
 	// easier to read when there are many fields or values are long.
 	log.InfoDetailed("deployment summary",
-		velocity.StringField("environment", "staging"),
-		velocity.StringField("version", "2.4.1"),
+		velocity.String("environment", "staging"),
+		velocity.String("version", "2.4.1"),
 		velocity.Int("replicas", 3),
 		velocity.Duration("rollout_duration", 47*time.Second),
 		velocity.Bool("health_checks_passed", true),
@@ -87,6 +87,6 @@ func main() {
 	// local development: debug level, local timezone, coloured output.
 	devLog := velocity.NewDevelopment()
 	devLog.Info("development preset logger is ready",
-		velocity.StringField("preset", "development"),
+		velocity.String("preset", "development"),
 	)
 }

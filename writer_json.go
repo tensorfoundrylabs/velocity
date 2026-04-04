@@ -151,7 +151,7 @@ func (w *JSONWriter) writeJSONFieldValue(buf *BytesBuffer, f Field) {
 		case math.IsInf(floatValue, -1):
 			buf.WriteString(`"-Infinity"`)
 		default:
-			buf.WriteString(strconv.FormatFloat(floatValue, 'g', 6, 64))
+			buf.WriteString(strconv.FormatFloat(floatValue, 'g', -1, 64))
 		}
 
 	case FieldTypeBool:

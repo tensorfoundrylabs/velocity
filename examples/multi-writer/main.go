@@ -22,7 +22,7 @@ func main() {
 	// A JSON buffer lets us inspect what the JSON writer received after logging.
 	// In a real service this would be a file or a network socket.
 	jsonBuf := &bytes.Buffer{}
-	jsonWriter := log.NewJSONWriter(jsonBuf)
+	jsonWriter := velocity.NewJSONWriter(jsonBuf)
 	log.AddWriter("json", jsonWriter)
 
 	// FilteredWriter wraps another writer and only forwards entries that pass
@@ -30,7 +30,7 @@ func main() {
 	// buffer so we can ship it to an alerting system later.
 	errorBuf := &bytes.Buffer{}
 	errorSink := velocity.NewFilteredWriter(
-		log.NewJSONWriter(errorBuf),
+		velocity.NewJSONWriter(errorBuf),
 		func(e *velocity.Entry) bool {
 			return e.Level >= velocity.LevelError
 		},
@@ -46,11 +46,11 @@ func main() {
 	}))
 
 	// Log at a variety of levels so we can see which writers receive what.
-	log.Debug("Debug detail", velocity.StringField("subsystem", "cache"))
-	log.Info("User signed in", velocity.StringField("user", "ada"), velocity.Int("session", 1))
+	log.Debug("Debug detail", velocity.String("subsystem", "cache"))
+	log.Info("User signed in", velocity.String("user", "ada"), velocity.Int("session", 1))
 	log.Warn("Slow query", velocity.Duration("elapsed", 320*time.Millisecond))
-	log.Error("Payment gateway timeout", velocity.StringField("gateway", "stripe"), velocity.Int("attempt", 3))
-	log.Info("Background job completed", velocity.StringField("job", "email-digest"))
+	log.Error("Payment gateway timeout", velocity.String("gateway", "stripe"), velocity.Int("attempt", 3))
+	log.Info("Background job completed", velocity.String("job", "email-digest"))
 
 	// Remove the counter writer now that we've logged what we need.
 	log.RemoveWriter("counter")

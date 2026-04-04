@@ -1,4 +1,4 @@
-package velocity
+package pretty
 
 import (
 	"fmt"
@@ -302,7 +302,6 @@ func (s *Spinner) render() {
 	defer s.mu.Unlock()
 
 	_, _ = fmt.Fprint(s.writer, "\r\033[K")
-
 	_, _ = fmt.Fprintf(s.writer, "%s %s", s.frames[s.current], s.label)
 
 	s.current = (s.current + 1) % len(s.frames)
@@ -387,6 +386,7 @@ type MultiProgress struct {
 	active   atomic.Bool
 }
 
+// ProgressItem is implemented by types that can render themselves as a progress line.
 type ProgressItem interface {
 	Render() string
 }
@@ -445,7 +445,7 @@ func (mp *MultiProgress) render() {
 		return
 	}
 
-	// Move cursor to start of progress area for in-place updates
+	// Move cursor to start of progress area for in-place updates.
 	if mp.lastDraw.After(time.Time{}) {
 		_, _ = fmt.Fprintf(mp.writer, "\033[%dA", len(mp.items))
 	}

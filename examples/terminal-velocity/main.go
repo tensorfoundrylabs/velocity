@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/pretty"
 )
 
 func main() {
@@ -29,15 +30,17 @@ func main() {
 	)
 	defer func() { _ = log.Close() }()
 
+	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
+
 	stageBanner(log)
-	stageClusterDiscovery(log)
-	stageDeploymentConfig(log)
-	stagePreflightChecks(log)
-	stageModelDistribution(log)
-	failed := stageNodeDeployment(log)
-	stageRecovery(log, failed)
-	stageHealthVerification(log)
-	stageSummary(log, startTime)
+	stageClusterDiscovery(log, p)
+	stageDeploymentConfig(log, p)
+	stagePreflightChecks(log, p)
+	stageModelDistribution(log, p)
+	failed := stageNodeDeployment(log, p)
+	stageRecovery(log, p, failed)
+	stageHealthVerification(log, p)
+	stageSummary(log, p, startTime)
 }
 
 // stageBanner prints the title screen. Simple ASCII art keeps it portable
@@ -56,23 +59,23 @@ func stageBanner(log *velocity.Logger) {
 		"                            /____/               ",
 	}
 
-	banner := velocity.CreateBanner("Terminal Velocity", "0.1.0", "tensorfoundry.io", ascii)
+	banner := pretty.CreateBanner("Terminal Velocity", "0.1.0", "tensorfoundry.io", ascii)
 	log.Banner(strings.Split(strings.TrimRight(banner, "\n"), "\n")...)
 	_, _ = fmt.Fprintln(os.Stdout)
 }
 
 // stageClusterDiscovery scans for available GPU nodes and reports what it finds.
-func stageClusterDiscovery(log *velocity.Logger) {
-	log.Pretty().Section("Cluster Discovery")
+func stageClusterDiscovery(log *velocity.Logger, p *pretty.Pretty) {
+	p.Section("Cluster Discovery")
 
-	spinner := velocity.NewSpinner(os.Stdout, "Scanning network for GPU nodes...")
+	spinner := pretty.NewSpinner(os.Stdout, "Scanning network for GPU nodes...")
 	time.Sleep(1200 * time.Millisecond)
 	spinner.StopWithSuccess("Found 4 nodes with 16 GPUs total")
 
-	log.Pretty().SystemInfo(&velocity.SystemInfo{
+	p.SystemInfo(&pretty.SystemInfo{
 		Title:   "GPU Cluster",
 		Version: "CUDA 13.0",
-		Fields: []velocity.KeyValuePair{
+		Fields: []pretty.KeyValuePair{
 			{Key: "Nodes", Value: "4"},
 			{Key: "GPUs Total", Value: "8 x NVIDIA RTX Pro 6000 96GB"},
 			{Key: "CUDA Version", Value: "13.0"},
@@ -85,29 +88,30 @@ func stageClusterDiscovery(log *velocity.Logger) {
 	log.Info("Cluster discovery complete",
 		velocity.Int("nodes", 4),
 		velocity.Int("gpus", 8),
-		velocity.StringField("cuda", "13.0"),
+		velocity.String("cuda", "13.0"),
 	)
 	_, _ = fmt.Fprintln(os.Stdout)
 }
 
 // stageDeploymentConfig displays the model deployment configuration as a tree.
-func stageDeploymentConfig(log *velocity.Logger) {
-	log.Pretty().Section("Deployment Configuration")
+func stageDeploymentConfig(log *velocity.Logger, p *pretty.Pretty) {
+	p.Section("Deployment Configuration")
 
-	log.Tree("Llama-3.1-70B Deployment Plan", []velocity.TreeItem{
+	log.Info("Llama-3.1-70B Deployment Plan")
+	p.Tree([]pretty.TreeItem{
 		{Key: "Model", Value: "meta-llama/Llama-3.1-70B-Instruct"},
 		{Key: "Replicas", Value: 4},
 		{Key: "GPU Type", Value: "NVIDIA RTX Pro 6000 96GB"},
 		{
 			Key: "Parallelism",
-			Children: []velocity.TreeItem{
+			Children: []pretty.TreeItem{
 				{Key: "Tensor Parallelism", Value: 2},
 				{Key: "Pipeline Parallelism", Value: 1},
 			},
 		},
 		{
 			Key: "Quantisation",
-			Children: []velocity.TreeItem{
+			Children: []pretty.TreeItem{
 				{Key: "Method", Value: "AWQ"},
 				{Key: "Bits", Value: "4-bit"},
 				{Key: "Group Size", Value: 128},
@@ -122,8 +126,8 @@ func stageDeploymentConfig(log *velocity.Logger) {
 
 // stagePreflightChecks runs pre-flight validation across all nodes and reports results.
 // Node-3 fails the disk space check, which foreshadows the deployment failure.
-func stagePreflightChecks(log *velocity.Logger) {
-	log.Pretty().Section("Pre-flight Checks")
+func stagePreflightChecks(log *velocity.Logger, p *pretty.Pretty) {
+	p.Section("Pre-flight Checks")
 
 	sf := log.Status()
 
@@ -146,16 +150,16 @@ func stagePreflightChecks(log *velocity.Logger) {
 		{"Network", "node-3", sf.Okay("OK"), "IB latency 1.2us"},
 	}
 
-	log.Table(
+	p.Table(
 		[]string{"Check", "Node", "Status", "Detail"},
 		rows,
 	)
 
 	// Flag the disk issue immediately so the operator has a chance to notice.
 	log.Warn("node-3 disk space is critically low; deploy will attempt but may fail",
-		velocity.StringField("node", "node-3"),
-		velocity.StringField("available", "18 GB"),
-		velocity.StringField("required", "35 GB"),
+		velocity.String("node", "node-3"),
+		velocity.String("available", "18 GB"),
+		velocity.String("required", "35 GB"),
 	)
 
 	_, _ = fmt.Fprintln(os.Stdout)
@@ -163,16 +167,16 @@ func stagePreflightChecks(log *velocity.Logger) {
 
 // stageModelDistribution downloads model weights and builds inference containers.
 // This is the longest stage because it moves the most data.
-func stageModelDistribution(log *velocity.Logger) {
-	log.Pretty().Section("Model Distribution")
+func stageModelDistribution(log *velocity.Logger, p *pretty.Pretty) {
+	p.Section("Model Distribution")
 
 	// Child logger carries the stage context on every structured entry without
 	// us having to repeat it on every log call.
-	distLog := log.With(velocity.StringField("stage", "distribute"))
+	distLog := log.With(velocity.String("stage", "distribute"))
 
 	const weightBytes int64 = 35_000 // units = MB (35 GB quantised)
 
-	pb := velocity.NewProgressBar(os.Stdout, weightBytes, "Downloading model weights")
+	pb := pretty.NewProgressBar(os.Stdout, weightBytes, "Downloading model weights")
 
 	// Drive the progress bar without logging mid-loop. Mixing log writes with
 	// a progress bar on the same writer causes line-overwrite interleaving.
@@ -192,11 +196,11 @@ func stageModelDistribution(log *velocity.Logger) {
 	// Log the milestone after the bar has finished and emitted its newline.
 	distLog.Info("model weights verified",
 		velocity.Int64("size_mb", weightBytes),
-		velocity.StringField("checksum", "sha256:a3f9...d12e"),
+		velocity.String("checksum", "sha256:a3f9...d12e"),
 	)
 
 	// Container build is quicker but still worth showing.
-	cb := velocity.NewProgressBar(os.Stdout, 15, "Building inference containers")
+	cb := pretty.NewProgressBar(os.Stdout, 15, "Building inference containers")
 	layers := []string{
 		"base: nvcr.io/nvidia/pytorch:24.01",
 		"layer: vllm==0.4.2",
@@ -229,19 +233,19 @@ func stageModelDistribution(log *velocity.Logger) {
 	// Log the per-layer completions now that the bar has finished its line.
 	for i, layer := range completedLayers {
 		distLog.Debug("container layer complete",
-			velocity.StringField("layer", layer),
+			velocity.String("layer", layer),
 			velocity.Int("index", i),
 		)
 	}
 
-	distLog.Info("inference containers ready", velocity.StringField("image", "velocity/llama3-70b-awq:0.1.0"))
+	distLog.Info("inference containers ready", velocity.String("image", "velocity/llama3-70b-awq:0.1.0"))
 	_, _ = fmt.Fprintln(os.Stdout)
 }
 
 // stageNodeDeployment pushes the model to each node in turn.
 // Returns the name of any node that failed, or an empty string for full success.
-func stageNodeDeployment(log *velocity.Logger) string {
-	log.Pretty().Section("Deploying to Nodes")
+func stageNodeDeployment(log *velocity.Logger, p *pretty.Pretty) string {
+	p.Section("Deploying to Nodes")
 
 	nodes := []struct {
 		name     string
@@ -258,30 +262,30 @@ func stageNodeDeployment(log *velocity.Logger) string {
 
 	for _, node := range nodes {
 		nodeLog := log.With(
-			velocity.StringField("node", node.name),
-			velocity.StringField("ip", node.ip),
+			velocity.String("node", node.name),
+			velocity.String("ip", node.ip),
 		)
 
-		spinner := velocity.NewSpinner(os.Stdout, fmt.Sprintf("Deploying to %s (%s)...", node.name, node.ip))
+		spinner := pretty.NewSpinner(os.Stdout, fmt.Sprintf("Deploying to %s (%s)...", node.name, node.ip))
 		time.Sleep(900 * time.Millisecond)
 
 		if node.willFail {
 			spinner.StopWithError(fmt.Sprintf("Deployment to %s failed", node.name))
 
 			nodeLog.ErrorDetailed("container failed to start: insufficient disk space",
-				velocity.StringField("error", "no space left on device"),
-				velocity.StringField("disk_used", "93%"),
-				velocity.StringField("disk_free", "18 GB"),
-				velocity.StringField("required", "35 GB"),
-				velocity.StringField("suggestion", "free space or add a volume"),
+				velocity.String("error", "no space left on device"),
+				velocity.String("disk_used", "93%"),
+				velocity.String("disk_free", "18 GB"),
+				velocity.String("required", "35 GB"),
+				velocity.String("suggestion", "free space or add a volume"),
 			)
 
 			failed = node.name
 		} else {
 			spinner.StopWithSuccess(node.name + " ready, inference endpoint active")
 			nodeLog.Info("node deployment successful",
-				velocity.StringField("endpoint", "http://"+net.JoinHostPort(node.ip, "8080")+"/v1"),
-				velocity.StringField("model", "llama-3.1-70b-awq"),
+				velocity.String("endpoint", "http://"+net.JoinHostPort(node.ip, "8080")+"/v1"),
+				velocity.String("model", "llama-3.1-70b-awq"),
 			)
 		}
 	}
@@ -293,39 +297,39 @@ func stageNodeDeployment(log *velocity.Logger) string {
 // stageRecovery handles the node-3 failure by redistributing its load to node-0.
 // In a real system you would update the load balancer config; here we just
 // log what would happen.
-func stageRecovery(log *velocity.Logger, failedNode string) {
+func stageRecovery(log *velocity.Logger, p *pretty.Pretty, failedNode string) {
 	if failedNode == "" {
 		return
 	}
 
-	log.Pretty().Section("Recovery")
+	p.Section("Recovery")
 
 	recoveryLog := log.With(
-		velocity.StringField("failed_node", failedNode),
-		velocity.StringField("stage", "recovery"),
+		velocity.String("failed_node", failedNode),
+		velocity.String("stage", "recovery"),
 	)
 
 	recoveryLog.Warn("initiating workload reallocation",
-		velocity.StringField("from", failedNode),
-		velocity.StringField("to", "node-0"),
-		velocity.StringField("strategy", "single-node-overflow"),
+		velocity.String("from", failedNode),
+		velocity.String("to", "node-0"),
+		velocity.String("strategy", "single-node-overflow"),
 	)
 
-	spinner := velocity.NewSpinner(os.Stdout, fmt.Sprintf("Reallocating %s workload to node-0...", failedNode))
+	spinner := pretty.NewSpinner(os.Stdout, fmt.Sprintf("Reallocating %s workload to node-0...", failedNode))
 	time.Sleep(1400 * time.Millisecond)
 	spinner.StopWithSuccess("Workload reallocated, node-0 running at 2x replicas")
 
 	recoveryLog.Info("reallocation complete",
-		velocity.StringField("node_0_replicas", "2"),
-		velocity.StringField("lb_config", "updated"),
+		velocity.String("node_0_replicas", "2"),
+		velocity.String("lb_config", "updated"),
 	)
 
 	_, _ = fmt.Fprintln(os.Stdout)
 }
 
 // stageHealthVerification pings every endpoint and shows a summary table.
-func stageHealthVerification(log *velocity.Logger) {
-	log.Pretty().Section("Health Verification")
+func stageHealthVerification(log *velocity.Logger, p *pretty.Pretty) {
+	p.Section("Health Verification")
 
 	sf := log.Status()
 
@@ -337,7 +341,7 @@ func stageHealthVerification(log *velocity.Logger) {
 		{"node-3", "-", sf.Fail("FAILED"), "-", "disk full, out of service"},
 	}
 
-	log.Table(
+	p.Table(
 		[]string{"Node", "Model", "Status", "P50 Latency", "Endpoint"},
 		rows,
 	)
@@ -346,7 +350,7 @@ func stageHealthVerification(log *velocity.Logger) {
 }
 
 // stageSummary prints the final deployment summary box and the completion log line.
-func stageSummary(log *velocity.Logger, started time.Time) {
+func stageSummary(log *velocity.Logger, p *pretty.Pretty, started time.Time) {
 	elapsed := time.Since(started).Round(time.Second)
 
 	content := fmt.Sprintf(
@@ -362,7 +366,7 @@ func stageSummary(log *velocity.Logger, started time.Time) {
 		elapsed,
 	)
 
-	log.Pretty().Box("Deployment Summary", content)
+	p.Box("Deployment Summary", content)
 	_, _ = fmt.Fprintln(os.Stdout)
 
 	log.Info("deployment complete",
@@ -370,10 +374,10 @@ func stageSummary(log *velocity.Logger, started time.Time) {
 		velocity.Int("nodes_healthy", 3),
 		velocity.Int("gpus_total", 16),
 		velocity.Int("gpus_active", 12),
-		velocity.StringField("model", "llama-3.1-70b-awq"),
-		velocity.StringField("status", "degraded-operational"),
+		velocity.String("model", "llama-3.1-70b-awq"),
+		velocity.String("status", "degraded-operational"),
 		velocity.Duration("elapsed", elapsed),
 	)
 
-	log.Pretty().Success("3/4 nodes healthy, inference stack operational. Address node-3 disk space to restore full capacity.")
+	p.Success("3/4 nodes healthy, inference stack operational. Address node-3 disk space to restore full capacity.")
 }

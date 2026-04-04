@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/pretty"
 )
 
 func main() {
@@ -17,7 +18,7 @@ func main() {
 		velocity.WithTheme(velocity.ThemeNightOwl),
 	)
 
-	p := log.Pretty()
+	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
 
 	// Banner shows the tool name using the double-border box built into the logger.
 	// Great for the splash screen at startup.
@@ -29,7 +30,7 @@ func main() {
 		" |____/ \\___| .__/|_|\\___/ \\__, |",
 		"            |_|            |___/ ",
 	}
-	banner := velocity.CreateBanner("Deploy", "4.2.0", "https://deploy.example.com", ascii)
+	banner := pretty.CreateBanner("Deploy", "4.2.0", "https://deploy.example.com", ascii)
 	fmt.Print(banner)
 
 	// Section headers make it easy to scan a long run's output.
@@ -48,10 +49,10 @@ func main() {
 
 	// SystemInfo is a compact block for key-value pairs under a title.
 	// Perfect for printing build metadata or runtime configuration at startup.
-	p.SystemInfo(&velocity.SystemInfo{
+	p.SystemInfo(&pretty.SystemInfo{
 		Title:   "Deploy Tool",
 		Version: "4.2.0",
-		Fields: []velocity.KeyValuePair{
+		Fields: []pretty.KeyValuePair{
 			{Key: "Target cluster", Value: "k8s-staging-au-east-1"},
 			{Key: "Namespace", Value: "app-staging"},
 			{Key: "Image", Value: "registry.example.com/app:v4.2.0"},
@@ -111,27 +112,27 @@ func main() {
 
 	// Tree shows hierarchical relationships. Each TreeItem can have children,
 	// and velocity draws the connecting lines automatically.
-	p.Tree([]velocity.TreeItem{
+	p.Tree([]pretty.TreeItem{
 		{
 			Key: "app (v4.2.0)",
-			Children: []velocity.TreeItem{
+			Children: []pretty.TreeItem{
 				{
 					Key: "postgres (primary)",
-					Children: []velocity.TreeItem{
+					Children: []pretty.TreeItem{
 						{Key: "max_connections", Value: 200},
 						{Key: "pool_size", Value: 20},
 					},
 				},
 				{
 					Key: "redis (cache)",
-					Children: []velocity.TreeItem{
+					Children: []pretty.TreeItem{
 						{Key: "eviction_policy", Value: "allkeys-lru"},
 						{Key: "max_memory", Value: "256mb"},
 					},
 				},
 				{
 					Key: "payments-api (external)",
-					Children: []velocity.TreeItem{
+					Children: []pretty.TreeItem{
 						{Key: "timeout", Value: "5s"},
 						{Key: "retries", Value: 3},
 					},
@@ -153,7 +154,7 @@ func main() {
 	log.Info("pre-flight complete, starting deployment")
 	log.Warn("production namespace check failed, continuing with staging only")
 	log.Info("deployment finished",
-		velocity.StringField("status", "success"),
-		velocity.StringField("environment", "staging"),
+		velocity.String("status", "success"),
+		velocity.String("environment", "staging"),
 	)
 }

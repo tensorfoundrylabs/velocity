@@ -49,7 +49,7 @@ type Field struct {
 func F(key string, value any) Field {
 	switch v := value.(type) {
 	case string:
-		return StringField(key, v)
+		return String(key, v)
 	case int:
 		return Int(key, v)
 	case int64:
@@ -75,12 +75,19 @@ func F(key string, value any) Field {
 	}
 }
 
-func StringField(key, val string) Field {
+func String(key, val string) Field {
 	return Field{
 		Key:   key,
 		Type:  FieldTypeString,
 		value: unsafe.Pointer(&val),
 	}
+}
+
+// StringField is an alias for String kept for backwards compatibility.
+//
+// Deprecated: use String.
+func StringField(key, val string) Field {
+	return String(key, val)
 }
 
 func Int(key string, val int) Field {
@@ -144,13 +151,13 @@ func Milliseconds(key string, val time.Duration) Field {
 	return Float64(key, ms)
 }
 
-func ErrorField(key string, val error) Field {
+func Error(key string, val error) Field {
 	if val == nil {
-		return StringField(key, "<nil>")
+		return String(key, "<nil>")
 	}
 	// Catch typed nils where the interface holds a non-nil type with nil data.
 	if rv := reflect.ValueOf(val); rv.Kind() == reflect.Ptr && rv.IsNil() {
-		return StringField(key, "<nil>")
+		return String(key, "<nil>")
 	}
 	return Field{
 		Key:   key,
@@ -159,17 +166,20 @@ func ErrorField(key string, val error) Field {
 	}
 }
 
-func Error(key string, val error) Field {
-	return ErrorField(key, val)
+// ErrorField is an alias for Error kept for backwards compatibility.
+//
+// Deprecated: use Error.
+func ErrorField(key string, val error) Field {
+	return Error(key, val)
 }
 
 func Stringer(key string, val fmt.Stringer) Field {
 	if val == nil {
-		return StringField(key, "<nil>")
+		return String(key, "<nil>")
 	}
 	// Catch typed nils where the interface holds a non-nil type with nil data.
 	if rv := reflect.ValueOf(val); rv.Kind() == reflect.Ptr && rv.IsNil() {
-		return StringField(key, "<nil>")
+		return String(key, "<nil>")
 	}
 	return Field{
 		Key:   key,

@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/pretty"
 )
 
 func main() {
@@ -18,12 +19,14 @@ func main() {
 	)
 
 	sf := log.Status()
+	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
 
-	// Basic table via the logger. Indentation aligns with the log prefix.
-	fmt.Println("=== Logger Table (indented to match log lines) ===")
+	// Pretty table renders directly without log-line indentation.
+	// Good for standalone reports and dashboards.
+	fmt.Println("=== Pretty Table ===")
 	fmt.Println()
 	log.Info("service health check results")
-	log.Table(
+	p.Table(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
 			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
@@ -37,9 +40,9 @@ func main() {
 
 	// Pretty table renders directly without log-line indentation.
 	// Good for standalone reports and dashboards.
-	fmt.Println("=== Pretty Table (no log prefix) ===")
+	fmt.Println("=== GPU Node Table ===")
 	fmt.Println()
-	log.Pretty().Table(
+	p.Table(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
 			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
@@ -53,7 +56,7 @@ func main() {
 	// Tables work without colour too. Passing nil theme gives plain output.
 	fmt.Println("=== Plain Table (no theme, no colour) ===")
 	fmt.Println()
-	plain := velocity.NewPretty(os.Stdout, nil)
+	plain := pretty.New(os.Stdout, nil)
 	plain.Table(
 		[]string{"Endpoint", "Method", "Calls/sec", "P99"},
 		[][]string{
@@ -68,7 +71,7 @@ func main() {
 	// Wide table with many columns. Columns auto-size to content.
 	fmt.Println("=== Wide Table (auto-sized columns) ===")
 	fmt.Println()
-	log.Pretty().Table(
+	p.Table(
 		[]string{"PID", "User", "CPU%", "Mem%", "VSZ", "RSS", "TTY", "Stat", "Command"},
 		[][]string{
 			{"1", "root", "0.0", "0.1", "168k", "12k", "?", "Ss", "/sbin/init"},

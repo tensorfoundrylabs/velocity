@@ -1,12 +1,10 @@
 package velocity
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +17,6 @@ type Logger struct {
 	bufPool         *BufferPool
 	consoleWriter   *ConsoleWriter
 	jsonWriter      *JSONWriter
-	pretty          *Pretty
 	statusFormatter *StatusFormatter
 
 	// Additional writers added post-initialisation for dynamic log routing
@@ -29,7 +26,6 @@ type Logger struct {
 	// Set by With() and inherited by child loggers.
 	baseFields []Field
 
-	prettyMu  sync.RWMutex
 	writersMu sync.RWMutex
 	level     atomic.Int32
 }
@@ -108,10 +104,16 @@ func NewForTesting(w io.Writer) *Logger {
 }
 
 func (l *Logger) SetLevel(level Level) {
+	if l == nil {
+		return
+	}
 	l.level.Store(int32(level))
 }
 
 func (l *Logger) Level() Level {
+	if l == nil {
+		return LevelOff
+	}
 	return Level(l.level.Load())
 }
 
@@ -130,7 +132,6 @@ func (l *Logger) With(fields ...Field) *Logger {
 		bufPool:           l.bufPool,
 		consoleWriter:     l.consoleWriter,
 		jsonWriter:        l.jsonWriter,
-		pretty:            l.pretty,
 		statusFormatter:   l.statusFormatter,
 		sampler:           l.sampler,
 		additionalWriters: l.additionalWriters,
@@ -345,9 +346,9 @@ func (l *Logger) logDetailed(level Level, msg string, fields ...Field) {
 	l.logInternal(level, msg, true, fields...)
 }
 
-// logEntry dispatches a pre-populated entry to all configured writers.
-// Used by SlogHandler to avoid duplicating writer dispatch logic.
-func (l *Logger) logEntry(e *Entry) {
+// LogEntry dispatches a pre-populated entry to all configured writers.
+// Used by slog bridge and other external adapters.
+func (l *Logger) LogEntry(e *Entry) {
 	if l == nil {
 		return
 	}
@@ -433,57 +434,6 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 	entry.Write() // Marks entry as written (required before Release can return to pool)
 }
 
-// NewConsoleWriter creates a new console writer with the logger's theme.
-func (l *Logger) NewConsoleWriter(out io.Writer) *ConsoleWriter {
-	return NewConsoleWriterWithOptions(out, l.cfg.ConsoleTheme, l.cfg.DisplayTimezone, l.cfg.FieldDisplayMode)
-}
-
-func (*Logger) NewJSONWriter(out io.Writer) *JSONWriter {
-	return NewJSONWriter(out)
-}
-
-func (*Logger) NewMultiWriter() *MultiWriter {
-	return NewMultiWriter()
-}
-
-// Pretty returns the Pretty printer for formatted output.
-// Lazy-initialised on first access to avoid allocations when not used.
-func (l *Logger) Pretty() *Pretty {
-	if l == nil {
-		return NewPretty(os.Stdout, ThemeNightOwl)
-	}
-
-	l.prettyMu.RLock()
-	if l.pretty != nil {
-		l.prettyMu.RUnlock()
-		return l.pretty
-	}
-	l.prettyMu.RUnlock()
-
-	l.prettyMu.Lock()
-	defer l.prettyMu.Unlock()
-
-	// Double-check after acquiring write lock
-	if l.pretty != nil {
-		return l.pretty
-	}
-
-	var writer io.Writer = os.Stdout
-	theme := ThemeNightOwl
-
-	if l.cfg != nil {
-		if l.cfg.ConsoleOutput != nil {
-			writer = l.cfg.ConsoleOutput
-		}
-		if l.cfg.ConsoleTheme != nil {
-			theme = l.cfg.ConsoleTheme
-		}
-	}
-
-	l.pretty = NewPretty(writer, theme)
-	return l.pretty
-}
-
 // Status returns the StatusFormatter for coloured status indicators.
 // Safe to call even if logger is nil - returns a non-coloured formatter.
 func (l *Logger) Status() *StatusFormatter {
@@ -549,7 +499,6 @@ func (l *Logger) WithTemplate(t *Template) *Logger {
 		cfg:               l.cfg,
 		bufPool:           l.bufPool,
 		jsonWriter:        l.jsonWriter,
-		pretty:            l.pretty,
 		statusFormatter:   l.statusFormatter,
 		sampler:           l.sampler,
 		additionalWriters: l.additionalWriters,
@@ -572,224 +521,6 @@ func (l *Logger) WithTemplate(t *Template) *Logger {
 	return newLogger
 }
 
-// TreeItem represents a hierarchical data structure for tree display
-
-type TreeItem struct {
-	Key      string
-	Value    any
-	Children []TreeItem
-}
-
-// Tree displays hierarchical data in a tree structure.
-// Uses box-drawing characters for visual hierarchy.
-// Each line includes its own newline and no extra newlines are added.
-func (l *Logger) Tree(label string, items []TreeItem) {
-	// Default to enabled indentation for backward compatibility
-	l.TreeWithIndent(label, items, true)
-}
-
-// TreeWithIndent displays hierarchical data with optional indentation.
-// When indent is true, tree lines align with regular log message prefixes.
-// Uses box-drawing characters for visual hierarchy.
-// Each line includes its own newline and no extra newlines are added.
-func (l *Logger) TreeWithIndent(label string, items []TreeItem, indent bool) {
-	if l == nil {
-		_, _ = fmt.Fprintf(os.Stdout, "%s\n", label)
-
-		// Calculate prefix width if indentation is enabled even for nil logger
-		var prefix string
-		if indent {
-			// Use default template to calculate width
-			template := TemplateDefault
-
-			// Create a temporary entry to calculate prefix width
-			// For nil logger, default to local timezone for backward compatibility
-			entry := GetEntry()
-			defer entry.Release()
-			entry.SetTime(time.Now().In(time.Local))
-			entry.SetLevel(LevelInfo) // Use INFO level as default for width calculation
-
-			prefixWidth := template.CalculatePrefixWidth(entry)
-			prefix = strings.Repeat(" ", prefixWidth)
-		}
-
-		for i, item := range items {
-			writeTreeItemStandalone(os.Stdout, item, prefix, i == len(items)-1)
-		}
-		return
-	}
-
-	// Try to log the label as a proper info message with timestamp and level
-	// If there's no consoleWriter (e.g., when using bytes.Buffer in tests),
-	// fall back to Raw output
-	if l.consoleWriter != nil {
-		l.Info(label)
-	} else {
-		l.Raw(label + "\n")
-	}
-
-	// Calculate prefix width if indentation is enabled
-	var prefix string
-	if indent {
-		// Try to get template from consoleWriter, fall back to default if not available
-		var template *Template
-		if l.consoleWriter != nil && l.consoleWriter.template != nil {
-			template = l.consoleWriter.template
-		} else if l.cfg != nil {
-			// Create a default template if consoleWriter is nil
-			template = TemplateDefault
-		}
-
-		if template != nil {
-			// Create a temporary entry to calculate prefix width
-			// Use display timezone to ensure consistent width calculation
-			entry := GetEntry()
-			defer entry.Release()
-
-			// Determine the timezone to use for width calculation
-			tz := time.Local
-			if l.consoleWriter != nil && l.consoleWriter.displayTimezone != nil {
-				tz = l.consoleWriter.displayTimezone
-			} else if l.cfg != nil && l.cfg.DisplayTimezone != nil {
-				tz = l.cfg.DisplayTimezone
-			}
-
-			entry.SetTime(time.Now().In(tz))
-			entry.SetLevel(LevelInfo) // Use INFO level as default for width calculation
-
-			prefixWidth := template.CalculatePrefixWidth(entry)
-			prefix = strings.Repeat(" ", prefixWidth)
-		}
-	}
-
-	for i, item := range items {
-		isLast := i == len(items)-1
-		l.writeTreeItem(item, prefix, isLast)
-	}
-}
-
-// writeTreeItem recursively writes a tree item with proper indentation.
-// Tree structure uses box-drawing characters with consistent 4-space indentation.
-func (l *Logger) writeTreeItem(item TreeItem, prefix string, isLast bool) {
-	connector := treeBranch
-	if isLast {
-		connector = treeCorner
-	}
-
-	var line string
-	if item.Value != nil {
-		line = fmt.Sprintf("%s%s%s: %v\n", prefix, connector, item.Key, item.Value)
-	} else {
-		line = fmt.Sprintf("%s%s%s\n", prefix, connector, item.Key)
-	}
-
-	l.Raw(line)
-
-	// Indentation preserves visual hierarchy in tree structure
-	childPrefix := prefix
-	if isLast {
-		childPrefix += treeBlank
-	} else {
-		childPrefix += treePipe
-	}
-
-	for i, child := range item.Children {
-		childIsLast := i == len(item.Children)-1
-		l.writeTreeItem(child, childPrefix, childIsLast)
-	}
-}
-
-// Table displays tabular data with headers and rows.
-// Uses default indentation to align with regular log messages.
-func (l *Logger) Table(headers []string, rows [][]string) {
-	l.TableWithIndent(headers, rows, true)
-}
-
-// TableWithIndent displays tabular data with optional indentation.
-// When indent is true, table lines align with regular log message prefixes.
-// Each line includes its own newline and no extra newlines are added.
-func (l *Logger) TableWithIndent(headers []string, rows [][]string, indent bool) {
-	if l == nil {
-		// Fallback to stdout for nil logger
-		pretty := NewPretty(os.Stdout, ThemeNightOwl)
-		pretty.Table(headers, rows)
-		return
-	}
-
-	// Calculate prefix width if indentation is enabled
-	if indent {
-		var prefix string
-		// Try to get template from consoleWriter, fall back to default if not available
-		var template *Template
-		if l.consoleWriter != nil && l.consoleWriter.template != nil {
-			template = l.consoleWriter.template
-		} else if l.cfg != nil {
-			// Create a default template if consoleWriter is nil
-			template = TemplateDefault
-		}
-
-		if template != nil {
-			// Create a temporary entry to calculate prefix width
-			entry := GetEntry()
-			defer entry.Release()
-			entry.SetTime(time.Now())
-			entry.SetLevel(LevelInfo) // Use INFO level as default for width calculation
-
-			prefixWidth := template.CalculatePrefixWidth(entry) - 1
-			prefix = strings.Repeat(" ", prefixWidth)
-
-			// Capture table output and apply indentation
-			buf := &bytes.Buffer{}
-			pretty := NewPretty(buf, l.Pretty().theme)
-			pretty.Table(headers, rows)
-
-			// Apply indentation to each line
-			output := buf.String()
-			lines := strings.Split(output, "\n")
-			for i, line := range lines {
-				if line != "" {
-					l.Raw(prefix + line)
-				}
-				// Add newline except for the last empty line if present
-				if i < len(lines)-1 {
-					l.Raw("\n")
-				}
-			}
-			return
-		}
-	}
-
-	// No indentation or couldn't calculate prefix - just use Pretty.Table directly
-	l.Pretty().Table(headers, rows)
-}
-
-// Progress and Spinner methods removed - add progress.go if these features are needed
-
-func writeTreeItemStandalone(w io.Writer, item TreeItem, prefix string, isLast bool) {
-	connector := treeBranch
-	if isLast {
-		connector = treeCorner
-	}
-
-	if item.Value != nil {
-		_, _ = fmt.Fprintf(w, "%s%s%s: %v\n", prefix, connector, item.Key, item.Value)
-	} else {
-		_, _ = fmt.Fprintf(w, "%s%s%s\n", prefix, connector, item.Key)
-	}
-
-	childPrefix := prefix
-	if isLast {
-		childPrefix += treeBlank
-	} else {
-		childPrefix += treePipe
-	}
-
-	for i, child := range item.Children {
-		childIsLast := i == len(item.Children)-1
-		writeTreeItemStandalone(w, child, childPrefix, childIsLast)
-	}
-}
-
 func NopLogger() *Logger {
 	cfg := DefaultConfig()
 	cfg.ConsoleOutput = io.Discard
@@ -797,63 +528,4 @@ func NopLogger() *Logger {
 	cfg.ConsoleLevel = LevelOff
 	cfg.StructuredLevel = LevelOff
 	return NewWithConfig(cfg)
-}
-
-func CreateBanner(title, version, url string, ascii []string) string {
-	var b strings.Builder
-	maxLen := 0
-
-	for _, line := range ascii {
-		if len(line) > maxLen {
-			maxLen = len(line)
-		}
-	}
-	if len(title)+len(version)+3 > maxLen {
-		maxLen = len(title) + len(version) + 3
-	}
-	if len(url) > maxLen {
-		maxLen = len(url)
-	}
-
-	boxWidth := maxLen + 4
-
-	b.WriteString("╔")
-	b.WriteString(strings.Repeat("═", boxWidth-2))
-	b.WriteString("╗\n")
-
-	for _, line := range ascii {
-		b.WriteString("║ ")
-		b.WriteString(line)
-		b.WriteString(strings.Repeat(" ", maxLen-len(line)))
-		b.WriteString(" ║\n")
-	}
-
-	if len(ascii) > 0 {
-		b.WriteString("╠")
-		b.WriteString(strings.Repeat("═", boxWidth-2))
-		b.WriteString("╣\n")
-	}
-
-	titleLine := fmt.Sprintf("%s v%s", title, version)
-	padding := (maxLen - len(titleLine)) / 2
-	b.WriteString("║ ")
-	b.WriteString(strings.Repeat(" ", padding))
-	b.WriteString(titleLine)
-	b.WriteString(strings.Repeat(" ", maxLen-len(titleLine)-padding))
-	b.WriteString(" ║\n")
-
-	if url != "" {
-		urlPadding := (maxLen - len(url)) / 2
-		b.WriteString("║ ")
-		b.WriteString(strings.Repeat(" ", urlPadding))
-		b.WriteString(url)
-		b.WriteString(strings.Repeat(" ", maxLen-len(url)-urlPadding))
-		b.WriteString(" ║\n")
-	}
-
-	b.WriteString("╚")
-	b.WriteString(strings.Repeat("═", boxWidth-2))
-	b.WriteString("╝\n")
-
-	return b.String()
 }

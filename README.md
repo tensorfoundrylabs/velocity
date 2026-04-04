@@ -16,7 +16,7 @@ go get github.com/tensorfoundrylabs/velocity
 
 ```go
 log := velocity.New(os.Stdout)
-log.Info("server started", velocity.StringField("addr", ":8080"), velocity.Int("workers", 4))
+log.Info("server started", velocity.String("addr", ":8080"), velocity.Int("workers", 4))
 ```
 
 Or use a preset:
@@ -26,9 +26,27 @@ log := velocity.NewDevelopment()                                // coloured cons
 log := velocity.NewWithBuilder(velocity.PresetProduction())     // structured JSON, info level
 ```
 
+## Packages
+
+Velocity is split into three packages:
+
+```go
+import (
+    "github.com/tensorfoundrylabs/velocity"              // core logging, writers, config, themes
+    "github.com/tensorfoundrylabs/velocity/pretty"       // CLI display: boxes, panels, banners, tables, trees, progress
+    velocityslog "github.com/tensorfoundrylabs/velocity/slog"  // log/slog bridge
+)
+```
+
+| Package | Description |
+|---------|-------------|
+| `velocity` | Core logger, fields (`String`, `Int`, `Error`, `Float64`, `Bool`, `Duration`, `Time`, `Stringer`, `Bytes`), writers (console, JSON, multi, ring buffer), config, themes, templates, buffers, pools |
+| `velocity/pretty` | `Pretty`, `Box`, `Panel`, `Banner`, `Table`, `Tree`, `Bullet`, `KeyValue`, `SystemInfo`, `TreeItem`, `ProgressBar`, `Spinner`, `MultiProgress` |
+| `velocity/slog` | `Handler`, `NewHandler`, `NewLogger` (package name: `velocityslog`) |
+
 ## Features
 
-- **Zero-alloc fields** on hot paths. Typed constructors (`StringField`, `Int`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer` + `int64` storage, no `interface{}` boxing
+- **Zero-alloc fields** on hot paths. Typed constructors (`String`, `Int`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer` + `int64` storage, no `interface{}` boxing
 - **Entry pooling** via `sync.Pool` with atomic ref counting and CAS-based return. Tiered buffer pools (512B to 32KB)
 - **Atomic level control**. Single atomic load per log call; entries below threshold never allocate
 - **Log sampling**. `CountSampler` logs first N, then every Mth. Checked before pool acquisition
@@ -36,18 +54,18 @@ log := velocity.NewWithBuilder(velocity.PresetProduction())     // structured JS
 - **4 colour themes**. Night Owl (RGB), Solarized, Dracula, Nord (256-colour). ANSI codes pre-cached at theme init
 - **4 templates**. Default (badge), Simple (text), Minimal (message only), JSON (RFC3339Nano)
 - **5 presets**. Development, Production, Container, Testing, HighPerformance
-- **Pretty printing**. `Section`, `Box`, `Panel`, `Banner`, `Bullet`, `KeyValue`, `SystemInfo`. Unicode-safe alignment
-- **Tree display**. Hierarchical data with box-drawing characters, inline or below-message
-- **Tables**. Auto-width columns with box-drawing borders
-- **Progress**. `ProgressBar`, `Spinner` (5 animation styles), `MultiProgress`. Thread-safe with CAS-guarded stop
+- **Pretty printing** (in `velocity/pretty`). `Section`, `Box`, `Panel`, `Banner`, `Bullet`, `KeyValue`, `SystemInfo`. Unicode-safe alignment
+- **Tree display** (in `velocity/pretty`). Hierarchical data with box-drawing characters
+- **Tables** (in `velocity/pretty`). Auto-width columns with box-drawing borders
+- **Progress** (in `velocity/pretty`). `ProgressBar`, `Spinner` (5 animation styles), `MultiProgress`. Thread-safe with CAS-guarded stop
 - **Child loggers**. `With()` for scoped fields, `WithTemplate()` for output format. Both inherit writers, sampler, base fields
 - **Context integration**. `NewContext()`, `FromContext()`, `ContextWithFields()`
 - **Dynamic writers**. `AddWriter()`/`RemoveWriter()` at runtime, thread-safe. Workers close their own writer on shutdown
 - **Ring buffer writer**. Lock-free CAS ring buffer with batched flushing, bounded spins, min size enforcement
 - **JSON writer**. Hand-rolled serialisation, handles NaN/Infinity, base64 bytes, proper escaping. No `encoding/json`
-- **Typed nil safety**. `ErrorField` and `Stringer` constructors catch typed nils via `reflect` to prevent panics
+- **Typed nil safety**. `Error` and `Stringer` constructors catch typed nils via `reflect` to prevent panics
 - **Nil-safe**. Every public method handles nil receivers gracefully
-- **slog bridge**. `NewSlogHandler` implements `log/slog.Handler` for incremental adoption. `WithAttrs`/`WithGroup` with dotted key prefixes. Pre-converted fields, cached group prefix
+- **slog bridge** (in `velocity/slog`). `NewHandler` implements `log/slog.Handler` for incremental adoption. `WithAttrs`/`WithGroup` with dotted key prefixes. Pre-converted fields, cached group prefix
 - **Testable**. Overridable `FatalHandler`, `NewForTesting()` constructor
 
 ## Performance
@@ -88,13 +106,27 @@ Run benchmarks: `go test -bench=. -benchmem -count=3 ./...`
 Use velocity as the backend for Go's standard structured logging:
 
 ```go
+import velocityslog "github.com/tensorfoundrylabs/velocity/slog"
+
 logger := velocity.NewDevelopment()
-slog.SetDefault(velocity.NewSlogLogger(logger))
+slog.SetDefault(velocityslog.NewLogger(logger))
 
 slog.Info("request handled", "method", "GET", "status", 200, "duration", 42*time.Millisecond)
 ```
 
 Groups produce dotted keys: `slog.WithGroup("server").With("host", "localhost")` renders as `server.host`.
+
+### Pretty printing
+
+Use `velocity/pretty` for rich CLI output:
+
+```go
+import "github.com/tensorfoundrylabs/velocity/pretty"
+
+p := pretty.New(os.Stdout)
+p.Box("Deploy Complete", "All services running")
+p.Banner("v2.1.0", "Production release")
+```
 
 ### Log rotation with lumberjack
 

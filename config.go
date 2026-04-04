@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"golang.org/x/term"
 )
 
 type Format int
@@ -247,4 +249,136 @@ func (b *Builder) Clone() *Builder {
 	return &Builder{
 		config: &cfgCopy,
 	}
+}
+
+// DefaultDevelopmentConfig creates a config for development: coloured console, debug level, no structured output.
+func DefaultDevelopmentConfig() *Config {
+	return &Config{
+		ConsoleOutput:    os.Stdout,
+		ConsoleTheme:     nil,
+		ConsoleLevel:     LevelDebug,
+		StructuredOutput: nil,
+		StructuredFormat: FormatJSON,
+		StructuredLevel:  LevelOff,
+		BufferSize:       1024,
+		FieldPoolSize:    50,
+		DisableColour:    false,
+		TimeFormat:       "2006-01-02 15:04:05",
+		DisplayTimezone:  time.Local,
+	}
+}
+
+// DefaultProductionConfig creates a config for production: JSON output, info level, no console.
+func DefaultProductionConfig() *Config {
+	return &Config{
+		ConsoleOutput:    io.Discard,
+		ConsoleTheme:     nil,
+		ConsoleLevel:     LevelOff,
+		StructuredOutput: nil,
+		StructuredFormat: FormatJSON,
+		StructuredLevel:  LevelInfo,
+		BufferSize:       4096,
+		FieldPoolSize:    200,
+		DisableColour:    true,
+		TimeFormat:       "2006-01-02T15:04:05Z07:00",
+	}
+}
+
+// DefaultContainerConfig creates a config for containerised environments: JSON to stdout, info level.
+func DefaultContainerConfig() *Config {
+	disableColour := !isTerminal(os.Stdout)
+
+	return &Config{
+		ConsoleOutput:    nil,
+		ConsoleTheme:     nil,
+		ConsoleLevel:     LevelOff,
+		StructuredOutput: os.Stdout,
+		StructuredFormat: FormatJSON,
+		StructuredLevel:  LevelInfo,
+		BufferSize:       2048,
+		FieldPoolSize:    100,
+		DisableColour:    disableColour,
+		TimeFormat:       "2006-01-02T15:04:05Z07:00",
+	}
+}
+
+// DefaultTestingConfig creates a config for tests: writes to w, debug level, colours off.
+func DefaultTestingConfig(w io.Writer) *Config {
+	return &Config{
+		ConsoleOutput:    w,
+		ConsoleTheme:     nil,
+		ConsoleLevel:     LevelDebug,
+		StructuredOutput: nil,
+		StructuredFormat: FormatJSON,
+		StructuredLevel:  LevelOff,
+		BufferSize:       512,
+		FieldPoolSize:    25,
+		DisableColour:    true,
+		TimeFormat:       "15:04:05.000",
+	}
+}
+
+// DefaultHighPerformanceConfig creates a config for high throughput: minimal output, sampling enabled.
+func DefaultHighPerformanceConfig() *Config {
+	return &Config{
+		ConsoleOutput:    io.Discard,
+		ConsoleTheme:     nil,
+		ConsoleLevel:     LevelOff,
+		StructuredOutput: os.Stderr,
+		StructuredFormat: FormatJSON,
+		StructuredLevel:  LevelInfo,
+		BufferSize:       8192,
+		FieldPoolSize:    500,
+		DisableColour:    true,
+		TimeFormat:       "2006-01-02T15:04:05Z07:00",
+		Sampler:          NewCountSampler(uint64(1000), uint64(100)),
+	}
+}
+
+// isTerminal reports whether f is connected to a terminal.
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+
+	switch f {
+	case os.Stdout, os.Stderr, os.Stdin:
+		stat, err := f.Stat()
+		if err != nil {
+			return false
+		}
+		// ModeCharDevice is set for character devices (terminals).
+		return (stat.Mode() & os.ModeCharDevice) != 0
+	default:
+		return false
+	}
+}
+
+// IsTerminalWriter reports whether w is a terminal, using term.IsTerminal when possible.
+// Used to auto-detect colour support.
+func IsTerminalWriter(w io.Writer) bool {
+	if f, ok := w.(*os.File); ok {
+		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
+	}
+	return false
+}
+
+func PresetDevelopment() *Builder {
+	return &Builder{config: DefaultDevelopmentConfig()}
+}
+
+func PresetProduction() *Builder {
+	return &Builder{config: DefaultProductionConfig()}
+}
+
+func PresetContainer() *Builder {
+	return &Builder{config: DefaultContainerConfig()}
+}
+
+func PresetTesting(w io.Writer) *Builder {
+	return &Builder{config: DefaultTestingConfig(w)}
+}
+
+func PresetHighPerformance() *Builder {
+	return &Builder{config: DefaultHighPerformanceConfig()}
 }

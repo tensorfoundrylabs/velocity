@@ -307,23 +307,6 @@ func (t *Template) calculatePrefixWidth(entry *Entry) int {
 	return width
 }
 
-func padRight(s string, length int) string {
-	if len(s) >= length {
-		return s
-	}
-	return s + strings.Repeat(" ", length-len(s))
-}
-
-// padRightRunes pads a string to the specified length using rune count instead of byte count.
-// This is important for Unicode text where characters may use multiple bytes.
-func padRightRunes(s string, length int) string {
-	runeLen := len([]rune(s))
-	if runeLen >= length {
-		return s
-	}
-	return s + strings.Repeat(" ", length-runeLen)
-}
-
 type TemplateBuilder struct {
 	template *Template
 }

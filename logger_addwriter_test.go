@@ -292,3 +292,9 @@ func TestLogger_AddWriter_EntryIntegrity(t *testing.T) {
 		t.Error("Timeout waiting for log entry")
 	}
 }
+
+func TestLogger_NilSetLevel(_ *testing.T) {
+	var l *Logger
+	l.SetLevel(LevelDebug) // must not panic
+	_ = l.Level()          // must not panic
+}

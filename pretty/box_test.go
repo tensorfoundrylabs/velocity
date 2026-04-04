@@ -1,9 +1,11 @@
-package velocity
+package pretty
 
 import (
 	"bytes"
 	"strings"
 	"testing"
+
+	velocity "github.com/tensorfoundrylabs/velocity"
 )
 
 // borderLen returns the visible character count of a line stripped of ANSI codes.
@@ -15,7 +17,7 @@ func borderLen(line string) int {
 func TestBox_LongTitle(t *testing.T) {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	p := NewPretty(buf, ThemeNightOwl)
+	p := New(buf, velocity.ThemeNightOwl)
 
 	// Title longer than 36 bytes with short content previously caused a panic
 	// in strings.Repeat when the repeat count went negative.
@@ -24,7 +26,7 @@ func TestBox_LongTitle(t *testing.T) {
 
 func TestBox_BorderAlignment(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := NewPretty(buf, ThemeNightOwl)
+	p := New(buf, velocity.ThemeNightOwl)
 
 	p.Box("Title", "Some content line")
 
@@ -49,7 +51,7 @@ func TestBox_BorderAlignment(t *testing.T) {
 func TestBox_EmptyContent(t *testing.T) {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	p := NewPretty(buf, ThemeNightOwl)
+	p := New(buf, velocity.ThemeNightOwl)
 
 	// Must not panic; empty content produces only borders.
 	p.Box("Title", "")
@@ -59,7 +61,7 @@ func TestBox_EmptyContent(t *testing.T) {
 // not silently dropped.
 func TestBox_EmptyLines(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := NewPretty(buf, ThemeNightOwl)
+	p := New(buf, velocity.ThemeNightOwl)
 
 	p.Box("Title", "line1\n\nline3")
 
@@ -75,7 +77,7 @@ func TestBox_EmptyLines(t *testing.T) {
 // TestBox_Unicode verifies that box borders align correctly when content contains multi-byte runes.
 func TestBox_Unicode(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := NewPretty(buf, ThemeNightOwl)
+	p := New(buf, velocity.ThemeNightOwl)
 
 	p.Box("", "日本語\nASCII\nCafe")
 
@@ -106,7 +108,7 @@ func TestBox_Unicode(t *testing.T) {
 
 func TestBox_EmptyTitle(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := NewPretty(buf, ThemeNightOwl)
+	p := New(buf, velocity.ThemeNightOwl)
 
 	// Must not panic; empty title uses plain border.
 	p.Box("", "Some content")

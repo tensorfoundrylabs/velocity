@@ -136,9 +136,9 @@ func ByteSlice(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// String provides zero-copy byte to string conversion.
+// UnsafeString provides zero-copy byte to string conversion.
 // SAFETY: The byte slice must not be modified after conversion.
-func String(b []byte) string {
+func UnsafeString(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
@@ -186,7 +186,7 @@ func (b *BytesBuffer) AppendTime(t time.Time, layout string) {
 }
 
 func (b *BytesBuffer) String() string {
-	return String(b.buf.Bytes())
+	return UnsafeString(b.buf.Bytes())
 }
 
 type Formatter struct {
@@ -221,7 +221,7 @@ func (f *Formatter) Bytes() []byte {
 }
 
 func (f *Formatter) String() string {
-	return String(f.buf.Bytes())
+	return UnsafeString(f.buf.Bytes())
 }
 
 func (f *Formatter) Release() {

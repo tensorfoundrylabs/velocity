@@ -214,7 +214,7 @@ func (*ConsoleWriter) formatValue(buf *BytesBuffer, f Field) {
 
 	case FieldTypeFloat64:
 		floatValue := math.Float64frombits(uint64(f.num)) //nolint:gosec // G115: bit-pattern reinterpretation, not value conversion
-		buf.WriteString(strconv.FormatFloat(floatValue, 'g', 6, 64))
+		buf.WriteString(strconv.FormatFloat(floatValue, 'g', -1, 64))
 
 	case FieldTypeBool:
 		if f.num != 0 {

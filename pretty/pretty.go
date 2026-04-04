@@ -1,4 +1,4 @@
-package velocity
+package pretty
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	velocity "github.com/tensorfoundrylabs/velocity"
 )
 
 // Box-drawing constants for tree rendering.
@@ -19,12 +21,12 @@ const (
 // Pretty provides formatted output utilities for styled terminal printing.
 type Pretty struct {
 	writer io.Writer
-	theme  *Theme
+	theme  *velocity.Theme
 }
 
-func NewPretty(w io.Writer, theme *Theme) *Pretty {
+func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	if theme == nil {
-		theme = ThemeNightOwl
+		theme = velocity.ThemeNightOwl
 	}
 	return &Pretty{
 		writer: w,
@@ -32,7 +34,7 @@ func NewPretty(w io.Writer, theme *Theme) *Pretty {
 	}
 }
 
-// Info prints with nil-safe fallback to stdout.
+// Info prints an info-styled message with nil-safe fallback to stdout.
 func (p *Pretty) Info(message string) {
 	if p == nil {
 		fmt.Println("ℹ️ " + message)
@@ -41,7 +43,7 @@ func (p *Pretty) Info(message string) {
 	p.printStyled("ℹ️", message, p.theme.InfoColour)
 }
 
-// Success prints with nil-safe fallback to stdout.
+// Success prints a success-styled message with nil-safe fallback to stdout.
 func (p *Pretty) Success(message string) {
 	if p == nil {
 		fmt.Println("✅ " + message)
@@ -50,7 +52,7 @@ func (p *Pretty) Success(message string) {
 	p.printStyled("✅", message, p.theme.InfoColour)
 }
 
-// Warn prints with nil-safe fallback to stdout.
+// Warn prints a warning-styled message with nil-safe fallback to stdout.
 func (p *Pretty) Warn(message string) {
 	if p == nil {
 		fmt.Println("⚠️ " + message)
@@ -59,7 +61,7 @@ func (p *Pretty) Warn(message string) {
 	p.printStyled("⚠️", message, p.theme.WarnColour)
 }
 
-// Error prints with nil-safe fallback to stdout.
+// Error prints an error-styled message with nil-safe fallback to stdout.
 func (p *Pretty) Error(message string) {
 	if p == nil {
 		fmt.Println("❌ " + message)
@@ -68,7 +70,7 @@ func (p *Pretty) Error(message string) {
 	p.printStyled("❌", message, p.theme.ErrorColour)
 }
 
-// Debug prints with nil-safe fallback to stdout.
+// Debug prints a debug-styled message with nil-safe fallback to stdout.
 func (p *Pretty) Debug(message string) {
 	if p == nil {
 		fmt.Println("🐛 " + message)
@@ -77,19 +79,19 @@ func (p *Pretty) Debug(message string) {
 	p.printStyled("🐛", message, p.theme.DebugColour)
 }
 
-// printStyled ignores write errors to ensure logging never fails.
-func (p *Pretty) printStyled(icon, message string, colour Colour) {
+// printStyled ignores write errors to ensure pretty printing never fails.
+func (p *Pretty) printStyled(icon, message string, colour velocity.Colour) {
 	buf := &bytes.Buffer{}
 	buf.WriteString(colour.ANSI(true))
 	buf.WriteString(icon)
 	buf.WriteString(" ")
 	buf.WriteString(message)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 	_, _ = buf.WriteTo(p.writer)
 }
 
-// Section prints with nil-safe fallback to stdout.
+// Section prints a titled section header with an underline.
 func (p *Pretty) Section(title string) {
 	if p == nil {
 		fmt.Println(title)
@@ -98,16 +100,14 @@ func (p *Pretty) Section(title string) {
 	}
 
 	if p.theme == nil {
-		p.theme = ThemeNightOwl
+		p.theme = velocity.ThemeNightOwl
 	}
 
 	buf := &bytes.Buffer{}
-
 	buf.WriteString(p.theme.MessageColour.ANSI(true))
 	buf.WriteString(title)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
-
 	buf.WriteString(strings.Repeat("─", 40))
 	buf.WriteString("\n")
 
@@ -119,6 +119,7 @@ func (p *Pretty) Section(title string) {
 	_, _ = buf.WriteTo(p.writer)
 }
 
+// Box draws a bordered box around content, with an optional title in the top border.
 func (p *Pretty) Box(title, content string) {
 	buf := &bytes.Buffer{}
 
@@ -159,19 +160,19 @@ func (p *Pretty) Box(title, content string) {
 	}
 	buf.WriteString(strings.Repeat("─", topFill))
 	buf.WriteString("┐")
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 
 	for _, line := range lines {
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString("│ ")
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.MessageColour.ANSI(true))
 		buf.WriteString(padRightRunes(line, width-3))
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString("│")
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
 	}
 
@@ -179,15 +180,15 @@ func (p *Pretty) Box(title, content string) {
 	buf.WriteString("└")
 	buf.WriteString(strings.Repeat("─", width-2))
 	buf.WriteString("┘")
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 
 	_, _ = buf.WriteTo(p.writer)
 }
 
+// Panel draws a simple bordered block with a title bar.
 func (p *Pretty) Panel(title, content string) {
 	buf := &bytes.Buffer{}
-
 	buf.WriteString(p.theme.MessageColour.ANSI(true))
 	if title != "" {
 		buf.WriteString("▓ ")
@@ -195,34 +196,31 @@ func (p *Pretty) Panel(title, content string) {
 		buf.WriteString(" ▓\n")
 	}
 	buf.WriteString(content)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
-
 	_, _ = buf.WriteTo(p.writer)
 }
 
+// Bullet prints an indented bullet point at the given nesting level.
 func (p *Pretty) Bullet(level int, text string) {
 	buf := &bytes.Buffer{}
-
 	indent := strings.Repeat("  ", level)
-
 	bullets := []string{"•", "◦", "▪", "▫"}
 	bullet := bullets[level%len(bullets)]
 
 	buf.WriteString(indent)
 	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 	buf.WriteString(bullet)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString(" ")
 	buf.WriteString(p.theme.MessageColour.ANSI(true))
 	buf.WriteString(text)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
-
 	_, _ = buf.WriteTo(p.writer)
 }
 
-// KeyValue prints with nil-safe fallback to stdout.
+// KeyValue prints a two-column key: value line with nil-safe fallback.
 func (p *Pretty) KeyValue(key, value string) {
 	if p == nil {
 		fmt.Printf("%s: %s\n", key, value)
@@ -230,18 +228,17 @@ func (p *Pretty) KeyValue(key, value string) {
 	}
 
 	if p.theme == nil {
-		p.theme = ThemeNightOwl
+		p.theme = velocity.ThemeNightOwl
 	}
 
 	buf := &bytes.Buffer{}
-
 	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 	buf.WriteString(key)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString(": ")
 	buf.WriteString(p.theme.FieldValColour.ANSI(true))
 	buf.WriteString(value)
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 
 	if p.writer == nil {
@@ -252,6 +249,7 @@ func (p *Pretty) KeyValue(key, value string) {
 	_, _ = buf.WriteTo(p.writer)
 }
 
+// Table renders an aligned table with auto-sized columns.
 func (p *Pretty) Table(headers []string, rows [][]string) {
 	if len(headers) == 0 || len(rows) == 0 {
 		return
@@ -315,6 +313,21 @@ func padRightVisible(s string, width int) string {
 	return s + strings.Repeat(" ", width-visible)
 }
 
+func padRight(s string, length int) string {
+	if len(s) >= length {
+		return s
+	}
+	return s + strings.Repeat(" ", length-len(s))
+}
+
+func padRightRunes(s string, length int) string {
+	runeLen := len([]rune(s))
+	if runeLen >= length {
+		return s
+	}
+	return s + strings.Repeat(" ", length-runeLen)
+}
+
 func (p *Pretty) writeTableTopBorder(buf *bytes.Buffer, colWidths []int) {
 	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 	for i, width := range colWidths {
@@ -323,7 +336,7 @@ func (p *Pretty) writeTableTopBorder(buf *bytes.Buffer, colWidths []int) {
 			buf.WriteString("┬")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 }
 
@@ -334,14 +347,14 @@ func (p *Pretty) writeTableHeaders(buf *bytes.Buffer, headers []string, colWidth
 			buf.WriteString("│")
 		}
 		buf.WriteString(" ")
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.TableHeader.ANSI(true))
 		buf.WriteString(padRight(header, colWidths[i]))
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString(" ")
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 }
 
@@ -353,7 +366,7 @@ func (p *Pretty) writeTableHeaderSeparator(buf *bytes.Buffer, colWidths []int) {
 			buf.WriteString("┼")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 }
 
@@ -372,14 +385,14 @@ func (p *Pretty) writeTableRow(buf *bytes.Buffer, row []string, colWidths []int)
 		buf.WriteString(" ")
 		buf.WriteString(p.theme.MessageColour.ANSI(true))
 		buf.WriteString(padRightVisible(cell, colWidths[i]))
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString(" ")
 		if i < len(colWidths)-1 {
 			buf.WriteString("│")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 }
 
@@ -391,7 +404,7 @@ func (p *Pretty) writeTableBottomBorder(buf *bytes.Buffer, colWidths []int) {
 			buf.WriteString("┴")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 }
 
@@ -399,17 +412,16 @@ func (p *Pretty) writeTableBottomBorder(buf *bytes.Buffer, colWidths []int) {
 func (p *Pretty) Tree(nodes []TreeItem) {
 	if p == nil {
 		for i, node := range nodes {
-			writeTreeItemPrettyStandalone(os.Stdout, node, "", i == len(nodes)-1)
+			writeTreeItemStandalone(os.Stdout, node, "", i == len(nodes)-1)
 		}
 		return
 	}
 
 	if p.theme == nil {
-		p.theme = ThemeNightOwl
+		p.theme = velocity.ThemeNightOwl
 	}
 
 	buf := &bytes.Buffer{}
-
 	for i, node := range nodes {
 		p.writePrettyTreeItem(buf, node, "", i == len(nodes)-1)
 	}
@@ -422,7 +434,7 @@ func (p *Pretty) Tree(nodes []TreeItem) {
 	_, _ = buf.WriteTo(p.writer)
 }
 
-func writeTreeItemPrettyStandalone(w io.Writer, node TreeItem, prefix string, isLast bool) {
+func writeTreeItemStandalone(w io.Writer, node TreeItem, prefix string, isLast bool) {
 	connector := treeBranch
 	if isLast {
 		connector = treeCorner
@@ -442,7 +454,7 @@ func writeTreeItemPrettyStandalone(w io.Writer, node TreeItem, prefix string, is
 	}
 
 	for i, child := range node.Children {
-		writeTreeItemPrettyStandalone(w, child, childPrefix, i == len(node.Children)-1)
+		writeTreeItemStandalone(w, child, childPrefix, i == len(node.Children)-1)
 	}
 }
 
@@ -460,7 +472,7 @@ func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, prefix st
 	} else {
 		buf.WriteString(node.Key)
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 
 	childPrefix := prefix
@@ -475,17 +487,16 @@ func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, prefix st
 	}
 }
 
+// Raw writes text directly to the writer without any formatting.
 func (p *Pretty) Raw(text string) {
 	_, _ = io.WriteString(p.writer, text)
 }
 
+// Banner draws a double-border box around text.
 func (p *Pretty) Banner(text string) {
 	buf := &bytes.Buffer{}
-
-	// Split text into lines for multi-line support
 	lines := strings.Split(text, "\n")
 
-	// Trim trailing whitespace from each line and find the longest (in runes, not bytes)
 	maxLen := 0
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " \t")
@@ -495,55 +506,53 @@ func (p *Pretty) Banner(text string) {
 		}
 	}
 
-	// Box width = longest line + padding (2 spaces on each side) + borders (2)
 	contentWidth := maxLen
-	boxWidth := contentWidth + 2 // content + 2 for padding
+	boxWidth := contentWidth + 2
 
-	// Top border with rounded corners
 	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 	buf.WriteString("╔")
 	buf.WriteString(strings.Repeat("─", boxWidth))
 	buf.WriteString("╗")
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 
-	// Content lines
 	for _, line := range lines {
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString("│ ")
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.MessageColour.ANSI(true))
 		buf.WriteString(padRightRunes(line, contentWidth))
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString(" │")
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
 	}
 
-	// Bottom border with rounded corners
 	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 	buf.WriteString("╚")
 	buf.WriteString(strings.Repeat("─", boxWidth))
 	buf.WriteString("╝")
-	buf.WriteString(Reset)
+	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
 
 	_, _ = buf.WriteTo(p.writer)
 }
 
+// SystemInfo is startup/configuration metadata for display.
 type SystemInfo struct {
 	Title   string
 	Version string
 	Fields  []KeyValuePair
 }
 
+// KeyValuePair is a labelled string value.
 type KeyValuePair struct {
 	Key   string
 	Value string
 }
 
-// SystemInfo prints with nil-safe fallback to stdout.
+// SystemInfo prints a titled block of key-value pairs with nil-safe fallback.
 func (p *Pretty) SystemInfo(info *SystemInfo) {
 	if info == nil {
 		return
@@ -564,7 +573,7 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 	}
 
 	if p.theme == nil {
-		p.theme = ThemeNightOwl
+		p.theme = velocity.ThemeNightOwl
 	}
 
 	buf := &bytes.Buffer{}
@@ -578,18 +587,18 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 			buf.WriteString(info.Version)
 		}
 		buf.WriteString(" ▓")
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
 	}
 
 	for _, pair := range info.Fields {
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString(padRight(pair.Key+":", 20))
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString(" ")
 		buf.WriteString(p.theme.MessageColour.ANSI(true))
 		buf.WriteString(pair.Value)
-		buf.WriteString(Reset)
+		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
 	}
 
@@ -599,4 +608,71 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 	}
 
 	_, _ = buf.WriteTo(p.writer)
+}
+
+// TreeItem represents a node in a hierarchical display tree.
+type TreeItem struct {
+	Key      string
+	Value    any
+	Children []TreeItem
+}
+
+// CreateBanner renders a double-border banner box with ASCII art, title, version, and URL.
+func CreateBanner(title, version, url string, ascii []string) string {
+	var b strings.Builder
+	maxLen := 0
+
+	for _, line := range ascii {
+		if len(line) > maxLen {
+			maxLen = len(line)
+		}
+	}
+	if len(title)+len(version)+3 > maxLen {
+		maxLen = len(title) + len(version) + 3
+	}
+	if len(url) > maxLen {
+		maxLen = len(url)
+	}
+
+	boxWidth := maxLen + 4
+
+	b.WriteString("╔")
+	b.WriteString(strings.Repeat("═", boxWidth-2))
+	b.WriteString("╗\n")
+
+	for _, line := range ascii {
+		b.WriteString("║ ")
+		b.WriteString(line)
+		b.WriteString(strings.Repeat(" ", maxLen-len(line)))
+		b.WriteString(" ║\n")
+	}
+
+	if len(ascii) > 0 {
+		b.WriteString("╠")
+		b.WriteString(strings.Repeat("═", boxWidth-2))
+		b.WriteString("╣\n")
+	}
+
+	titleLine := fmt.Sprintf("%s v%s", title, version)
+	padding := (maxLen - len(titleLine)) / 2
+	b.WriteString("║ ")
+	b.WriteString(strings.Repeat(" ", padding))
+	b.WriteString(titleLine)
+	b.WriteString(strings.Repeat(" ", maxLen-len(titleLine)-padding))
+	b.WriteString(" ║\n")
+
+	if url != "" {
+		urlPadding := (maxLen - len(url)) / 2
+		b.WriteString("║ ")
+		b.WriteString(strings.Repeat(" ", urlPadding))
+		b.WriteString(url)
+		b.WriteString(strings.Repeat(" ", maxLen-len(url)-urlPadding))
+		b.WriteString(" ║\n")
+	}
+
+	b.WriteString("╚")
+	b.WriteString(strings.Repeat("═", boxWidth-2))
+	b.WriteString("╝\n")
+
+	return b.String()
 }

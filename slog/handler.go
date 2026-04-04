@@ -1,32 +1,34 @@
-package velocity
+package velocityslog
 
 import (
 	"context"
 	"log/slog"
 	"strings"
 	"time"
+
+	velocity "github.com/tensorfoundrylabs/velocity"
 )
 
-// SlogHandler bridges log/slog to a velocity Logger.
-type SlogHandler struct {
-	logger *Logger
-	prefix string   // cached dotted prefix from groups, computed once at construction
-	attrs  []Field  // pre-converted from WithAttrs
-	groups []string // nested group names
+// Handler bridges log/slog to a velocity Logger.
+type Handler struct {
+	logger *velocity.Logger
+	prefix string           // cached dotted prefix from groups, computed once at construction
+	attrs  []velocity.Field // pre-converted from WithAttrs
+	groups []string         // nested group names
 }
 
-// NewSlogHandler creates an slog.Handler backed by a velocity Logger.
-func NewSlogHandler(logger *Logger) *SlogHandler {
-	return &SlogHandler{logger: logger}
+// NewHandler creates an slog.Handler backed by a velocity Logger.
+func NewHandler(logger *velocity.Logger) *Handler {
+	return &Handler{logger: logger}
 }
 
-// NewSlogLogger creates an *slog.Logger backed by a velocity Logger.
-func NewSlogLogger(logger *Logger) *slog.Logger {
-	return slog.New(NewSlogHandler(logger))
+// NewLogger creates an *slog.Logger backed by a velocity Logger.
+func NewLogger(logger *velocity.Logger) *slog.Logger {
+	return slog.New(NewHandler(logger))
 }
 
 // Enabled reports whether the handler handles records at the given level.
-func (h *SlogHandler) Enabled(_ context.Context, level slog.Level) bool {
+func (h *Handler) Enabled(_ context.Context, level slog.Level) bool {
 	if h.logger == nil {
 		return false
 	}
@@ -34,14 +36,14 @@ func (h *SlogHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 // Handle converts a slog.Record to a velocity entry and dispatches it.
-func (h *SlogHandler) Handle(_ context.Context, record slog.Record) error {
+func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 	if h.logger == nil {
 		return nil
 	}
 
 	level := mapSlogLevel(record.Level)
 
-	entry := GetEntry()
+	entry := velocity.GetEntry()
 	defer entry.Release()
 
 	entry.SetLevel(level)
@@ -67,21 +69,21 @@ func (h *SlogHandler) Handle(_ context.Context, record slog.Record) error {
 		})
 	}
 
-	h.logger.logEntry(entry)
+	h.logger.LogEntry(entry)
 	return nil
 }
 
 // WithAttrs returns a new handler with the given attributes pre-converted.
-func (h *SlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
-	newAttrs := make([]Field, 0, len(h.attrs)+len(attrs))
+	newAttrs := make([]velocity.Field, 0, len(h.attrs)+len(attrs))
 	newAttrs = append(newAttrs, h.attrs...)
 	for _, a := range attrs {
 		newAttrs = appendAttrFields(newAttrs, h.prefix, a)
 	}
-	return &SlogHandler{
+	return &Handler{
 		logger: h.logger,
 		attrs:  newAttrs,
 		groups: h.groups,
@@ -90,14 +92,14 @@ func (h *SlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 // WithGroup returns a new handler with the given group name pushed onto the stack.
-func (h *SlogHandler) WithGroup(name string) slog.Handler {
+func (h *Handler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
 	newGroups := make([]string, len(h.groups)+1)
 	copy(newGroups, h.groups)
 	newGroups[len(h.groups)] = name
-	return &SlogHandler{
+	return &Handler{
 		logger: h.logger,
 		attrs:  h.attrs,
 		groups: newGroups,
@@ -108,33 +110,33 @@ func (h *SlogHandler) WithGroup(name string) slog.Handler {
 // slog has no fatal level. Treat anything at or above error+4 as fatal.
 const slogLevelFatal = slog.LevelError + 4
 
-func mapSlogLevel(l slog.Level) Level {
+func mapSlogLevel(l slog.Level) velocity.Level {
 	switch {
 	case l < slog.LevelInfo:
-		return LevelDebug
+		return velocity.LevelDebug
 	case l < slog.LevelWarn:
-		return LevelInfo
+		return velocity.LevelInfo
 	case l < slog.LevelError:
-		return LevelWarn
+		return velocity.LevelWarn
 	case l < slogLevelFatal:
-		return LevelError
+		return velocity.LevelError
 	default:
-		return LevelFatal
+		return velocity.LevelFatal
 	}
 }
 
 // growFields ensures the slice has room for n more elements without repeated growth.
-func growFields(fields []Field, n int) []Field {
+func growFields(fields []velocity.Field, n int) []velocity.Field {
 	if cap(fields)-len(fields) >= n {
 		return fields
 	}
-	grown := make([]Field, len(fields), len(fields)+n)
+	grown := make([]velocity.Field, len(fields), len(fields)+n)
 	copy(grown, fields)
 	return grown
 }
 
 // appendAttrFields appends velocity Fields for a slog.Attr to the given slice.
-func appendAttrFields(fields []Field, prefix string, attr slog.Attr) []Field {
+func appendAttrFields(fields []velocity.Field, prefix string, attr slog.Attr) []velocity.Field {
 	attr.Value = attr.Value.Resolve()
 
 	if attr.Equal(slog.Attr{}) {
@@ -145,19 +147,19 @@ func appendAttrFields(fields []Field, prefix string, attr slog.Attr) []Field {
 
 	switch attr.Value.Kind() {
 	case slog.KindString:
-		return append(fields, StringField(key, attr.Value.String()))
+		return append(fields, velocity.String(key, attr.Value.String()))
 	case slog.KindInt64:
-		return append(fields, Int64(key, attr.Value.Int64()))
+		return append(fields, velocity.Int64(key, attr.Value.Int64()))
 	case slog.KindUint64:
-		return append(fields, Int64(key, int64(attr.Value.Uint64()))) //nolint:gosec // slog uint64 -> int64 bit cast is intentional
+		return append(fields, velocity.Int64(key, int64(attr.Value.Uint64()))) //nolint:gosec // slog uint64 -> int64 bit cast is intentional
 	case slog.KindFloat64:
-		return append(fields, Float64(key, attr.Value.Float64()))
+		return append(fields, velocity.Float64(key, attr.Value.Float64()))
 	case slog.KindBool:
-		return append(fields, Bool(key, attr.Value.Bool()))
+		return append(fields, velocity.Bool(key, attr.Value.Bool()))
 	case slog.KindTime:
-		return append(fields, Time(key, attr.Value.Time()))
+		return append(fields, velocity.Time(key, attr.Value.Time()))
 	case slog.KindDuration:
-		return append(fields, Duration(key, attr.Value.Duration()))
+		return append(fields, velocity.Duration(key, attr.Value.Duration()))
 	case slog.KindGroup:
 		groupAttrs := attr.Value.Group()
 		// Unnamed groups flatten their attrs into the current prefix.
@@ -170,12 +172,12 @@ func appendAttrFields(fields []Field, prefix string, attr slog.Attr) []Field {
 		}
 		return fields
 	case slog.KindAny, slog.KindLogValuer:
-		return append(fields, Any(key, attr.Value.Any()))
+		return append(fields, velocity.Any(key, attr.Value.Any()))
 	}
 	return fields
 }
 
 // appendAttrToEntry converts a slog.Attr and appends it directly to an entry's fields.
-func appendAttrToEntry(entry *Entry, prefix string, attr slog.Attr) {
+func appendAttrToEntry(entry *velocity.Entry, prefix string, attr slog.Attr) {
 	entry.Fields = appendAttrFields(entry.Fields, prefix, attr)
 }

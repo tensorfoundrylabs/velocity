@@ -40,27 +40,27 @@ func main() {
 
 	// These entries go to both the console (coloured) and the JSON file.
 	// Debug is suppressed in JSON because StructuredLevel is Info.
-	log.Debug("debug not written to JSON", velocity.StringField("note", "filtered by structured level"))
+	log.Debug("debug not written to JSON", velocity.String("note", "filtered by structured level"))
 
 	log.Info("application started",
-		velocity.StringField("version", "1.3.0"),
-		velocity.StringField("env", "production"),
+		velocity.String("version", "1.3.0"),
+		velocity.String("env", "production"),
 	)
 
 	log.Warn("configuration value missing, using default",
-		velocity.StringField("key", "max_connections"),
+		velocity.String("key", "max_connections"),
 		velocity.Int("default", 100),
 	)
 
 	log.Error("upstream service degraded",
-		velocity.StringField("service", "payments-api"),
+		velocity.String("service", "payments-api"),
 		velocity.Int("error_rate_pct", 12),
 		velocity.Duration("p99_latency", 3200*time.Millisecond),
 	)
 
 	log.Info("request complete",
-		velocity.StringField("method", "POST"),
-		velocity.StringField("path", "/api/orders"),
+		velocity.String("method", "POST"),
+		velocity.String("path", "/api/orders"),
 		velocity.Int("status", 201),
 		velocity.Float64("duration_ms", 45.7),
 		velocity.Bool("cached", false),
