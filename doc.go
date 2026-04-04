@@ -1,0 +1,26 @@
+// Package velocity is a high-performance structured logging library for Go CLI applications.
+//
+// Velocity provides rich terminal output with themed colours, structured fields,
+// tree displays, tables, progress indicators, and JSON output — all with
+// zero-allocation field encoding on hot paths.
+//
+// Quick start:
+//
+//	log := velocity.New(os.Stdout)
+//	log.Info("server started", velocity.StringField("addr", ":8080"))
+//
+// For more control, use the builder or functional options:
+//
+//	log := velocity.NewWithOptions(
+//	    velocity.WithLevel(velocity.LevelDebug),
+//	    velocity.WithTheme(velocity.ThemeDracula),
+//	)
+//
+// Velocity includes five presets for common scenarios:
+//
+//   - PresetDevelopment: verbose, coloured console output
+//   - PresetProduction: structured JSON, info level and above
+//   - PresetContainer: JSON with container-friendly defaults
+//   - PresetTesting: minimal output for test harnesses
+//   - PresetHighPerformance: sampling and ring-buffer batching
+package velocity
