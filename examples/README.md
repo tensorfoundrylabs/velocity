@@ -27,7 +27,8 @@ go run ./examples/terminal-velocity
 |---------|--------------|-----|
 | [basic](basic/) | Logger creation, log levels, typed fields, child loggers, `SetLevel`, `InfoDetailed`, presets | `make run-basic` |
 | [json-logging](json-logging/) | Dual output (console + JSON file), `WithCaller`, custom time format, structured JSON | `make run-json` |
-| [themes](themes/) | All four colour themes (Night Owl, Solarized, Dracula, Nord) with the same log entries | `make run-themes` |
+| [themes](themes/) | All four built-in colour themes (Night Owl, Solarized, Dracula, Nord) with the same log entries | `make run-themes` |
+| [custom-theme](custom-theme/) | Define your own colour palette (Cyberpunk neon). Shows how custom themes flow through loggers, pretty output, tables, and status indicators | `make run-custom-theme` |
 
 ### Output and Display
 

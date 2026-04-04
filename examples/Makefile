@@ -1,4 +1,4 @@
-.PHONY: run-basic run-json run-themes run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-all build-all clean help
+.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-all build-all clean help
 
 SEPARATOR = @echo "" && echo "============================================================" && echo ""
 
@@ -13,6 +13,10 @@ run-json:
 ## run-themes: Run the theme showcase example
 run-themes:
 	go run ./themes
+
+## run-custom-theme: Run the custom theme (Cyberpunk) example
+run-custom-theme:
+	go run ./custom-theme
 
 ## run-pretty: Run the pretty-output showcase example
 run-pretty:
@@ -62,37 +66,42 @@ run-all:
 	go run ./themes
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 4: pretty-output"
+	@echo "  EXAMPLE 4: custom-theme"
+	@echo "============================================================"
+	go run ./custom-theme
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 5: pretty-output"
 	@echo "============================================================"
 	go run ./pretty-output
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 5: tables"
+	@echo "  EXAMPLE 6: tables"
 	@echo "============================================================"
 	go run ./tables
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 6: progress (interactive)"
+	@echo "  EXAMPLE 7: progress (interactive)"
 	@echo "============================================================"
 	go run ./progress
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 7: slog-bridge"
+	@echo "  EXAMPLE 8: slog-bridge"
 	@echo "============================================================"
 	go run ./slog-bridge
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 8: multi-writer"
+	@echo "  EXAMPLE 9: multi-writer"
 	@echo "============================================================"
 	go run ./multi-writer
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 9: sampling"
+	@echo "  EXAMPLE 10: sampling"
 	@echo "============================================================"
 	go run ./sampling
 	$(SEPARATOR)
 	@echo "============================================================"
-	@echo "  EXAMPLE 10: terminal-velocity (interactive)"
+	@echo "  EXAMPLE 11: terminal-velocity (interactive)"
 	@echo "============================================================"
 	go run ./terminal-velocity
 
@@ -101,6 +110,7 @@ build-all:
 	go build -o bin/basic              ./basic
 	go build -o bin/json-logging       ./json-logging
 	go build -o bin/themes             ./themes
+	go build -o bin/custom-theme       ./custom-theme
 	go build -o bin/pretty-output      ./pretty-output
 	go build -o bin/tables             ./tables
 	go build -o bin/progress           ./progress
@@ -111,7 +121,7 @@ build-all:
 
 ## clean: Remove compiled example binaries
 clean:
-	go clean ./basic ./json-logging ./themes ./pretty-output \
+	go clean ./basic ./json-logging ./themes ./custom-theme ./pretty-output \
 		./tables ./progress ./slog-bridge ./multi-writer ./sampling \
 		./terminal-velocity
 	-rm -rf bin
