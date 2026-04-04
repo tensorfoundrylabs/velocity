@@ -1,8 +1,17 @@
-# Velocity
+<p align="center">
+  <img src="assets/banner.png" alt="Velocity" />
+</p>
 
-> Give your Go CLI apps terminal Velocity!
+<p align="center">
+  <a href="https://github.com/tensorfoundrylabs/velocity/actions/workflows/ci.yml"><img src="https://github.com/tensorfoundrylabs/velocity/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/tensorfoundrylabs/velocity"><img src="https://pkg.go.dev/badge/github.com/tensorfoundrylabs/velocity.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/tensorfoundrylabs/velocity"><img src="https://goreportcard.com/badge/github.com/tensorfoundrylabs/velocity" alt="Go Report Card"></a>
+  <a href="https://github.com/tensorfoundrylabs/velocity/releases/latest"><img src="https://img.shields.io/github/v/release/tensorfoundrylabs/velocity?color=blue" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tensorfoundrylabs/velocity" alt="License"></a>
+  <a href="https://github.com/tensorfoundrylabs/velocity"><img src="https://img.shields.io/github/go-mod/go-version/tensorfoundrylabs/velocity" alt="Go Version"></a>
+</p>
 
-Fast, allocation optimised structured logging for Go with rich terminal output for heavy log presentation and logging. Battle tested and hardened through years of heavy log use. Extracted from TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) where it powers all CLI logging. 
+Fast, allocation optimised structured logging for Go with rich terminal output for heavy log presentation and logging. Battle tested and hardened through years of heavy log use. Extracted from TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) where it powers all CLI logging.
 
 We used this instead of [pTerm](https://github.com/pterm/pterm) for speed and efficiency, which was used previously in tools like [Olla](http://github.com/thushan/olla), but we hit the limits with FoundryOS.
 
