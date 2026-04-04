@@ -190,50 +190,41 @@ linters:
         - all
         - "-SA1019" # Deprecated usage warnings can be noisy; manage case by case.
 
-formatters:
-  # Run formatting via Makefile (goimports + gofumpt) — not via golangci-lint.
-  disable:
-    - gci
-    - gofmt
-    - gofumpt
-    - goimports
-    - golines
-    - swaggo
+  exclusions:
+    rules:
+      # unsafe.Pointer is intentional in field storage, zero-allocation design.
+      - path: "field\\.go"
+        linters:
+          - gosec
+        text: "G103"
+
+      # float64FromBits uses unsafe.Pointer for bit-pattern conversion, intentional.
+      - path: "field_conversion\\.go"
+        linters:
+          - gosec
+        text: "G103"
+
+      # buffer.go uses unsafe for zero-copy string/byte conversion, intentional and documented.
+      - path: "buffer\\.go"
+        linters:
+          - gosec
+        text: "G103"
+
+      # Test files: unused t *testing.T params and unused closure params are conventional.
+      - path: "_test\\.go"
+        linters:
+          - gosec
+          - goconst
+          - unparam
+          - revive
+        text: "unused-parameter"
+
+      # Test files: unused receiver in test helpers.
+      - path: "_test\\.go"
+        linters:
+          - revive
+        text: "unused-receiver"
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-
-  exclude-rules:
-    # unsafe.Pointer is intentional in field storage — zero-allocation design.
-    - path: "field\\.go"
-      linters:
-        - gosec
-      text: "G103"
-
-    # float64FromBits uses unsafe.Pointer for bit-pattern conversion — intentional.
-    - path: "field_conversion\\.go"
-      linters:
-        - gosec
-      text: "G103"
-
-    # buffer.go uses unsafe for zero-copy string/byte conversion — intentional and documented.
-    - path: "buffer\\.go"
-      linters:
-        - gosec
-      text: "G103"
-
-    # Test files: unused t *testing.T params and unused closure params are conventional.
-    - path: "_test\\.go"
-      linters:
-        - gosec
-        - goconst
-        - unparam
-        - revive
-      text: "unused-parameter"
-
-    # Test files: unused receiver in test helpers.
-    - path: "_test\\.go"
-      linters:
-        - revive
-      text: "unused-receiver"
