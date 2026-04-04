@@ -1,0 +1,239 @@
+version: "2"
+
+linters:
+  default: all
+  disable:
+    # Dependency management is handled manually — no import policy needed.
+    - depguard
+    # Internal library: wrapping every error adds noise without benefit.
+    - wrapcheck
+    # Some functions are legitimately long (formatters, writers, switch blocks).
+    - funlen
+    # Line length nit is unhelpful for a library with deep formatting logic.
+    - lll
+    # TODOs are permitted during active development.
+    - godox
+    # No struct tags in this codebase.
+    - tagliatelle
+    # Short names are idiomatic Go (buf, w, e, f, etc.).
+    - varnamelen
+    # Test output is not required to be mocked via interfaces.
+    - exhaustruct
+    # No need for a file-level doc on every file in a single package.
+    - godot
+    # Not using testify — standard library testing only.
+    - testifylint
+    # No need to enforce "//nolint" comment format style.
+    - nolintlint
+    # Not relevant for a logging library without I/O resource handles.
+    - ireturn
+    # Cyclomatic complexity checked via gocyclo instead.
+    - cyclop
+    # Covered by gocyclo already.
+    - maintidx
+    # Not enforced here — this is a library, not a binary.
+    - forbidigo
+    # No need to check for context leaks in this library.
+    - containedctx
+    # Fields have legitimate grouping (pools, themes, templates).
+    - grouper
+    # Not applicable for logging library.
+    - interfacebloat
+    # Causes false positives on intentional switch fall-throughs.
+    - paralleltest
+    # Not used in this project.
+    - testpackage
+    # No external I/O resources to check.
+    - rowserrcheck
+    # Not applicable for this library.
+    - sqlclosecheck
+    # Handled case by case.
+    - musttag
+    # Overly strict for small internal helpers.
+    - nilnil
+    # Not applicable.
+    - dupword
+    # Not relevant for standalone library.
+    - promlinter
+    # Causes noise on intentional nesting.
+    - nestif
+    # Not applicable — no HTTP handlers.
+    - canonicalheader
+    # nonamedreturns is noisy on small helpers.
+    - nonamedreturns
+    # Not needed.
+    - whitespace
+    # Generates noise on formatting switch blocks.
+    - wsl
+    # wsl_v5 is the newer version of wsl — also not needed.
+    - wsl_v5
+    # Not applicable.
+    - zerologlint
+    # Causes noise — the library builds on iota.
+    - mnd
+    # No OpenTelemetry spans in this library.
+    - spancheck
+    # Not using log/slog.
+    - sloglint
+    # Not using protobuf.
+    - protogetter
+    # Not using arangodb.
+    - arangolint
+    # Not using unquery.
+    - unqueryvet
+    # Not using OpenTelemetry.
+    - contextcheck
+    # Not using usetesting replacement patterns.
+    - usetesting
+    # Embedded struct field check not applicable here.
+    - embeddedstructfieldcheck
+    # err113 is too strict about sentinel error wrapping in a library context.
+    - err113
+    # recvcheck is noisy when mixing pointer/value receivers intentionally.
+    - recvcheck
+    # tagalign is not applicable with no struct tags.
+    - tagalign
+    # tparallel is overly strict for this library's test style.
+    - tparallel
+    # thelper is not needed here.
+    - thelper
+    # testableexamples not applicable for this test style.
+    - testableexamples
+    # dogsled not applicable.
+    - dogsled
+    # decorder style not enforced here.
+    - decorder
+    # dupl would flag intentional symmetric switch blocks.
+    - dupl
+    # asasalint not applicable.
+    - asasalint
+    # asciicheck conflicts with unicode box-drawing characters in comments.
+    - asciicheck
+    # bidichk not applicable.
+    - bidichk
+    # durationcheck: progress.go uses intentional duration arithmetic.
+    - durationcheck
+    # errchkjson not applicable — no JSON marshalling in this library.
+    - errchkjson
+    # nlreturn requires blank lines before every return — overly opinionated.
+    - nlreturn
+    # funcorder enforces a specific method ordering — intentional layout here.
+    - funcorder
+    # gochecknoglobals flags pool variables — global pools are intentional for performance.
+    - gochecknoglobals
+    # gosmopolitan flags time.Local usage — intentional for display timezone defaults.
+    - gosmopolitan
+    # inamedparam requires naming anonymous interface params — pedantic for small interfaces.
+    - inamedparam
+    # godoclint fires on package-level doc split across doc.go — false positive.
+    - godoclint
+    # noinlineerr dislikes `if err := f(); err != nil` — this is idiomatic Go.
+    - noinlineerr
+
+  settings:
+    gocyclo:
+      min-complexity: 30
+
+    gocognit:
+      min-complexity: 50
+
+    goconst:
+      min-occurrences: 3
+
+    gosec:
+      excludes:
+        # unsafe.Pointer usage is intentional for zero-allocation field storage.
+        - G103
+
+    gocritic:
+      disabled-checks:
+        # appendAssign fires on pool pattern: slice = slice[:0] — intentional.
+        - appendAssign
+
+    revive:
+      rules:
+        # exported: godoc on every public symbol is too noisy for a focused library.
+        # Use go vet / staticcheck for actual exported symbol issues.
+        - name: exported
+          disabled: true
+        - name: unused-parameter
+          disabled: false
+        - name: error-return
+          disabled: false
+        - name: blank-imports
+          disabled: false
+        - name: context-as-argument
+          disabled: false
+        - name: dot-imports
+          disabled: false
+        - name: error-naming
+          disabled: false
+        - name: if-return
+          disabled: false
+        - name: increment-decrement
+          disabled: false
+        - name: range
+          disabled: false
+        - name: receiver-naming
+          disabled: false
+        - name: time-naming
+          disabled: false
+        - name: unexported-return
+          disabled: false
+        - name: unreachable-code
+          disabled: false
+        - name: unused-receiver
+          disabled: false
+
+    staticcheck:
+      checks:
+        - all
+        - "-SA1019" # Deprecated usage warnings can be noisy; manage case by case.
+
+formatters:
+  # Run formatting via Makefile (goimports + gofumpt) — not via golangci-lint.
+  disable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+    - swaggo
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # unsafe.Pointer is intentional in field storage — zero-allocation design.
+    - path: "field\\.go"
+      linters:
+        - gosec
+      text: "G103"
+
+    # float64FromBits uses unsafe.Pointer for bit-pattern conversion — intentional.
+    - path: "field_conversion\\.go"
+      linters:
+        - gosec
+      text: "G103"
+
+    # buffer.go uses unsafe for zero-copy string/byte conversion — intentional and documented.
+    - path: "buffer\\.go"
+      linters:
+        - gosec
+      text: "G103"
+
+    # Test files: unused t *testing.T params and unused closure params are conventional.
+    - path: "_test\\.go"
+      linters:
+        - gosec
+        - goconst
+        - unparam
+        - revive
+      text: "unused-parameter"
+
+    # Test files: unused receiver in test helpers.
+    - path: "_test\\.go"
+      linters:
+        - revive
+      text: "unused-receiver"

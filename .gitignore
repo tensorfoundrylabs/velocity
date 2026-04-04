@@ -1,0 +1,27 @@
+# build & test artifacts
+coverage.out
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Go
+vendor/
+
+# Logs
+.logs/
+*.log
+
+# tools
+.kaizen/
+.forge/

@@ -1,0 +1,59 @@
+version: 2
+
+project_name: velocity
+
+before:
+  hooks:
+    - go mod download
+    - go test ./... -race -count=1
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-{{.ShortCommit}}"
+
+# No builds — velocity is a library, not a binary
+builds: []
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: "Features"
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: "Bug Fixes"
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: "Performance"
+      regexp: '^.*?perf(\(.+\))??!?:.+$'
+      order: 2
+    - title: "Other"
+      order: 999
+  filters:
+    exclude:
+      - "^Merge"
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  draft: false
+  prerelease: auto
+  make_latest: true
+  name_template: "Velocity {{ .Tag }}"
+  header: |
+    ## Velocity {{ .Tag }}
+
+    Fast, zero-allocation structured logging for Go with rich terminal output.
+
+    ### Install
+
+    ```bash
+    go get github.com/tensorfoundrylabs/velocity@{{ .Tag }}
+    ```
+  footer: |
+
+    ---
+    **Docs:** [pkg.go.dev/github.com/tensorfoundrylabs/velocity](https://pkg.go.dev/github.com/tensorfoundrylabs/velocity)
