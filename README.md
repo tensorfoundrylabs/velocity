@@ -168,9 +168,9 @@ Use `velocity/pretty` for rich CLI output:
 ```go
 import "github.com/tensorfoundrylabs/velocity/pretty"
 
-p := pretty.New(os.Stdout)
+p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
 p.Box("Deploy Complete", "All services running")
-p.Banner("v2.1.0", "Production release")
+p.Banner("v2.1.0 - Production release")
 ```
 
 ### Log rotation with lumberjack

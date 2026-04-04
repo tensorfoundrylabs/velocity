@@ -16,8 +16,9 @@ const (
 
 type RingBufferEntry struct {
 	data      []byte
-	size      atomic.Int32  // Atomic to prevent races between writer and flusher
-	committed atomic.Uint32 // Memory barrier to synchronise writer and flusher
+	expected  atomic.Uint64 // which head value owns this slot next
+	size      atomic.Int32
+	committed atomic.Uint32
 }
 
 // RingBuffer implements a lock-free ring buffer for batched writing.
@@ -90,6 +91,7 @@ func NewRingBuffer(writer io.Writer, size int) *RingBuffer {
 
 	for i := range rb.entries {
 		rb.entries[i].data = make([]byte, 0, 512)
+		rb.entries[i].expected.Store(uint64(i)) // #nosec G115 -- i is always non-negative
 	}
 
 	rb.wg.Add(1)
@@ -115,11 +117,11 @@ func (rb *RingBuffer) Write(data []byte) bool {
 			idx := head & rb.mask
 			entry := &rb.entries[idx]
 
-			// CAS on head ensures only one writer can claim this slot.
-			// Wait for flusher to finish consuming this slot before reusing.
-			// Bound the spin to avoid blocking indefinitely if the flusher stalls.
+			// Wait until the slot's sequence counter matches our head value.
+			// This prevents two writers whose head values alias the same index
+			// from writing concurrently when the ring wraps.
 			spins := 0
-			for entry.committed.Load() != 0 {
+			for entry.expected.Load() != head {
 				runtime.Gosched()
 				spins++
 				if spins > 1000 {
@@ -128,7 +130,6 @@ func (rb *RingBuffer) Write(data []byte) bool {
 				}
 			}
 
-			// Reuse buffer if possible to reduce allocations
 			dataLen := len(data)
 
 			if cap(entry.data) >= dataLen {
@@ -140,9 +141,6 @@ func (rb *RingBuffer) Write(data []byte) bool {
 			}
 
 			entry.size.Store(int32(dataLen)) // #nosec G115 - dataLen is from len() which is always non-negative
-
-			// Mark entry as committed after all data is written.
-			// This is the synchronisation point for the flusher.
 			entry.committed.Store(1)
 
 			return true
@@ -209,6 +207,7 @@ func (rb *RingBuffer) flusher() {
 					rb.dropped.Add(1)
 					entry.size.Store(0)
 					entry.committed.Store(0)
+					entry.expected.Store(tail + uint64(len(rb.entries)))
 					rb.tail.Store(tail + 1)
 					break
 				}
@@ -216,13 +215,11 @@ func (rb *RingBuffer) flusher() {
 				if size > 0 {
 					batchBuf = append(batchBuf, entry.data[:size]...)
 				}
-				// Always clear and advance for committed entries, even zero-size ones.
-				// Without this, a zero-length write leaves the slot permanently occupied.
 				entry.size.Store(0)
-				// Memory barrier: mark as consumed, allowing writer to reuse slot.
 				entry.committed.Store(0)
+				// Advance the sequence so the next round's writer can claim this slot.
+				entry.expected.Store(tail + uint64(len(rb.entries)))
 				collected++
-				// Only advance tail when entry is consumed.
 				rb.tail.Store(tail + 1)
 			}
 
@@ -269,6 +266,7 @@ func (rb *RingBuffer) flushAll() {
 			rb.dropped.Add(1)
 			entry.size.Store(0)
 			entry.committed.Store(0)
+			entry.expected.Store(tail + uint64(len(rb.entries)))
 			rb.tail.Store(tail + 1)
 			continue
 		}
@@ -278,12 +276,10 @@ func (rb *RingBuffer) flushAll() {
 				rb.dropped.Add(1)
 			}
 		}
-		// Always clear and advance for committed entries, even zero-size ones.
-		// Without this, a zero-length write leaves the slot permanently occupied.
 		entry.size.Store(0)
-		// Memory barrier: mark as consumed, allowing writer to reuse slot.
 		entry.committed.Store(0)
-		// Only advance tail when entry is consumed.
+		// Advance the sequence so the next round's writer can claim this slot.
+		entry.expected.Store(tail + uint64(len(rb.entries)))
 		rb.tail.Store(tail + 1)
 	}
 }

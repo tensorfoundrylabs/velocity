@@ -127,22 +127,22 @@ func TestRingBuffer_OverflowHandling(t *testing.T) {
 }
 
 // TestRingBuffer_Write_BoundedSpin verifies that Write returns false (dropped) rather than spinning
-// forever when a slot stays committed. This guards the bounded-spin fix in Write.
+// forever when a slot's sequence counter never advances. This guards the bounded-spin fix in Write.
 func TestRingBuffer_Write_BoundedSpin(t *testing.T) {
 	buf := &safeBuffer{}
-	// Size-2 buffer: both slots will be permanently committed so Write hits the spin limit.
+	// Size-2 buffer: slot expected values are set to an unreachable sequence so Write hits the spin limit.
 	rb := NewRingBuffer(buf, 2)
 
 	// Stop the flusher so nothing is ever consumed.
 	close(rb.stopCh)
 	<-rb.doneCh
 
-	// Mark both slots as permanently committed so Write spins waiting for them to clear.
+	// Set expected to a value that will never match head=0, so Write spins indefinitely.
 	for i := range rb.entries {
-		rb.entries[i].committed.Store(1)
+		rb.entries[i].expected.Store(999)
 	}
 
-	// Reset head and tail so Write claims a slot and enters the spin loop.
+	// Reset head and tail so Write claims slot 0 and enters the sequence spin loop.
 	rb.head.Store(0)
 	rb.tail.Store(0)
 
