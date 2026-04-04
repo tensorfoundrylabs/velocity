@@ -22,7 +22,7 @@ func TestDetailedLogging(t *testing.T) {
 			},
 			logFunc: func(l *Logger) {
 				l.InfoDetailed("Test message",
-					StringField("key1", "value1"),
+					String("key1", "value1"),
 					Int("key2", 42),
 					Bool("key3", true))
 			},
@@ -37,7 +37,7 @@ func TestDetailedLogging(t *testing.T) {
 			},
 			logFunc: func(l *Logger) {
 				l.ErrorDetailed("Error occurred",
-					StringField("error", "connection timeout"),
+					String("error", "connection timeout"),
 					Int("retry", 3))
 			},
 			wantTree: true,
@@ -51,7 +51,7 @@ func TestDetailedLogging(t *testing.T) {
 			},
 			logFunc: func(l *Logger) {
 				l.WarnDetailed("Warning message",
-					StringField("warning", "high memory usage"),
+					String("warning", "high memory usage"),
 					Float64("usage_percent", 89.5))
 			},
 			wantTree: true,
@@ -66,8 +66,8 @@ func TestDetailedLogging(t *testing.T) {
 			},
 			logFunc: func(l *Logger) {
 				l.DebugDetailed("Debug info",
-					StringField("module", "auth"),
-					StringField("action", "token_refresh"))
+					String("module", "auth"),
+					String("action", "token_refresh"))
 			},
 			wantTree: true,
 		},
@@ -80,7 +80,7 @@ func TestDetailedLogging(t *testing.T) {
 			},
 			logFunc: func(l *Logger) {
 				l.Info("Regular message",
-					StringField("key", "value"),
+					String("key", "value"),
 					Int("number", 123))
 			},
 			wantTree: false,
@@ -148,10 +148,10 @@ func TestDetailedMethodsWithNilLogger(_ *testing.T) {
 	var logger *Logger = nil
 
 	// These should not panic, just print to stderr
-	logger.InfoDetailed("Test", StringField("key", "value"))
-	logger.ErrorDetailed("Test", StringField("key", "value"))
-	logger.WarnDetailed("Test", StringField("key", "value"))
-	logger.DebugDetailed("Test", StringField("key", "value"))
+	logger.InfoDetailed("Test", String("key", "value"))
+	logger.ErrorDetailed("Test", String("key", "value"))
+	logger.WarnDetailed("Test", String("key", "value"))
+	logger.DebugDetailed("Test", String("key", "value"))
 }
 
 func TestDetailedMethodsRespectLogLevel(_ *testing.T) {
@@ -160,12 +160,12 @@ func TestDetailedMethodsRespectLogLevel(_ *testing.T) {
 	logger := NewWithConfig(cfg)
 
 	// These should be filtered out
-	logger.DebugDetailed("Debug", StringField("key", "value"))
-	logger.InfoDetailed("Info", StringField("key", "value"))
+	logger.DebugDetailed("Debug", String("key", "value"))
+	logger.InfoDetailed("Info", String("key", "value"))
 
 	// These should pass through
-	logger.WarnDetailed("Warn", StringField("key", "value"))
-	logger.ErrorDetailed("Error", StringField("key", "value"))
+	logger.WarnDetailed("Warn", String("key", "value"))
+	logger.ErrorDetailed("Error", String("key", "value"))
 }
 
 func TestRaw_ConcurrentWithWrite(_ *testing.T) {

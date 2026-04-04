@@ -14,15 +14,12 @@ type Format int
 
 const (
 	FormatJSON Format = iota
-	FormatLogfmt
 )
 
 func (f Format) String() string {
 	switch f {
 	case FormatJSON:
 		return "json"
-	case FormatLogfmt:
-		return "logfmt"
 	default:
 		return "unknown"
 	}

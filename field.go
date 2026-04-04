@@ -63,8 +63,8 @@ func F(key string, value any) Field {
 	case time.Duration:
 		return Duration(key, v)
 	case error:
-		// Typed nils satisfy the error interface but panic on .Error(); delegate to ErrorField which handles them.
-		return ErrorField(key, v)
+		// Typed nils satisfy the error interface but panic on .Error(); delegate to Error which handles them.
+		return Error(key, v)
 	case fmt.Stringer:
 		// Typed nils satisfy fmt.Stringer but panic on .String(); delegate to Stringer which handles them.
 		return Stringer(key, v)
@@ -81,13 +81,6 @@ func String(key, val string) Field {
 		Type:  FieldTypeString,
 		value: unsafe.Pointer(&val),
 	}
-}
-
-// StringField is an alias for String kept for backwards compatibility.
-//
-// Deprecated: use String.
-func StringField(key, val string) Field {
-	return String(key, val)
 }
 
 func Int(key string, val int) Field {
@@ -164,13 +157,6 @@ func Error(key string, val error) Field {
 		Type:  FieldTypeError,
 		value: unsafe.Pointer(&val),
 	}
-}
-
-// ErrorField is an alias for Error kept for backwards compatibility.
-//
-// Deprecated: use Error.
-func ErrorField(key string, val error) Field {
-	return Error(key, val)
 }
 
 func Stringer(key string, val fmt.Stringer) Field {

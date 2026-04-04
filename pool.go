@@ -33,13 +33,13 @@ func PutTemplateBuffer(buf *bytes.Buffer) {
 	templateBufferPool.Put(buf)
 }
 
-// FieldSlicePool manages pre-allocated field slices.
+// fieldPool manages pre-allocated field slices.
 // Typical logs have 8 or fewer fields, so we pre-allocate this capacity.
-type FieldSlicePool struct {
+type fieldPool struct {
 	pool sync.Pool
 }
 
-var fieldSlicePool = &FieldSlicePool{
+var fieldSlicePool = &fieldPool{
 	pool: sync.Pool{
 		New: func() any {
 			slice := make([]Field, 0, 8)
@@ -88,35 +88,4 @@ func PutFieldSlice(fields []Field) {
 
 	fields = fields[:0]
 	fieldSlicePool.pool.Put(&fields)
-}
-
-type FieldSliceBuilder struct {
-	fields []Field
-}
-
-func NewFieldSliceBuilder() *FieldSliceBuilder {
-	return &FieldSliceBuilder{
-		fields: GetFieldSlice(),
-	}
-}
-
-func (b *FieldSliceBuilder) Add(key string, value any) *FieldSliceBuilder {
-	b.fields = append(b.fields, F(key, value))
-	return b
-}
-
-func (b *FieldSliceBuilder) AddField(f Field) *FieldSliceBuilder {
-	b.fields = append(b.fields, f)
-	return b
-}
-
-func (b *FieldSliceBuilder) Build() []Field {
-	return b.fields
-}
-
-func (b *FieldSliceBuilder) Release() {
-	if b.fields != nil {
-		PutFieldSlice(b.fields)
-		b.fields = nil
-	}
 }

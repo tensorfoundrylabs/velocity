@@ -18,7 +18,7 @@ func TestFatal_CustomHandler_CalledNotOsExit(t *testing.T) {
 	cfg.FatalHandler = func() { called = true }
 	l := NewWithConfig(cfg)
 
-	l.Fatal("something went wrong", StringField("code", "E001"))
+	l.Fatal("something went wrong", String("code", "E001"))
 
 	if !called {
 		t.Error("expected FatalHandler to be called")

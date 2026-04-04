@@ -40,8 +40,8 @@ func TestContextWithFields_Accumulates(t *testing.T) {
 	parent := NewForTesting(&buf)
 
 	ctx := NewContext(context.Background(), parent)
-	ctx = ContextWithFields(ctx, StringField("layer", "middleware"))
-	ctx = ContextWithFields(ctx, StringField("req", "abc"))
+	ctx = ContextWithFields(ctx, String("layer", "middleware"))
+	ctx = ContextWithFields(ctx, String("req", "abc"))
 
 	l := FromContext(ctx)
 	l.Info("test")

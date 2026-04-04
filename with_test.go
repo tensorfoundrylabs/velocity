@@ -12,7 +12,7 @@ func TestWith_FieldAppearsInOutput(t *testing.T) {
 
 	var buf bytes.Buffer
 	parent := NewForTesting(&buf)
-	child := parent.With(StringField("svc", "gateway"))
+	child := parent.With(String("svc", "gateway"))
 
 	child.Info("hello")
 
@@ -27,7 +27,7 @@ func TestWith_ChainedFieldsBothAppear(t *testing.T) {
 
 	var buf bytes.Buffer
 	parent := NewForTesting(&buf)
-	child := parent.With(StringField("a", "alpha")).With(StringField("b", "beta"))
+	child := parent.With(String("a", "alpha")).With(String("b", "beta"))
 
 	child.Info("chained")
 
@@ -45,7 +45,7 @@ func TestWith_ParentUnaffected(t *testing.T) {
 
 	var buf bytes.Buffer
 	parent := NewForTesting(&buf)
-	_ = parent.With(StringField("child_field", "x"))
+	_ = parent.With(String("child_field", "x"))
 
 	buf.Reset()
 	parent.Info("parent log")
@@ -60,7 +60,7 @@ func TestWith_NilLogger_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	var l *Logger
-	child := l.With(StringField("k", "v"))
+	child := l.With(String("k", "v"))
 	if child != nil {
 		t.Error("expected nil for nil.With()")
 	}
@@ -87,7 +87,7 @@ func TestWithTemplate_PreservesParentState(t *testing.T) {
 	sampler := NewCountSampler(10, 5)
 	parent.sampler = sampler
 
-	withField := parent.With(StringField("svc", "payments"))
+	withField := parent.With(String("svc", "payments"))
 
 	// Count entries received by the additional writer.
 	var count atomic.Int32

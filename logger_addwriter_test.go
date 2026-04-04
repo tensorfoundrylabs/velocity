@@ -272,7 +272,7 @@ func TestLogger_AddWriter_EntryIntegrity(t *testing.T) {
 	logger.AddWriter("tracker", &trackingWriterFn)
 
 	testMsg := "integrity test message"
-	testField := StringField("component", "test")
+	testField := String("component", "test")
 
 	logger.Info(testMsg, testField)
 

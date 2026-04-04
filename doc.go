@@ -7,7 +7,7 @@
 // Quick start:
 //
 //	log := velocity.New(os.Stdout)
-//	log.Info("server started", velocity.StringField("addr", ":8080"))
+//	log.Info("server started", velocity.String("addr", ":8080"))
 //
 // For more control, use the builder or functional options:
 //

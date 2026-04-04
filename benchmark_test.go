@@ -21,7 +21,7 @@ func newDiscardLogger() *Logger {
 // fiveFields returns a representative slice of mixed-type fields.
 func fiveFields() []Field {
 	return []Field{
-		StringField("service", "api-gateway"),
+		String("service", "api-gateway"),
 		Int("port", 8080),
 		Float64("latency_ms", 1.23),
 		Bool("success", true),
@@ -31,16 +31,16 @@ func fiveFields() []Field {
 
 func tenFields() []Field {
 	return []Field{
-		StringField("service", "api-gateway"),
+		String("service", "api-gateway"),
 		Int("port", 8080),
 		Float64("latency_ms", 1.23),
 		Bool("success", true),
 		Duration("elapsed", 42*time.Millisecond),
-		StringField("region", "ap-southeast-2"),
+		String("region", "ap-southeast-2"),
 		Int64("request_id", 9876543210),
 		Bool("cached", false),
 		Float64("cpu", 0.72),
-		StringField("user", "alice"),
+		String("user", "alice"),
 	}
 }
 
@@ -55,12 +55,12 @@ func BenchmarkInfo_NoFields(b *testing.B) {
 	}
 }
 
-func BenchmarkInfo_OneStringField(b *testing.B) {
+func BenchmarkInfo_OneString(b *testing.B) {
 	l := newDiscardLogger()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		l.Info("request completed", StringField("service", "api-gateway"))
+		l.Info("request completed", String("service", "api-gateway"))
 	}
 }
 
@@ -109,12 +109,12 @@ func BenchmarkInfo_WithSampler(b *testing.B) {
 
 // ---- Field construction benchmarks ------------------------------------------
 
-func BenchmarkStringField(b *testing.B) {
+func BenchmarkString(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var f Field
 	for b.Loop() {
-		f = StringField("key", "value")
+		f = String("key", "value")
 	}
 	_ = f
 }

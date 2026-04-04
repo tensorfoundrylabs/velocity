@@ -25,10 +25,10 @@ type concreteStringer struct{ val string }
 
 func (s *concreteStringer) String() string { return s.val }
 
-func TestErrorField_TypedNil(t *testing.T) {
+func TestError_TypedNil(t *testing.T) {
 	var err *concreteError
 
-	f := ErrorField("err", err)
+	f := Error("err", err)
 
 	if f.Type != FieldTypeString {
 		t.Errorf("expected FieldTypeString for typed nil, got %v", f.Type)
