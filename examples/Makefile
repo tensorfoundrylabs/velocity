@@ -1,0 +1,122 @@
+.PHONY: run-basic run-json run-themes run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-all build-all clean help
+
+SEPARATOR = @echo "" && echo "============================================================" && echo ""
+
+## run-basic: Run the basic getting-started example
+run-basic:
+	go run ./basic
+
+## run-json: Run the structured JSON logging example
+run-json:
+	go run ./json-logging
+
+## run-themes: Run the theme showcase example
+run-themes:
+	go run ./themes
+
+## run-pretty: Run the pretty-output showcase example
+run-pretty:
+	go run ./pretty-output
+
+## run-tables: Run the table rendering example
+run-tables:
+	go run ./tables
+
+## run-progress: Run the progress bars and spinners example
+run-progress:
+	go run ./progress
+
+## run-slog: Run the slog bridge example
+run-slog:
+	go run ./slog-bridge
+
+## run-multi-writer: Run the multi-writer fan-out example
+run-multi-writer:
+	go run ./multi-writer
+
+## run-sampling: Run the log sampling example
+run-sampling:
+	go run ./sampling
+
+## run-terminal-velocity: Run the hero GPU cluster deploy simulator
+run-terminal-velocity:
+	go run ./terminal-velocity
+
+## run-all: Run all examples sequentially with a separator between each
+run-all:
+	@echo "Running all velocity examples..."
+	@echo ""
+	@echo "============================================================"
+	@echo "  EXAMPLE 1: basic"
+	@echo "============================================================"
+	go run ./basic
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 2: json-logging"
+	@echo "============================================================"
+	go run ./json-logging
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 3: themes"
+	@echo "============================================================"
+	go run ./themes
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 4: pretty-output"
+	@echo "============================================================"
+	go run ./pretty-output
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 5: tables"
+	@echo "============================================================"
+	go run ./tables
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 6: progress (interactive)"
+	@echo "============================================================"
+	go run ./progress
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 7: slog-bridge"
+	@echo "============================================================"
+	go run ./slog-bridge
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 8: multi-writer"
+	@echo "============================================================"
+	go run ./multi-writer
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 9: sampling"
+	@echo "============================================================"
+	go run ./sampling
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 10: terminal-velocity (interactive)"
+	@echo "============================================================"
+	go run ./terminal-velocity
+
+## build-all: Compile all examples to binaries in examples/bin/
+build-all:
+	go build -o bin/basic              ./basic
+	go build -o bin/json-logging       ./json-logging
+	go build -o bin/themes             ./themes
+	go build -o bin/pretty-output      ./pretty-output
+	go build -o bin/tables             ./tables
+	go build -o bin/progress           ./progress
+	go build -o bin/slog-bridge        ./slog-bridge
+	go build -o bin/multi-writer       ./multi-writer
+	go build -o bin/sampling           ./sampling
+	go build -o bin/terminal-velocity  ./terminal-velocity
+
+## clean: Remove compiled example binaries
+clean:
+	go clean ./basic ./json-logging ./themes ./pretty-output \
+		./tables ./progress ./slog-bridge ./multi-writer ./sampling \
+		./terminal-velocity
+	-rm -rf bin
+
+## help: Show this help message
+help:
+	@echo "Available targets:"
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
