@@ -1,8 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Velocity" />
-</p>
-
-<p align="center">
+  <img src="assets/banner.png" alt="Velocity" width="600" /><br/>
   <a href="https://github.com/tensorfoundrylabs/velocity/actions/workflows/ci.yml"><img src="https://github.com/tensorfoundrylabs/velocity/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pkg.go.dev/github.com/tensorfoundrylabs/velocity"><img src="https://pkg.go.dev/badge/github.com/tensorfoundrylabs/velocity.svg" alt="Go Reference"></a>
   <a href="https://goreportcard.com/report/github.com/tensorfoundrylabs/velocity"><img src="https://goreportcard.com/badge/github.com/tensorfoundrylabs/velocity" alt="Go Report Card"></a>
