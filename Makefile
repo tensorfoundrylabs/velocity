@@ -10,7 +10,8 @@ GOBIN := $(shell go env GOPATH)/bin
 endif
 
 .PHONY: all clean test test-race test-short test-cover lint fmt vet align tidy \
-        install-tools check-tools ready ready-tools ci help
+        install-tools check-tools ready ready-tools ci help \
+        bench-compare bench-compare-short
 
 # ── Test ─────────────────────────────────────────────────────────────────────
 
@@ -128,6 +129,18 @@ check-tools:
 		printf "  goimports:      \033[31mnot installed\033[0m\n"; \
 	fi
 
+# ── Comparative benchmarks ───────────────────────────────────────────────────
+
+## bench-compare: Run comparative benchmarks against other logging libraries
+bench-compare:
+	cd benchmarks && go test -bench=. -benchmem -count=3 -benchtime=2s ./...
+
+## bench-compare-short: Quick comparative benchmark (1 iteration)
+bench-compare-short:
+	cd benchmarks && go test -bench=. -benchmem -count=1 ./...
+
+.PHONY: bench-compare bench-compare-short
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
 clean:
@@ -160,6 +173,10 @@ help:
 	@echo ""
 	@echo "CI:"
 	@echo "  make ci             Full CI pipeline: quality + tests + coverage"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  make bench-compare       Compare against zap, zerolog, slog, charmbracelet, pterm"
+	@echo "  make bench-compare-short Quick single-run comparison"
 	@echo ""
 	@echo "Tools:"
 	@echo "  make install-tools  Install golangci-lint, betteralign, goimports, gofumpt"

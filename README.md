@@ -2,9 +2,9 @@
 
 > Give your Go CLI apps terminal Velocity!
 
-Fast, allocation optimised structured logging for Go with rich terminal output for heavy log presentation and logging. Battle tested and hardened through years of heavy log use.
+Fast, allocation optimised structured logging for Go with rich terminal output for heavy log presentation and logging. Battle tested and hardened through years of heavy log use. Extracted from TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) where it powers all CLI logging. 
 
-Extracted from TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) where it powers all CLI logging.
+We used this instead of [pTerm](https://github.com/pterm/pterm) for speed and efficiency, which was used previously in tools like [Olla](http://github.com/thushan/olla), but we hit the limits with FoundryOS.
 
 ## Install
 
@@ -70,24 +70,69 @@ import (
 
 ## Performance
 
-Hot path benchmarks (AMD Ryzen 7 5700G):
+### Comparative benchmarks
+
+Velocity was built because we needed something faster and lighter than pterm for high-volume logging in FoundryOS. Here's how it stacks up against the popular Go logging libraries (AMD Ryzen 9 5950X, Go 1.24, writing to `io.Discard`):
+
+| Library | Info (no fields) | Info (3 fields) | With + Info | Disabled level |
+|---------|-----------------|-----------------|-------------|---------------|
+| **velocity** | **31 ns** / 0 alloc | **67 ns** / 1 alloc | **186 ns** / 4 alloc | 41 ns / 0 alloc |
+| [zerolog](https://github.com/rs/zerolog) | 89 ns / 0 alloc | 204 ns / 0 alloc | 422 ns / 2 alloc | 10 ns / 0 alloc |
+| [zap](https://github.com/uber-go/zap) | 240 ns / 0 alloc | 525 ns / 1 alloc | 1319 ns / 6 alloc | 9 ns / 0 alloc |
+| [slog](https://pkg.go.dev/log/slog) | 663 ns / 0 alloc | 1666 ns / 4 alloc | 1684 ns / 11 alloc | 10 ns / 0 alloc |
+| [charmbracelet/log](https://github.com/charmbracelet/log) | 4 ns / 0 alloc | 6 ns / 0 alloc | 2618 ns / 5 alloc | 4 ns / 0 alloc |
+| [pterm](https://github.com/pterm/pterm) | 12926 ns / 65 alloc | 25334 ns / 144 alloc | 13125 ns / 65 alloc | 19 ns / 0 alloc |
+
+Velocity is ~3x faster than zerolog and ~8x faster than zap on the hot logging path. charmbracelet/log's near-zero numbers are from short-circuiting format work when writing to non-TTY output; its `With` cost (2618 ns) shows the real overhead. pterm is a display library first, and its allocation profile reflects that.
+
+### Realistic workload benchmarks
+
+These cover the scenarios that actually matter in production: accumulated context, mixed field types, large messages, and parallel contention.
+
+| Scenario | velocity | [zerolog](https://github.com/rs/zerolog) | [zap](https://github.com/uber-go/zap) | [slog](https://pkg.go.dev/log/slog) |
+|----------|----------|---------|-----|------|
+| Accumulated context (10 fields) | **45 ns** / 0 alloc | 99 ns / 0 alloc | 344 ns / 0 alloc | 672 ns / 0 alloc |
+| Mixed field types (8 types) | **153 ns** / 4 alloc | 799 ns / 2 alloc | 1307 ns / 1 alloc | 2481 ns / 8 alloc |
+| Error field | **96 ns** / 1 alloc | 136 ns / 0 alloc | 510 ns / 1 alloc | 912 ns / 1 alloc |
+| Large message (1 KB) | **43 ns** / 0 alloc | 419 ns / 0 alloc | 1509 ns / 0 alloc | 2255 ns / 1 alloc |
+| 10 inline fields | **117 ns** / 3 alloc | 383 ns / 0 alloc | 1159 ns / 1 alloc | 3170 ns / 10 alloc |
+| Parallel (16 goroutines) | 53 ns / 1 alloc | **22 ns** / 0 alloc | 150 ns / 1 alloc | 279 ns / 0 alloc |
+
+zerolog wins the parallel benchmark thanks to its lock-free event chaining design. Velocity wins everything else.
+
+### Run the benchmarks yourself
+
+```bash
+# Comparative benchmarks against other libraries
+make bench-compare
+
+# Quick single-pass comparison
+make bench-compare-short
+
+# Velocity internal benchmarks only
+go test -bench=. -benchmem -count=3 ./...
+```
+
+The benchmark suite lives in `benchmarks/` as a separate Go module. Add new libraries by appending to the `libraries` slice in `benchmarks/bench_test.go`.
+
+### Internal benchmarks
 
 | Operation | ns/op | allocs/op |
 |-----------|-------|-----------|
-| Info, no fields | 29 | 0 |
-| Info, 5 mixed fields | 38 | 0 |
-| Info, 10 fields | 40 | 0 |
-| Level check (disabled) | 2.3 | 0 |
-| Sampler check | 6.0 | 0 |
-| Entry pool round-trip | 15 | 0 |
-| Int field construction | 1.4 | 0 |
-| ConsoleWriter, 5 fields | 462 | 3 |
-| JSONWriter, 5 fields | 702 | 1 |
-| JSONWriter, parallel | 150 | 1 |
+| Info, no fields | 31 | 0 |
+| Info, 5 pre-built fields | 47 | 0 |
+| Info, 10 fields | 56 | 0 |
+| Level check (disabled) | 2.7 | 0 |
+| Sampler check | 9.0 | 0 |
+| Entry pool round-trip | 21 | 0 |
+| Int field construction | 1.8 | 0 |
+| ConsoleWriter, 5 fields | 694 | 3 |
+| JSONWriter, 5 fields | 949 | 1 |
+| JSONWriter, parallel | 153 | 1 |
 | slog handler, 3 string attrs | 490 | 6 |
-| Parallel Info, 3 fields | 36 | 0 |
+| Parallel Info, 3 fields | 46 | 0 |
 
-Run benchmarks: `go test -bench=. -benchmem -count=3 ./...`
+Run internal benchmarks: `go test -bench=. -benchmem -count=3 ./...`
 
 ## Presets
 
@@ -142,6 +187,11 @@ log := velocity.NewWithConfig(cfg)
 ## Dependencies
 
 One: [`golang.org/x/term`](https://pkg.go.dev/golang.org/x/term) for TTY detection. No other external dependencies. Zero third-party test dependencies.
+
+## Similar Libraries
+
+* [pTerm](https://github.com/pterm/pterm) - Our favourite visually pleasing library for terminal output we modeled the styles on, but Velocity offers speed and efficiency for high-volume logging.
+* [logrus](https://github.com/sirupsen/logrus) - Another popular structured logging library, but Velocity is designed for speed and efficiency in CLI applications.
 
 ## Licence
 
