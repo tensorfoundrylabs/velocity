@@ -70,11 +70,11 @@ func (w *JSONWriter) formatJSON(buf *BytesBuffer, e *Entry) {
 		_ = buf.WriteByte(',')
 		w.writeJSONString(buf, "caller")
 		_ = buf.WriteByte(':')
-		_ = buf.WriteByte('"')
-		buf.WriteString(e.Caller)
+		w.writeJSONString(buf, e.Caller)
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "line")
 		_ = buf.WriteByte(':')
 		buf.WriteInt(int64(e.Line))
-		_ = buf.WriteByte('"')
 	}
 
 	for _, f := range e.Fields {

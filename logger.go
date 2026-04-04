@@ -503,7 +503,9 @@ func (l *Logger) Raw(message string) {
 
 	switch {
 	case l.consoleWriter != nil && l.consoleWriter.out != nil:
+		l.consoleWriter.mu.Lock()
 		_, _ = io.WriteString(l.consoleWriter.out, message)
+		l.consoleWriter.mu.Unlock()
 	case l.cfg != nil && l.cfg.ConsoleOutput != nil:
 		_, _ = io.WriteString(l.cfg.ConsoleOutput, message)
 	default:
@@ -669,9 +671,9 @@ func (l *Logger) TreeWithIndent(label string, items []TreeItem, indent bool) {
 // writeTreeItem recursively writes a tree item with proper indentation.
 // Tree structure uses box-drawing characters with consistent 4-space indentation.
 func (l *Logger) writeTreeItem(item TreeItem, prefix string, isLast bool) {
-	connector := "├─ "
+	connector := treeBranch
 	if isLast {
-		connector = "└─ "
+		connector = treeCorner
 	}
 
 	var line string
@@ -686,9 +688,9 @@ func (l *Logger) writeTreeItem(item TreeItem, prefix string, isLast bool) {
 	// Indentation preserves visual hierarchy in tree structure
 	childPrefix := prefix
 	if isLast {
-		childPrefix += "    "
+		childPrefix += treeBlank
 	} else {
-		childPrefix += "│   "
+		childPrefix += treePipe
 	}
 
 	for i, child := range item.Children {
@@ -764,9 +766,9 @@ func (l *Logger) TableWithIndent(headers []string, rows [][]string, indent bool)
 // Progress and Spinner methods removed - add progress.go if these features are needed
 
 func writeTreeItemStandalone(w io.Writer, item TreeItem, prefix string, isLast bool) {
-	connector := "├─ "
+	connector := treeBranch
 	if isLast {
-		connector = "└─ "
+		connector = treeCorner
 	}
 
 	if item.Value != nil {
@@ -777,9 +779,9 @@ func writeTreeItemStandalone(w io.Writer, item TreeItem, prefix string, isLast b
 
 	childPrefix := prefix
 	if isLast {
-		childPrefix += "    "
+		childPrefix += treeBlank
 	} else {
-		childPrefix += "│   "
+		childPrefix += treePipe
 	}
 
 	for i, child := range item.Children {

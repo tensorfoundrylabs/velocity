@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// Box-drawing constants for tree rendering.
+const (
+	treeBranch = "├─ "
+	treeCorner = "└─ "
+	treePipe   = "│   "
+	treeBlank  = "    "
+)
+
 // Pretty provides formatted output utilities for styled terminal printing.
 type Pretty struct {
 	writer io.Writer
@@ -268,12 +276,43 @@ func (*Pretty) calculateColumnWidths(headers []string, rows [][]string) []int {
 	}
 	for _, row := range rows {
 		for i, cell := range row {
-			if i < len(colWidths) && len(cell) > colWidths[i] {
-				colWidths[i] = len(cell)
+			if i < len(colWidths) {
+				if vl := visibleLen(cell); vl > colWidths[i] {
+					colWidths[i] = vl
+				}
 			}
 		}
 	}
 	return colWidths
+}
+
+// visibleLen returns the number of visible runes in s, ignoring ANSI escape sequences.
+func visibleLen(s string) int {
+	n := 0
+	inEscape := false
+	for _, r := range s {
+		if inEscape {
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		if r == '\033' {
+			inEscape = true
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// padRightVisible pads s to width based on visible rune count, accounting for ANSI codes.
+func padRightVisible(s string, width int) string {
+	visible := visibleLen(s)
+	if visible >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-visible)
 }
 
 func (p *Pretty) writeTableTopBorder(buf *bytes.Buffer, colWidths []int) {
@@ -332,7 +371,7 @@ func (p *Pretty) writeTableRow(buf *bytes.Buffer, row []string, colWidths []int)
 		}
 		buf.WriteString(" ")
 		buf.WriteString(p.theme.MessageColour.ANSI(true))
-		buf.WriteString(padRight(cell, colWidths[i]))
+		buf.WriteString(padRightVisible(cell, colWidths[i]))
 		buf.WriteString(Reset)
 		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
 		buf.WriteString(" ")
@@ -360,7 +399,7 @@ func (p *Pretty) writeTableBottomBorder(buf *bytes.Buffer, colWidths []int) {
 func (p *Pretty) Tree(nodes []TreeItem) {
 	if p == nil {
 		for i, node := range nodes {
-			writeTreeItemPrettyStandalone(os.Stdout, node, 0, i == len(nodes)-1)
+			writeTreeItemPrettyStandalone(os.Stdout, node, "", i == len(nodes)-1)
 		}
 		return
 	}
@@ -372,7 +411,7 @@ func (p *Pretty) Tree(nodes []TreeItem) {
 	buf := &bytes.Buffer{}
 
 	for i, node := range nodes {
-		p.writePrettyTreeItem(buf, node, 0, i == len(nodes)-1)
+		p.writePrettyTreeItem(buf, node, "", i == len(nodes)-1)
 	}
 
 	if p.writer == nil {
@@ -383,41 +422,38 @@ func (p *Pretty) Tree(nodes []TreeItem) {
 	_, _ = buf.WriteTo(p.writer)
 }
 
-func writeTreeItemPrettyStandalone(w io.Writer, node TreeItem, depth int, isLast bool) {
-	if depth > 0 {
-		for range depth - 1 {
-			_, _ = fmt.Fprint(w, "    ")
-		}
-		if isLast {
-			_, _ = fmt.Fprint(w, "└─ ")
-		} else {
-			_, _ = fmt.Fprint(w, "├─ ")
-		}
+func writeTreeItemPrettyStandalone(w io.Writer, node TreeItem, prefix string, isLast bool) {
+	connector := treeBranch
+	if isLast {
+		connector = treeCorner
 	}
 
 	if node.Value != nil {
-		_, _ = fmt.Fprintf(w, "%s: %v\n", node.Key, node.Value)
+		_, _ = fmt.Fprintf(w, "%s%s%s: %v\n", prefix, connector, node.Key, node.Value)
 	} else {
-		_, _ = fmt.Fprintln(w, node.Key)
+		_, _ = fmt.Fprintf(w, "%s%s%s\n", prefix, connector, node.Key)
+	}
+
+	childPrefix := prefix
+	if isLast {
+		childPrefix += treeBlank
+	} else {
+		childPrefix += treePipe
 	}
 
 	for i, child := range node.Children {
-		writeTreeItemPrettyStandalone(w, child, depth+1, i == len(node.Children)-1)
+		writeTreeItemPrettyStandalone(w, child, childPrefix, i == len(node.Children)-1)
 	}
 }
 
-func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, depth int, isLast bool) {
-	if depth > 0 {
-		for range depth - 1 {
-			buf.WriteString("    ")
-		}
-		if isLast {
-			buf.WriteString("└─ ")
-		} else {
-			buf.WriteString("├─ ")
-		}
+func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, prefix string, isLast bool) {
+	connector := treeBranch
+	if isLast {
+		connector = treeCorner
 	}
 
+	buf.WriteString(prefix)
+	buf.WriteString(connector)
 	buf.WriteString(p.theme.MessageColour.ANSI(true))
 	if node.Value != nil {
 		fmt.Fprintf(buf, "%s: %v", node.Key, node.Value)
@@ -427,8 +463,15 @@ func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, depth int
 	buf.WriteString(Reset)
 	buf.WriteString("\n")
 
+	childPrefix := prefix
+	if isLast {
+		childPrefix += treeBlank
+	} else {
+		childPrefix += treePipe
+	}
+
 	for i, child := range node.Children {
-		p.writePrettyTreeItem(buf, child, depth+1, i == len(node.Children)-1)
+		p.writePrettyTreeItem(buf, child, childPrefix, i == len(node.Children)-1)
 	}
 }
 

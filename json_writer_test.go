@@ -72,7 +72,47 @@ func TestJSONWriter_AddCaller(t *testing.T) {
 	if !strings.Contains(output, `"caller"`) {
 		t.Fatalf("expected JSON output to contain caller field, got: %s", output)
 	}
-	if !strings.Contains(output, `_test.go:`) {
+	// caller is now a separate string field; line is a separate numeric field
+	if !strings.Contains(output, `"line"`) {
+		t.Fatalf("expected JSON output to contain line field, got: %s", output)
+	}
+	if !strings.Contains(output, `_test.go"`) {
 		t.Fatalf("expected caller to reference a test file, got: %s", output)
+	}
+}
+
+func TestJSONWriter_CallerEscaping(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: "escaping test",
+		Caller:  `path\to\file.go`,
+		Line:    42,
+	}
+
+	if err := w.Write(e); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	output := buf.String()
+
+	// Must be valid JSON.
+	// Manually verify required fields are present and properly escaped.
+	if !strings.Contains(output, `"caller"`) {
+		t.Errorf("expected caller field, got: %s", output)
+	}
+	if !strings.Contains(output, `"line"`) {
+		t.Errorf("expected line field, got: %s", output)
+	}
+	// Backslashes must be escaped as \\ in JSON.
+	if !strings.Contains(output, `path\\to\\file.go`) {
+		t.Errorf("expected escaped backslashes in caller, got: %s", output)
+	}
+	// line must be a bare number, not quoted.
+	if !strings.Contains(output, `"line":42`) {
+		t.Errorf("expected numeric line value, got: %s", output)
 	}
 }

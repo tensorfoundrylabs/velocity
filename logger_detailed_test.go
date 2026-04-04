@@ -1,6 +1,8 @@
 package velocity
 
 import (
+	"bytes"
+	"sync"
 	"testing"
 )
 
@@ -164,6 +166,39 @@ func TestDetailedMethodsRespectLogLevel(_ *testing.T) {
 	// These should pass through
 	logger.WarnDetailed("Warn", StringField("key", "value"))
 	logger.ErrorDetailed("Error", StringField("key", "value"))
+}
+
+func TestRaw_ConcurrentWithWrite(_ *testing.T) {
+	buf := &bytes.Buffer{}
+	log := New(buf)
+
+	var wg sync.WaitGroup
+	const iters = 200
+
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		for range iters {
+			log.Raw("raw line\n")
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for range iters {
+			log.Info("info message")
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for range iters {
+			log.Raw("another raw\n")
+		}
+	}()
+
+	wg.Wait()
 }
 
 // TestEntryPoolResetsForceTreeDisplay verifies that the forceTreeDisplay flag
