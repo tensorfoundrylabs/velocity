@@ -8,13 +8,14 @@ before:
     - go test ./... -race -count=1
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-{{.ShortCommit}}"
+  version_template: "{{ incpatch .Version }}-{{.ShortCommit}}"
 
-# No builds — velocity is a library, not a binary
-builds: []
+# Library release, no binaries to build.
+builds:
+  - skip: true
 
 checksum:
-  name_template: "checksums.txt"
+  disable: true
 
 changelog:
   sort: asc
