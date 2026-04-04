@@ -58,6 +58,7 @@ lint:
 		else \
 			printf "  golangci-lint %s [require: %s \033[31m(pinned)\033[0m]\n" "$$INSTALLED" "$(GOLANGCI_LINT_VERSION)"; \
 		fi; \
+		golangci-lint config verify && \
 		golangci-lint run --fix; \
 	else \
 		echo "  golangci-lint not found. Run 'make install-tools'."; \
