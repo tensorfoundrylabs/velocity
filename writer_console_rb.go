@@ -30,6 +30,11 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 		actualOut = file
 	}
 
+	// Default to local time, matching ConsoleWriter behaviour.
+	if displayTimezone == nil {
+		displayTimezone = time.Local
+	}
+
 	w := &ConsoleWriterRB{
 		out:             actualOut,
 		theme:           theme,
@@ -101,11 +106,8 @@ func (w *ConsoleWriterRB) Write(e *Entry) error {
 
 func (w *ConsoleWriterRB) formatEntry(buf *BytesBuffer, e *Entry) {
 	if !e.Time.IsZero() {
-		displayTime := e.Time
-		if w.displayTimezone != nil {
-			displayTime = e.Time.In(w.displayTimezone)
-		}
-		buf.AppendTime(displayTime, "2006-01-02T15:04:05.000Z07:00")
+		// displayTimezone is always non-nil; NewConsoleWriterRB defaults nil to time.Local.
+		buf.AppendTime(e.Time.In(w.displayTimezone), "2006-01-02T15:04:05.000Z07:00")
 		_ = buf.WriteByte(' ')
 	}
 
