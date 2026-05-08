@@ -120,7 +120,8 @@ func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *The
 		}
 		buf.WriteString(entry.Caller)
 		_ = buf.WriteByte(':')
-		buf.WriteString(strconv.Itoa(entry.Line))
+		var lineBuf [10]byte
+		buf.Write(strconv.AppendInt(lineBuf[:0], int64(entry.Line), 10))
 		if t.useColours && theme != nil {
 			buf.WriteString(Reset)
 		}
