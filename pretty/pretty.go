@@ -33,6 +33,42 @@ func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	}
 }
 
+// NewFromLogger returns a Pretty whose output is routed through log's console writer,
+// serialised under the same mutex as concurrent log calls to prevent interleaving.
+// The pretty output is indented to align with the message column so it sits flush
+// with tree-mode log fields.
+// Returns nil if log is nil.
+func NewFromLogger(log *velocity.Logger) *Pretty {
+	if log == nil {
+		return nil
+	}
+	return &Pretty{
+		writer: &loggerWriter{log: log},
+		theme:  log.Theme(),
+	}
+}
+
+// loggerWriter adapts velocity.Logger to io.Writer, routing writes through Logger.RenderRaw
+// so that pretty output respects the console writer's mutex.
+type loggerWriter struct {
+	log *velocity.Logger
+}
+
+func (lw *loggerWriter) Write(p []byte) (int, error) {
+	lw.log.RenderRaw(&bytesRenderable{data: p})
+	return len(p), nil
+}
+
+// bytesRenderable wraps a byte slice as a Renderable.
+type bytesRenderable struct {
+	data []byte
+}
+
+func (r *bytesRenderable) Render(w io.Writer) error {
+	_, err := w.Write(r.data)
+	return err
+}
+
 // Info prints an info-styled message with nil-safe fallback to stdout.
 func (p *Pretty) Info(message string) {
 	if p == nil {

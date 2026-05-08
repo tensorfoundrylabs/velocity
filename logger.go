@@ -436,6 +436,15 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 	entry.Write() // Marks entry as written (required before Release can return to pool)
 }
 
+// Theme returns the console theme configured for this logger.
+// Falls back to ThemeNightOwl when nil or unconfigured.
+func (l *Logger) Theme() *Theme {
+	if l == nil || l.cfg == nil || l.cfg.ConsoleTheme == nil {
+		return ThemeNightOwl
+	}
+	return l.cfg.ConsoleTheme
+}
+
 // Status returns the StatusFormatter for coloured status indicators.
 // Safe to call even if logger is nil - returns a non-coloured formatter.
 func (l *Logger) Status() *StatusFormatter {
