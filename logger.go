@@ -451,11 +451,15 @@ func (l *Logger) Theme() *Theme {
 // SetTheme updates the active theme on all writers that support it.
 // Updates cfg.ConsoleTheme so subsequent With() clones and WithTemplate calls inherit the new theme.
 // Nil theme is treated as explicit colour-disable; writers receive nil and handle it themselves.
-// Nil-safe.
+// User-defined themes are cached automatically: if the theme's ANSI sequences are not yet populated
+// a clone is cached and used, so the caller's original pointer is not mutated. Nil-safe.
 func (l *Logger) SetTheme(theme *Theme) {
 	if l == nil {
 		return
 	}
+
+	// Ensure ANSI sequences are populated without mutating the caller's pointer.
+	theme = ensureCached(theme)
 
 	if l.cfg != nil {
 		l.cfg.ConsoleTheme = theme

@@ -77,8 +77,9 @@ type Theme struct {
 }
 
 // Cache pre-computes ANSI sequences for all colours used in hot-path rendering.
-// Call this after constructing a custom Theme to avoid per-render allocations.
-// The built-in themes call this automatically via cachedTheme.
+// Built-in themes call this automatically via cachedTheme.
+// Logger constructors and SetTheme call ensureCached internally, so explicit Cache() calls are
+// not required when themes enter through those paths. Not safe to call concurrently.
 func (t *Theme) Cache() {
 	t.cachedTimestampFg = t.TimestampColour.ANSI(true)
 	t.cachedMessageFg = t.MessageColour.ANSI(true)
@@ -115,6 +116,27 @@ func (t *Theme) CachedFieldValFg() string { return t.cachedFieldValFg }
 func cachedTheme(t Theme) *Theme {
 	t.Cache()
 	return &t
+}
+
+// ensureCached returns a fully-cached *Theme. If t is already a package-level cached theme
+// (i.e. cachedMessageFg is non-empty) it is returned as-is. Otherwise the value is cloned and
+// cached so the original user-constructed theme is not mutated and no concurrent readers race
+// the write.
+func ensureCached(t *Theme) *Theme {
+	if t == nil || t.cachedMessageFg != "" {
+		return t
+	}
+	clone := *t
+	clone.Cache()
+	return &clone
+}
+
+// EnsureCached returns a fully-cached *Theme safe for use by writers and formatters.
+// If the theme's ANSI sequences are already populated it is returned unchanged.
+// Otherwise a clone is made, cached, and returned — the original is not mutated.
+// Use this from external packages (e.g. pretty) that cannot access the internal clone helper.
+func (t *Theme) EnsureCached() *Theme {
+	return ensureCached(t)
 }
 
 var ThemeNightOwl = cachedTheme(Theme{

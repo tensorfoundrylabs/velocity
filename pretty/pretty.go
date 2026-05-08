@@ -26,9 +26,14 @@ type Pretty struct {
 // New returns a Pretty that writes to w using the given theme.
 // If theme is nil, ThemeNightOwl is used.
 // If w is nil, output is discarded — prefer NewFromLogger when a logger exists.
+// User-defined themes are cached automatically — no explicit Theme.Cache() call required.
 func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	if theme == nil {
 		theme = velocity.ThemeNightOwl
+	} else {
+		// EnsureCached clones and caches the theme only when needed, so the caller's
+		// pointer is not mutated and no race occurs if the theme is shared elsewhere.
+		theme = theme.EnsureCached()
 	}
 	if w == nil {
 		w = io.Discard
@@ -45,14 +50,14 @@ func New(w io.Writer, theme *velocity.Theme) *Pretty {
 //
 // To indent a specific block under the message column, use log.Render with a result
 // type directly — e.g. log.Render(p.NewTree(items)).
-// Returns nil if log is nil.
+// Returns nil if log is nil. The theme is cached automatically if not already populated.
 func NewFromLogger(log *velocity.Logger) *Pretty {
 	if log == nil {
 		return nil
 	}
 	return &Pretty{
 		writer: &loggerWriter{log: log},
-		theme:  log.Theme(),
+		theme:  log.Theme().EnsureCached(),
 	}
 }
 

@@ -42,6 +42,11 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 	if theme == nil {
 		theme = ThemeNightOwl
 		useColours = false // Explicitly disable colors when theme is nil
+	} else {
+		// Ensure ANSI sequences are populated for user-defined themes constructed via struct
+		// literal. ensureCached clones the theme when needed so the original is not mutated
+		// and concurrent readers on the caller's pointer do not race the write.
+		theme = ensureCached(theme)
 	}
 
 	if displayTimezone == nil {
