@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -554,8 +553,7 @@ func (l *Logger) Render(r Renderable) {
 		return
 	}
 
-	prefixWidth := l.consoleWriter.template.CachedPrefixWidth()
-	indent := strings.Repeat(" ", prefixWidth)
+	indent := l.consoleWriter.template.CachedIndentStr()
 
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)

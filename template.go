@@ -30,6 +30,7 @@ type Template struct {
 	// cachedPrefixWidth and cachedIndentStr are computed at construction for tree mode.
 	// For badge style the prefix is constant; for text/icon styles we cache the worst-case
 	// (widest level label) so tree alignment is stable across log levels.
+	cachedIndentStr   string
 	cachedPrefixWidth int
 	showTime          bool
 	showLevel         bool
@@ -250,16 +251,14 @@ func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *The
 
 // writeFieldsTree renders fields in a tree structure aligned with the message.
 func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme) {
-	// For badge style the prefix width is constant regardless of level;
-	// use the cached value to avoid recomputing per log call.
-	// For other styles the width varies with level so we fall back to per-call calculation.
-	var indent int
+	// Badge style has a fixed prefix width regardless of level, so we use the
+	// pre-built indent string. Other styles vary by level and must compute per call.
+	var indentStr string
 	if t.levelStyle == LevelStyleBadge {
-		indent = t.cachedPrefixWidth
+		indentStr = t.cachedIndentStr
 	} else {
-		indent = t.calculatePrefixWidth(entry)
+		indentStr = strings.Repeat(" ", t.calculatePrefixWidth(entry))
 	}
-	indentStr := strings.Repeat(" ", indent)
 
 	for i, field := range entry.Fields {
 		_ = buf.WriteByte('\n')
@@ -307,6 +306,10 @@ func (t *Template) CalculatePrefixWidth(entry *Entry) int {
 // CachedPrefixWidth returns the pre-computed worst-case prefix width for tree indentation.
 // Use this in preference to CalculatePrefixWidth on hot paths.
 func (t *Template) CachedPrefixWidth() int { return t.cachedPrefixWidth }
+
+// CachedIndentStr returns the pre-built indent string for tree alignment.
+// Avoids strings.Repeat on callers that need the string form directly.
+func (t *Template) CachedIndentStr() string { return t.cachedIndentStr }
 
 // calculatePrefixWidth determines indentation needed for tree alignment.
 // For badge style the width is constant; for text/icon styles it uses the
@@ -378,6 +381,7 @@ func (t *Template) computePrefixWidth() int {
 // Call after all fields are set.
 func (t *Template) initCache() {
 	t.cachedPrefixWidth = t.computePrefixWidth()
+	t.cachedIndentStr = strings.Repeat(" ", t.cachedPrefixWidth)
 }
 
 type TemplateBuilder struct {
