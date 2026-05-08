@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -154,49 +155,93 @@ func TestRingBuffer_WriterPreemptedBeforeClaim(t *testing.T) {
 	}
 }
 
-// TestRingBuffer_HighThroughput verifies that RingBuffer handles high throughput
-// correctly with the race detector enabled.
+// TestRingBuffer_HighThroughput verifies high-throughput correctness with the
+// race detector enabled. Each goroutine writes sequenced payloads so we can
+// assert two invariants after Close():
+//
+//  1. No duplicates: a double-claim bug would emit the same (goroutine, seq)
+//     pair twice.
+//  2. No orphan: every (goroutine, seq) pair that was not dropped appears
+//     exactly once (no phantom entries that never existed).
+//
+// Ring size (65536) is the next power-of-2 above the total write count (50000)
+// so the buffer never needs to wrap during the burst. With continuous flushing
+// via the default select branch, drops should be zero in steady state. If the
+// scheduler bursts all writers before the flusher gets a chance the overflow
+// guard may drop a small number; we assert drops < 1% of total writes.
 func TestRingBuffer_HighThroughput(t *testing.T) {
 	buf := &safeBuffer{}
-	// Large buffer for high throughput test
-	rb := NewRingBuffer(buf, 2048)
+	rb := NewRingBuffer(buf, 65536)
 
 	const numGoroutines = 50
 	const writesPerGoroutine = 1000
+	const total = numGoroutines * writesPerGoroutine
+
+	// Track which (goroutineID, seq) pairs were actually written (not dropped).
+	// written[g*writesPerGoroutine+s] == true means that entry reached the ring.
+	written := make([]atomic.Bool, total)
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	for range numGoroutines {
-		go func() {
+	for g := range numGoroutines {
+		go func(g int) {
 			defer wg.Done()
-			for range writesPerGoroutine {
-				data := []byte("msg\n")
-				rb.Write(data)
+			for s := range writesPerGoroutine {
+				payload := fmt.Sprintf("g%d-s%d\n", g, s)
+				if rb.Write([]byte(payload)) {
+					written[g*writesPerGoroutine+s].Store(true)
+				}
 			}
-		}()
+		}(g)
 	}
 
 	wg.Wait()
 
-	// Wait for some flushing to occur
 	waitFor(t, func() bool {
 		return buf.Len() > 0
 	}, 10*time.Second, 10*time.Millisecond, "data should be flushed")
 
-	// Close to flush remaining entries
 	_ = rb.Close()
 
 	dropped := rb.DroppedCount()
-	actualBytes := buf.Len()
-	expectedBytes := numGoroutines * writesPerGoroutine * len("msg\n")
 
-	t.Logf("Processed %d writes: flushed %d bytes (expected %d), dropped %d",
-		numGoroutines*writesPerGoroutine, actualBytes, expectedBytes, dropped)
+	t.Logf("total=%d dropped=%d", total, dropped)
 
-	// Should flush significant amount of data
-	if actualBytes == 0 {
-		t.Error("Expected some bytes to be flushed under high throughput")
+	// Drops < 1% is the steady-state target. More than that suggests the buffer
+	// is undersized or the flusher is falling behind.
+	if dropped > uint64(total)/100 {
+		t.Errorf("dropped %d/%d (%.1f%%) — exceeds 1%% budget; check ring size vs write rate",
+			dropped, total, float64(dropped)/float64(total)*100)
+	}
+
+	// Parse flushed output and detect duplicates and phantom entries.
+	seen := make(map[string]int, total)
+	for line := range strings.SplitSeq(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		seen[line]++
+	}
+
+	// No duplicates: each line must appear at most once.
+	for line, count := range seen {
+		if count > 1 {
+			t.Errorf("duplicate entry %q appears %d times — double-claim bug", line, count)
+		}
+	}
+
+	// Every written entry must appear in the output exactly once.
+	for g := range numGoroutines {
+		for s := range writesPerGoroutine {
+			if !written[g*writesPerGoroutine+s].Load() {
+				continue // dropped before entering the ring, skip
+			}
+			key := fmt.Sprintf("g%d-s%d", g, s)
+			if seen[key] == 0 {
+				t.Errorf("entry %q was written to ring but not flushed — data loss", key)
+			}
+		}
 	}
 }
 
