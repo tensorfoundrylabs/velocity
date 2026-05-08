@@ -43,3 +43,9 @@ func (sb *safeBuffer) String() string {
 	defer sb.mu.Unlock()
 	return sb.buf.String()
 }
+
+func (sb *safeBuffer) Reset() {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	sb.buf.Reset()
+}

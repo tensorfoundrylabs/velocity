@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLogger_SetTheme verifies that SetTheme swaps the active theme and that subsequent
@@ -86,8 +87,8 @@ func TestLogger_Theme_NilLogger(t *testing.T) {
 func TestLogger_SetTheme_PropagatestoAdditionalWriter(t *testing.T) {
 	t.Parallel()
 
-	var primaryBuf bytes.Buffer
-	var extraBuf bytes.Buffer
+	var primaryBuf safeBuffer
+	var extraBuf safeBuffer
 
 	cfg := DefaultConfig()
 	cfg.ConsoleOutput = &primaryBuf
@@ -99,9 +100,15 @@ func TestLogger_SetTheme_PropagatestoAdditionalWriter(t *testing.T) {
 	// Add a console writer as an additional writer — it implements SetTheme.
 	extra := NewConsoleWriter(&extraBuf, ThemeNightOwl)
 	log.AddWriter("extra", extra)
-	t.Cleanup(func() { _ = log.Close() })
 
 	log.Info("before")
+
+	// The additional writer is async (MultiWriter). Wait for the write to land
+	// before reading the buffer, otherwise Reset races the worker goroutine.
+	waitFor(t, func() bool {
+		return extraBuf.Len() > 0
+	}, 5*time.Second, 5*time.Millisecond, "extra writer should have received the 'before' entry")
+
 	before := extraBuf.String()
 	extraBuf.Reset()
 

@@ -130,6 +130,17 @@ func (rb *RingBuffer) Write(data []byte) bool {
 				}
 			}
 
+			// Atomically claim the write section by advancing expected from head to
+			// head+1. This prevents the flusher's bounded-spin skip from racing with
+			// a preempted writer that exited the spin above but hasn't yet written
+			// entry.data. The flusher's skip only fires when expected == tail (meaning
+			// no writer ever claimed this slot for the current round).
+			if !entry.expected.CompareAndSwap(head, head+1) {
+				// Flusher already advanced expected past our round. Drop.
+				rb.dropped.Add(1)
+				return false
+			}
+
 			dataLen := len(data)
 
 			if cap(entry.data) >= dataLen {
@@ -146,6 +157,25 @@ func (rb *RingBuffer) Write(data []byte) bool {
 			return true
 		}
 	}
+}
+
+// waitForCommit spins until entry.committed == 1 or the spin limit is reached.
+// Returns true if committed was observed.
+func waitForCommit(entry *RingBufferEntry, limit int) bool {
+	for spins := 0; entry.committed.Load() != 1 && spins < limit; spins++ {
+		runtime.Gosched()
+	}
+	return entry.committed.Load() == 1
+}
+
+// skipSlot resets a stalled or orphaned slot and advances tail.
+// Only safe to call when the slot is unclaimed (expected == tail).
+func (rb *RingBuffer) skipSlot(entry *RingBufferEntry, tail uint64) {
+	rb.dropped.Add(1)
+	entry.size.Store(0)
+	entry.committed.Store(0)
+	entry.expected.Store(tail + uint64(len(rb.entries)))
+	rb.tail.Store(tail + 1)
 }
 
 func (rb *RingBuffer) flusher() {
@@ -179,63 +209,67 @@ func (rb *RingBuffer) flusher() {
 			}
 
 		default:
-			collected := 0
-			for collected < rb.batchSize {
-				tail := rb.tail.Load()
-				head := rb.head.Load()
+			batchBuf = rb.collectBatch(batchBuf)
 
-				if tail >= head {
-					break
-				}
-
-				idx := tail & rb.mask
-				entry := &rb.entries[idx]
-
-				// Load committed FIRST as the acquire barrier to ensure all writes to
-				// entry.data are visible before we read them. This is critical for
-				// weakly-ordered architectures like ARM.
-				//
-				// Spin briefly if a writer claimed the slot but has not committed yet.
-				// Without a limit, a stalled writer would block the flusher forever.
-				spins := 0
-				for entry.committed.Load() != 1 && spins < 1000 {
-					runtime.Gosched()
-					spins++
-				}
-				if entry.committed.Load() != 1 {
-					// Writer stalled. Skip slot to avoid deadlock.
-					rb.dropped.Add(1)
-					entry.size.Store(0)
-					entry.committed.Store(0)
-					entry.expected.Store(tail + uint64(len(rb.entries)))
-					rb.tail.Store(tail + 1)
-					break
-				}
-				size := entry.size.Load()
-				if size > 0 {
-					batchBuf = append(batchBuf, entry.data[:size]...)
-				}
-				entry.size.Store(0)
-				entry.committed.Store(0)
-				// Advance the sequence so the next round's writer can claim this slot.
-				entry.expected.Store(tail + uint64(len(rb.entries)))
-				collected++
-				rb.tail.Store(tail + 1)
-			}
-
-			// Flush when batch is full or when idle with pending data.
-			if len(batchBuf) > 0 && (collected >= rb.batchSize || collected == 0) {
+			if len(batchBuf) > 0 {
 				if _, err := rb.writer.Write(batchBuf); err != nil {
 					rb.dropped.Add(1)
 				}
 				batchBuf = batchBuf[:0]
 			}
 
-			if collected == 0 {
+			if rb.tail.Load() >= rb.head.Load() {
 				time.Sleep(100 * time.Microsecond)
 			}
 		}
 	}
+}
+
+// collectBatch drains up to batchSize committed entries into buf and returns the
+// updated slice. Stops early if the ring is empty or a stalled writer is encountered.
+func (rb *RingBuffer) collectBatch(buf []byte) []byte {
+	for range rb.batchSize {
+		tail := rb.tail.Load()
+		head := rb.head.Load()
+
+		if tail >= head {
+			break
+		}
+
+		idx := tail & rb.mask
+		entry := &rb.entries[idx]
+
+		// Load committed FIRST as the acquire barrier to ensure all writes to
+		// entry.data are visible before we read them. This is critical for
+		// weakly-ordered architectures like ARM.
+		//
+		// Spin briefly if a writer claimed the slot but has not committed yet.
+		// Without a limit, a stalled writer would block the flusher forever.
+		if !waitForCommit(entry, 1000) {
+			// Check whether a writer atomically claimed this slot (expected == tail+1)
+			// or never entered the write section (expected == tail, writer gave up in
+			// its bounded spin before the claim CAS). Only skip unclaimed slots —
+			// advancing expected while a writer is still active races on entry.data.
+			if entry.expected.Load() == tail {
+				rb.skipSlot(entry, tail)
+			}
+			// else: writer claimed (expected == tail+1) but is slow to commit.
+			// Break and retry on the next tick rather than race the active writer.
+			break
+		}
+
+		size := entry.size.Load()
+		if size > 0 {
+			buf = append(buf, entry.data[:size]...)
+		}
+		entry.size.Store(0)
+		entry.committed.Store(0)
+		// Advance the sequence so the next round's writer can claim this slot.
+		entry.expected.Store(tail + uint64(len(rb.entries)))
+		rb.tail.Store(tail + 1)
+	}
+
+	return buf
 }
 
 func (rb *RingBuffer) flushAll() {
@@ -256,20 +290,11 @@ func (rb *RingBuffer) flushAll() {
 		//
 		// Spin briefly if a writer claimed the slot but has not committed yet.
 		// Without a limit, a stalled writer would block Close() forever.
-		spins := 0
-		for entry.committed.Load() != 1 && spins < 1000 {
-			runtime.Gosched()
-			spins++
-		}
-		if entry.committed.Load() != 1 {
-			// Writer stalled. Skip slot to avoid hanging Close().
-			rb.dropped.Add(1)
-			entry.size.Store(0)
-			entry.committed.Store(0)
-			entry.expected.Store(tail + uint64(len(rb.entries)))
-			rb.tail.Store(tail + 1)
+		if !waitForCommit(entry, 1000) {
+			rb.handleStalledSlotOnClose(entry, tail)
 			continue
 		}
+
 		size := entry.size.Load()
 		if size > 0 {
 			if _, err := rb.writer.Write(entry.data[:size]); err != nil {
@@ -282,6 +307,38 @@ func (rb *RingBuffer) flushAll() {
 		entry.expected.Store(tail + uint64(len(rb.entries)))
 		rb.tail.Store(tail + 1)
 	}
+}
+
+// handleStalledSlotOnClose handles a slot that has not committed within the initial
+// spin budget during Close(). Applies the same claimed-vs-unclaimed check as the
+// batch flusher to avoid racing an active writer, but spins longer because Close()
+// must drain as many entries as possible before returning.
+func (rb *RingBuffer) handleStalledSlotOnClose(entry *RingBufferEntry, tail uint64) {
+	if entry.expected.Load() == tail {
+		// Slot unclaimed: writer gave up before the claim CAS. Safe to skip.
+		rb.skipSlot(entry, tail)
+		return
+	}
+
+	// Writer claimed (expected == tail+1) but is slow. Spin longer to avoid
+	// losing data on shutdown — the write section is nanoseconds, so extra
+	// Gosched iterations cost very little and recover the entry.
+	if !waitForCommit(entry, 9000) {
+		// Still not committed after extended wait. Skip to avoid hanging Close().
+		rb.skipSlot(entry, tail)
+		return
+	}
+
+	size := entry.size.Load()
+	if size > 0 {
+		if _, err := rb.writer.Write(entry.data[:size]); err != nil {
+			rb.dropped.Add(1)
+		}
+	}
+	entry.size.Store(0)
+	entry.committed.Store(0)
+	entry.expected.Store(tail + uint64(len(rb.entries)))
+	rb.tail.Store(tail + 1)
 }
 
 func (rb *RingBuffer) Close() error {
