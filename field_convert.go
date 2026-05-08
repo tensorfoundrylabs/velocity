@@ -21,7 +21,9 @@ func FieldValueToString(f Field) string {
 	case FieldTypeString:
 		return *(*string)(f.value)
 	case FieldTypeInt:
-		return strconv.Itoa(int(f.num))
+		var tmp [20]byte
+		n := formatInt(tmp[:], f.num)
+		return UnsafeString(tmp[:n])
 	case FieldTypeInt64:
 		return strconv.FormatInt(f.num, 10)
 	case FieldTypeFloat64:
