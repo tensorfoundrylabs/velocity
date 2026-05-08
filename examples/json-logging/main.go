@@ -35,8 +35,8 @@ func main() {
 		velocity.WithTimeFormat(time.RFC3339),
 	)
 
-	log.Info("=== Console output (what an operator sees) ===")
-	log.Newline()
+	fmt.Println("=== Console output (what an operator sees) ===")
+	fmt.Println()
 
 	// These entries go to both the console (coloured) and the JSON file.
 	// Debug is suppressed in JSON because StructuredLevel is Info.
@@ -69,9 +69,9 @@ func main() {
 	// Make sure everything is flushed before we read the file back.
 	_ = jsonFile.Sync()
 
-	log.Newline()
-	log.Info("=== JSON output (what the log aggregator sees) ===")
-	log.Newline()
+	fmt.Println()
+	fmt.Println("=== JSON output (what the log aggregator sees) ===")
+	fmt.Println()
 
 	// Seek back to the start so we can read what was written.
 	if _, err = jsonFile.Seek(0, 0); err != nil {

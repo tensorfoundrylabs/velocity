@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
@@ -20,10 +21,10 @@ func main() {
 	sf := log.Status()
 	p := pretty.NewFromLogger(log)
 
-	log.Info("=== Pretty Table ===")
-	log.Newline()
+	fmt.Println("=== Pretty Table ===")
+	fmt.Println()
 	log.Info("service health check results")
-	log.Render(p.NewTable(
+	log.RenderRaw(p.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
 			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
@@ -35,9 +36,9 @@ func main() {
 	))
 	log.Newline()
 
-	log.Info("=== GPU Node Table ===")
-	log.Newline()
-	log.Render(p.NewTable(
+	fmt.Println("=== GPU Node Table ===")
+	fmt.Println()
+	log.RenderRaw(p.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
 			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
@@ -50,10 +51,10 @@ func main() {
 
 	// Tables work without colour too. pretty.New(os.Stdout, nil) demonstrates
 	// the standalone constructor without a logger or theme.
-	log.Info("=== Plain Table (no theme, no colour) ===")
-	log.Newline()
+	fmt.Println("=== Plain Table (no theme, no colour) ===")
+	fmt.Println()
 	plain := pretty.New(os.Stdout, nil)
-	plain.Table(
+	log.RenderRaw(plain.NewTable(
 		[]string{"Endpoint", "Method", "Calls/sec", "P99"},
 		[][]string{
 			{"/v1/chat/completions", "POST", "1,240", "89ms"},
@@ -61,13 +62,13 @@ func main() {
 			{"/v1/models", "GET", "450", "3ms"},
 			{"/health", "GET", "10,000", "1ms"},
 		},
-	)
+	))
 	log.Newline()
 
 	// Wide table with many columns. Columns auto-size to content.
-	log.Info("=== Wide Table (auto-sized columns) ===")
-	log.Newline()
-	log.Render(p.NewTable(
+	fmt.Println("=== Wide Table (auto-sized columns) ===")
+	fmt.Println()
+	log.RenderRaw(p.NewTable(
 		[]string{"PID", "User", "CPU%", "Mem%", "VSZ", "RSS", "TTY", "Stat", "Command"},
 		[][]string{
 			{"1", "root", "0.0", "0.1", "168k", "12k", "?", "Ss", "/sbin/init"},

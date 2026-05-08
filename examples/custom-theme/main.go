@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -59,8 +60,8 @@ func main() {
 		velocity.WithLevel(velocity.LevelDebug),
 	)
 
-	log.Info("=== Cyberpunk Theme ===")
-	log.Newline()
+	fmt.Println("=== Cyberpunk Theme ===")
+	fmt.Println()
 
 	// All log levels pick up the theme colours.
 	log.Debug("neural link initialised", velocity.String("interface", "BCI-7"))
