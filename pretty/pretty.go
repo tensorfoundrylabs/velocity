@@ -54,14 +54,16 @@ func NewFromLogger(log *velocity.Logger) *Pretty {
 	}
 }
 
-// loggerWriter adapts velocity.Logger to io.Writer, routing writes through Logger.RenderRaw
-// so that pretty output respects the console writer's mutex.
+// loggerWriter adapts velocity.Logger to io.Writer, routing writes through Logger.Render
+// so that pretty output indents under the message column and respects the console writer's
+// mutex. Callers wanting flush-left output should use log.RenderRaw directly with a
+// Renderable result instead of going through NewFromLogger's *Pretty.
 type loggerWriter struct {
 	log *velocity.Logger
 }
 
 func (lw *loggerWriter) Write(p []byte) (int, error) {
-	lw.log.RenderRaw(&bytesRenderable{data: p})
+	lw.log.Render(&bytesRenderable{data: p})
 	return len(p), nil
 }
 
