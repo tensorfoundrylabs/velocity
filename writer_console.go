@@ -274,7 +274,9 @@ func (*ConsoleWriter) formatValue(buf *BytesBuffer, f Field) {
 
 	case FieldTypeAny:
 		v := *(*any)(f.value)
-		buf.WriteString(fmt.Sprintf("%v", v))
+		// Fprintf writes directly into the buffer, avoiding the intermediate string alloc
+		// that fmt.Sprintf("%v", v) would produce.
+		_, _ = fmt.Fprintf(buf, "%v", v)
 
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing
