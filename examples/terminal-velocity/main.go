@@ -97,8 +97,10 @@ func stageClusterDiscovery(log *velocity.Logger, p *pretty.Pretty) {
 func stageDeploymentConfig(log *velocity.Logger, p *pretty.Pretty) {
 	p.Section("Deployment Configuration")
 
+	// Render the tree indented under the log line — this is the explicit "nest under
+	// message column" path, using log.Render with a Renderable result type.
 	log.Info("Llama-3.1-70B Deployment Plan")
-	p.Tree([]pretty.TreeItem{
+	log.Render(p.NewTree([]pretty.TreeItem{
 		{Key: "Model", Value: "meta-llama/Llama-3.1-70B-Instruct"},
 		{Key: "Replicas", Value: 4},
 		{Key: "GPU Type", Value: "NVIDIA RTX Pro 6000 96GB"},
@@ -119,7 +121,7 @@ func stageDeploymentConfig(log *velocity.Logger, p *pretty.Pretty) {
 		},
 		{Key: "Max Batch Size", Value: 32},
 		{Key: "Max Sequence Length", Value: 8192},
-	})
+	}))
 
 	log.Newline()
 }
