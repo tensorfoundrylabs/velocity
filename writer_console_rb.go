@@ -40,7 +40,7 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 	w.ringBuffer = NewRingBuffer(actualOut, DefaultRingBufferSize)
 
 	if theme != nil {
-		w.template = &Template{
+		w.template = initTemplate(&Template{
 			showTime:         true,
 			timeFormat:       time.RFC3339,
 			showLevel:        true,
@@ -51,7 +51,7 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 			fieldPairSep:     "=",
 			fieldDisplayMode: fieldMode,
 			useColours:       true,
-		}
+		})
 	}
 
 	return w
@@ -154,7 +154,7 @@ func (w *ConsoleWriterRB) SetTheme(theme *Theme) {
 
 	w.theme = theme
 	if theme != nil {
-		w.template = &Template{
+		w.template = initTemplate(&Template{
 			showTime:         true,
 			timeFormat:       time.RFC3339,
 			showLevel:        true,
@@ -165,7 +165,7 @@ func (w *ConsoleWriterRB) SetTheme(theme *Theme) {
 			fieldPairSep:     "=",
 			fieldDisplayMode: FieldDisplayInline,
 			useColours:       true,
-		}
+		})
 	}
 }
 

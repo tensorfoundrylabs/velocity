@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// referenceTime is a fixed timestamp used to measure formatted time width at construction.
+// We use a non-UTC zone offset so RFC3339 output includes "+HH:MM" (the longest form),
+// giving us the worst-case byte length for cache computation.
+var referenceTime = time.Date(2006, 1, 2, 15, 4, 5, 0, time.FixedZone("TST", 10*60*60))
+
 type TemplateType int
 
 const (
@@ -22,6 +27,10 @@ type Template struct {
 	fieldPairSep     string
 	levelStyle       LevelStyle
 	fieldDisplayMode FieldDisplayMode
+	// cachedPrefixWidth and cachedIndentStr are computed at construction for tree mode.
+	// For badge style the prefix is constant; for text/icon styles we cache the worst-case
+	// (widest level label) so tree alignment is stable across log levels.
+	cachedPrefixWidth int
 	showTime         bool
 	showLevel        bool
 	showMessage      bool
@@ -37,7 +46,7 @@ const (
 	LevelStyleBadge
 )
 
-var TemplateDefault = &Template{
+var TemplateDefault = initTemplate(&Template{
 	showTime:         true,
 	timeFormat:       time.RFC3339,
 	showLevel:        true,
@@ -48,9 +57,9 @@ var TemplateDefault = &Template{
 	fieldPairSep:     ": ",
 	fieldDisplayMode: FieldDisplayInline,
 	useColours:       true,
-}
+})
 
-var TemplateSimple = &Template{
+var TemplateSimple = initTemplate(&Template{
 	showTime:         false,
 	showLevel:        true,
 	levelStyle:       LevelStyleText,
@@ -60,18 +69,18 @@ var TemplateSimple = &Template{
 	fieldPairSep:     ": ",
 	fieldDisplayMode: FieldDisplayInline,
 	useColours:       true,
-}
+})
 
-var TemplateMinimal = &Template{
+var TemplateMinimal = initTemplate(&Template{
 	showTime:         false,
 	showLevel:        false,
 	showMessage:      true,
 	showFields:       false,
 	fieldDisplayMode: FieldDisplayInline,
 	useColours:       false,
-}
+})
 
-var TemplateJSON = &Template{
+var TemplateJSON = initTemplate(&Template{
 	showTime:    true,
 	timeFormat:  time.RFC3339Nano,
 	showLevel:   true,
@@ -79,6 +88,12 @@ var TemplateJSON = &Template{
 	showMessage: true,
 	showFields:  true,
 	useColours:  false,
+})
+
+// initTemplate calls initCache and returns t, for use in package-level var initialisers.
+func initTemplate(t *Template) *Template {
+	t.initCache()
+	return t
 }
 
 // buildWithTimezone converts UTC timestamps to the display timezone before rendering.
@@ -234,7 +249,15 @@ func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *The
 
 // writeFieldsTree renders fields in a tree structure aligned with the message.
 func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme) {
-	indent := t.calculatePrefixWidth(entry)
+	// For badge style the prefix width is constant regardless of level;
+	// use the cached value to avoid recomputing per log call.
+	// For other styles the width varies with level so we fall back to per-call calculation.
+	var indent int
+	if t.levelStyle == LevelStyleBadge {
+		indent = t.cachedPrefixWidth
+	} else {
+		indent = t.calculatePrefixWidth(entry)
+	}
 	indentStr := strings.Repeat(" ", indent)
 
 	for i, field := range entry.Fields {
@@ -280,7 +303,13 @@ func (t *Template) CalculatePrefixWidth(entry *Entry) int {
 	return t.calculatePrefixWidth(entry)
 }
 
+// CachedPrefixWidth returns the pre-computed worst-case prefix width for tree indentation.
+// Use this in preference to CalculatePrefixWidth on hot paths.
+func (t *Template) CachedPrefixWidth() int { return t.cachedPrefixWidth }
+
 // calculatePrefixWidth determines indentation needed for tree alignment.
+// For badge style the width is constant; for text/icon styles it uses the
+// actual entry level so per-call calculation is unavoidable for variable widths.
 func (t *Template) calculatePrefixWidth(entry *Entry) int {
 	width := 0
 
@@ -305,6 +334,49 @@ func (t *Template) calculatePrefixWidth(entry *Entry) int {
 	}
 
 	return width
+}
+
+// computePrefixWidth calculates the worst-case prefix width using the reference time
+// and the widest level label so we can cache a stable value at construction.
+func (t *Template) computePrefixWidth() int {
+	width := 0
+
+	if t.showTime {
+		width += len(referenceTime.Format(t.timeFormat))
+		width++ // separator space
+	}
+
+	if t.showLevel {
+		switch t.levelStyle {
+		case LevelStyleIcon:
+			// Find the widest icon by byte length (matches calculatePrefixWidth behaviour).
+			maxIcon := 0
+			for _, lvl := range []Level{LevelDebug, LevelInfo, LevelWarn, LevelError, LevelFatal} {
+				if n := len(lvl.Icon()); n > maxIcon {
+					maxIcon = n
+				}
+			}
+			width += maxIcon
+			width++
+		case LevelStyleBadge:
+			// Badge is always "[XXXX]" = 6 chars, but calculatePrefixWidth uses 7.
+			// Keep parity with the existing per-call value.
+			width += 7
+			width++
+		case LevelStyleText:
+			// "DEBUG"/"ERROR"/"FATAL" are widest at 5 chars.
+			width += 5
+			width++
+		}
+	}
+
+	return width
+}
+
+// initCache pre-computes cached values that are constant for the lifetime of this Template.
+// Call after all fields are set.
+func (t *Template) initCache() {
+	t.cachedPrefixWidth = t.computePrefixWidth()
 }
 
 type TemplateBuilder struct {
@@ -369,5 +441,6 @@ func (b *TemplateBuilder) WithColours(enabled bool) *TemplateBuilder {
 }
 
 func (b *TemplateBuilder) Build() *Template {
+	b.template.initCache()
 	return b.template
 }

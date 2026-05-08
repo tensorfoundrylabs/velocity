@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConsoleWriter_InvalidLevel(_ *testing.T) {
@@ -33,5 +34,24 @@ func TestConsoleWriter_AddCaller(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "_test.go:") {
 		t.Fatalf("expected console output to contain caller reference, got: %s", buf.String())
+	}
+}
+
+// TestTemplate_CachedPrefixWidth_BadgeStyle checks that the cached prefix width matches
+// what calculatePrefixWidth produces for a real entry under the default badge style.
+func TestTemplate_CachedPrefixWidth_BadgeStyle(t *testing.T) {
+	t.Parallel()
+
+	tmpl := TemplateDefault
+
+	entry := GetEntry()
+	entry.Time = time.Now()
+	entry.Level = LevelInfo
+
+	perCall := tmpl.calculatePrefixWidth(entry)
+	cached := tmpl.CachedPrefixWidth()
+
+	if cached != perCall {
+		t.Errorf("cached prefix width %d != per-call %d", cached, perCall)
 	}
 }
