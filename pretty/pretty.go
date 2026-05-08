@@ -39,10 +39,12 @@ func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	}
 }
 
-// NewFromLogger returns a Pretty whose output is routed through log's console writer,
-// serialised under the same mutex as concurrent log calls to prevent interleaving.
-// This is the preferred constructor when a logger exists: output aligns with the
-// message column and sits flush with tree-mode log fields.
+// NewFromLogger returns a Pretty whose output is serialised under the logger's console
+// writer mutex (preventing interleaving with concurrent log calls) and inherits the
+// logger's theme. Output is flush-left by default, matching pretty.New semantics.
+//
+// To indent a specific block under the message column, use log.Render with a result
+// type directly — e.g. log.Render(p.NewTree(items)).
 // Returns nil if log is nil.
 func NewFromLogger(log *velocity.Logger) *Pretty {
 	if log == nil {
@@ -54,16 +56,15 @@ func NewFromLogger(log *velocity.Logger) *Pretty {
 	}
 }
 
-// loggerWriter adapts velocity.Logger to io.Writer, routing writes through Logger.Render
-// so that pretty output indents under the message column and respects the console writer's
-// mutex. Callers wanting flush-left output should use log.RenderRaw directly with a
-// Renderable result instead of going through NewFromLogger's *Pretty.
+// loggerWriter adapts velocity.Logger to io.Writer, routing writes through Logger.RenderRaw
+// so that pretty output is flush-left (matching pretty.New semantics) while still
+// serialising under the console writer's mutex.
 type loggerWriter struct {
 	log *velocity.Logger
 }
 
 func (lw *loggerWriter) Write(p []byte) (int, error) {
-	lw.log.Render(&bytesRenderable{data: p})
+	lw.log.RenderRaw(&bytesRenderable{data: p})
 	return len(p), nil
 }
 
