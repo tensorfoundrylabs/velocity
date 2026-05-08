@@ -1,7 +1,6 @@
 package pretty
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -123,70 +122,13 @@ func (p *Pretty) Section(title string) {
 
 // Box draws a bordered box around content, with an optional title in the top border.
 func (p *Pretty) Box(title, content string) {
-	buf := velocity.GetBuffer(512)
-	defer velocity.PutBuffer(buf)
+	_ = NewBoxResult(title, content, p.theme).Render(p.writer)
+}
 
-	// Split first so width is based on the longest line, not total content bytes.
-	lines := strings.Split(content, "\n")
-
-	// Strip trailing newline that would produce a spurious empty final line.
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-
-	// Width is driven by rune count so Unicode content aligns correctly.
-	maxLineRunes := 0
-	for _, line := range lines {
-		if n := len([]rune(line)); n > maxLineRunes {
-			maxLineRunes = n
-		}
-	}
-
-	width := max(maxLineRunes+4, 42)
-	// Ensure a long title does not produce a negative repeat count.
-	if titleWidth := len([]rune(title)) + 6; titleWidth > width {
-		width = titleWidth
-	}
-
-	// Top border inner width must equal width-2 to match content rows.
-	// Prefix "┌─" consumes 1 dash. Non-empty title consumes runeLen(title)+1 more dashes.
-	topFill := width - 2 - 1 // subtract the leading "─" from "┌─"
-	if title != "" {
-		topFill -= len([]rune(title)) + 1 // subtract title runes and its trailing "─"
-	}
-
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	buf.WriteString("┌─")
-	if title != "" {
-		buf.WriteString(title)
-		buf.WriteString("─")
-	}
-	buf.WriteString(strings.Repeat("─", topFill))
-	buf.WriteString("┐")
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-
-	for _, line := range lines {
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString("│ ")
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedMessageFg())
-		buf.WriteString(padRightRunes(line, width-3))
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString("│")
-		buf.WriteString(velocity.Reset)
-		buf.WriteString("\n")
-	}
-
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	buf.WriteString("└")
-	buf.WriteString(strings.Repeat("─", width-2))
-	buf.WriteString("┘")
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-
-	_, _ = buf.WriteTo(p.writer)
+// NewBox returns a BoxResult for the given title and content using p's theme.
+// Use this with Logger.Render to route the box through the logger's console writer.
+func (p *Pretty) NewBox(title, content string) *BoxResult {
+	return NewBoxResult(title, content, p.theme)
 }
 
 // Panel draws a simple bordered block with a title bar.
@@ -236,59 +178,33 @@ func (p *Pretty) KeyValue(key, value string) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := velocity.GetBuffer(128)
-	defer velocity.PutBuffer(buf)
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	buf.WriteString(key)
-	buf.WriteString(velocity.Reset)
-	buf.WriteString(": ")
-	buf.WriteString(p.theme.CachedFieldValFg())
-	buf.WriteString(value)
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-
-	if p.writer == nil {
+	w := p.writer
+	if w == nil {
+		buf := velocity.GetBuffer(128)
+		defer velocity.PutBuffer(buf)
+		_ = NewKeyValueResult(key, value, p.theme).Render(buf)
 		fmt.Print(buf.String())
 		return
 	}
 
-	_, _ = buf.WriteTo(p.writer)
+	_ = NewKeyValueResult(key, value, p.theme).Render(w)
+}
+
+// NewKeyValue returns a KeyValueResult using p's theme.
+// Use this with Logger.Render to route through the logger's console writer.
+func (p *Pretty) NewKeyValue(key, value string) *KeyValueResult {
+	return NewKeyValueResult(key, value, p.theme)
 }
 
 // Table renders an aligned table with auto-sized columns.
 func (p *Pretty) Table(headers []string, rows [][]string) {
-	if len(headers) == 0 || len(rows) == 0 {
-		return
-	}
-
-	colWidths := p.calculateColumnWidths(headers, rows)
-	buf := velocity.GetBuffer(1024)
-	defer velocity.PutBuffer(buf)
-
-	p.writeTableTopBorder(buf, colWidths)
-	p.writeTableHeaders(buf, headers, colWidths)
-	p.writeTableHeaderSeparator(buf, colWidths)
-	p.writeTableRows(buf, rows, colWidths)
-	p.writeTableBottomBorder(buf, colWidths)
-
-	_, _ = buf.WriteTo(p.writer)
+	_ = NewTableResult(headers, rows, p.theme).Render(p.writer)
 }
 
-func (*Pretty) calculateColumnWidths(headers []string, rows [][]string) []int {
-	colWidths := make([]int, len(headers))
-	for i, header := range headers {
-		colWidths[i] = len(header)
-	}
-	for _, row := range rows {
-		for i, cell := range row {
-			if i < len(colWidths) {
-				if vl := visibleLen(cell); vl > colWidths[i] {
-					colWidths[i] = vl
-				}
-			}
-		}
-	}
-	return colWidths
+// NewTable returns a TableResult for the given data using p's theme.
+// Use this with Logger.Render to route the table through the logger's console writer.
+func (p *Pretty) NewTable(headers []string, rows [][]string) *TableResult {
+	return NewTableResult(headers, rows, p.theme)
 }
 
 // visibleLen returns the number of visible runes in s, ignoring ANSI escape sequences.
@@ -335,86 +251,6 @@ func padRightRunes(s string, length int) string {
 	return s + strings.Repeat(" ", length-runeLen)
 }
 
-func (p *Pretty) writeTableTopBorder(buf *bytes.Buffer, colWidths []int) {
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	for i, width := range colWidths {
-		buf.WriteString(strings.Repeat("─", width+2))
-		if i < len(colWidths)-1 {
-			buf.WriteString("┬")
-		}
-	}
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-}
-
-func (p *Pretty) writeTableHeaders(buf *bytes.Buffer, headers []string, colWidths []int) {
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	for i, header := range headers {
-		if i > 0 {
-			buf.WriteString("│")
-		}
-		buf.WriteString(" ")
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedTableHeaderFg())
-		buf.WriteString(padRight(header, colWidths[i]))
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString(" ")
-	}
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-}
-
-func (p *Pretty) writeTableHeaderSeparator(buf *bytes.Buffer, colWidths []int) {
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	for i, width := range colWidths {
-		buf.WriteString(strings.Repeat("─", width+2))
-		if i < len(colWidths)-1 {
-			buf.WriteString("┼")
-		}
-	}
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-}
-
-func (p *Pretty) writeTableRows(buf *bytes.Buffer, rows [][]string, colWidths []int) {
-	for _, row := range rows {
-		p.writeTableRow(buf, row, colWidths)
-	}
-}
-
-func (p *Pretty) writeTableRow(buf *bytes.Buffer, row []string, colWidths []int) {
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	for i, cell := range row {
-		if i >= len(colWidths) {
-			break
-		}
-		buf.WriteString(" ")
-		buf.WriteString(p.theme.CachedMessageFg())
-		buf.WriteString(padRightVisible(cell, colWidths[i]))
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString(" ")
-		if i < len(colWidths)-1 {
-			buf.WriteString("│")
-		}
-	}
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-}
-
-func (p *Pretty) writeTableBottomBorder(buf *bytes.Buffer, colWidths []int) {
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	for i, width := range colWidths {
-		buf.WriteString(strings.Repeat("─", width+2))
-		if i < len(colWidths)-1 {
-			buf.WriteString("┴")
-		}
-	}
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-}
-
 // Tree prints a hierarchy of TreeItem nodes with nil-safe fallback to stdout.
 func (p *Pretty) Tree(nodes []TreeItem) {
 	if p == nil {
@@ -428,18 +264,25 @@ func (p *Pretty) Tree(nodes []TreeItem) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := velocity.GetBuffer(512)
-	defer velocity.PutBuffer(buf)
-	for i, node := range nodes {
-		p.writePrettyTreeItem(buf, node, "", i == len(nodes)-1)
-	}
-
-	if p.writer == nil {
+	w := p.writer
+	if w == nil {
+		// Nil writer is a fallback path — collect and print.
+		buf := velocity.GetBuffer(512)
+		defer velocity.PutBuffer(buf)
+		for i, node := range nodes {
+			writePrettyTreeItemInto(buf, p.theme, node, "", i == len(nodes)-1)
+		}
 		fmt.Print(buf.String())
 		return
 	}
 
-	_, _ = buf.WriteTo(p.writer)
+	_ = NewTreeResult(nodes, p.theme).Render(w)
+}
+
+// NewTree returns a TreeResult for the given nodes using p's theme.
+// Use this with Logger.Render to route the tree through the logger's console writer.
+func (p *Pretty) NewTree(nodes []TreeItem) *TreeResult {
+	return NewTreeResult(nodes, p.theme)
 }
 
 func writeTreeItemStandalone(w io.Writer, node TreeItem, prefix string, isLast bool) {
@@ -466,34 +309,6 @@ func writeTreeItemStandalone(w io.Writer, node TreeItem, prefix string, isLast b
 	}
 }
 
-func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, prefix string, isLast bool) {
-	connector := treeBranch
-	if isLast {
-		connector = treeCorner
-	}
-
-	buf.WriteString(prefix)
-	buf.WriteString(connector)
-	buf.WriteString(p.theme.CachedMessageFg())
-	if node.Value != nil {
-		fmt.Fprintf(buf, "%s: %v", node.Key, node.Value)
-	} else {
-		buf.WriteString(node.Key)
-	}
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-
-	childPrefix := prefix
-	if isLast {
-		childPrefix += treeBlank
-	} else {
-		childPrefix += treePipe
-	}
-
-	for i, child := range node.Children {
-		p.writePrettyTreeItem(buf, child, childPrefix, i == len(node.Children)-1)
-	}
-}
 
 // Raw writes text directly to the writer without any formatting.
 func (p *Pretty) Raw(text string) {
@@ -502,51 +317,15 @@ func (p *Pretty) Raw(text string) {
 
 // Banner draws a double-border box around text.
 func (p *Pretty) Banner(text string) {
-	buf := velocity.GetBuffer(512)
-	defer velocity.PutBuffer(buf)
-	lines := strings.Split(text, "\n")
-
-	maxLen := 0
-	for i, line := range lines {
-		lines[i] = strings.TrimRight(line, " \t")
-		runeLen := len([]rune(lines[i]))
-		if runeLen > maxLen {
-			maxLen = runeLen
-		}
-	}
-
-	contentWidth := maxLen
-	boxWidth := contentWidth + 2
-
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	buf.WriteString("╔")
-	buf.WriteString(strings.Repeat("─", boxWidth))
-	buf.WriteString("╗")
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-
-	for _, line := range lines {
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString("│ ")
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedMessageFg())
-		buf.WriteString(padRightRunes(line, contentWidth))
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString(" │")
-		buf.WriteString(velocity.Reset)
-		buf.WriteString("\n")
-	}
-
-	buf.WriteString(p.theme.CachedFieldKeyFg())
-	buf.WriteString("╚")
-	buf.WriteString(strings.Repeat("─", boxWidth))
-	buf.WriteString("╝")
-	buf.WriteString(velocity.Reset)
-	buf.WriteString("\n")
-
-	_, _ = buf.WriteTo(p.writer)
+	_ = NewBannerResult(text, p.theme).Render(p.writer)
 }
+
+// NewBanner returns a BannerResult for the given text using p's theme.
+// Use this with Logger.Render to route the banner through the logger's console writer.
+func (p *Pretty) NewBanner(text string) *BannerResult {
+	return NewBannerResult(text, p.theme)
+}
+
 
 // SystemInfo is startup/configuration metadata for display.
 type SystemInfo struct {
@@ -585,39 +364,23 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := velocity.GetBuffer(512)
-	defer velocity.PutBuffer(buf)
-
-	if info.Title != "" {
-		buf.WriteString(p.theme.CachedInfoColourFg())
-		buf.WriteString("▓ ")
-		buf.WriteString(info.Title)
-		if info.Version != "" {
-			buf.WriteString(" v")
-			buf.WriteString(info.Version)
-		}
-		buf.WriteString(" ▓")
-		buf.WriteString(velocity.Reset)
-		buf.WriteString("\n")
-	}
-
-	for _, pair := range info.Fields {
-		buf.WriteString(p.theme.CachedFieldKeyFg())
-		buf.WriteString(padRight(pair.Key+":", 20))
-		buf.WriteString(velocity.Reset)
-		buf.WriteString(" ")
-		buf.WriteString(p.theme.CachedMessageFg())
-		buf.WriteString(pair.Value)
-		buf.WriteString(velocity.Reset)
-		buf.WriteString("\n")
-	}
-
-	if p.writer == nil {
+	w := p.writer
+	if w == nil {
+		// Collect and print to stdout as fallback.
+		buf := velocity.GetBuffer(512)
+		defer velocity.PutBuffer(buf)
+		_ = NewSystemInfoResult(info, p.theme).Render(buf)
 		fmt.Print(buf.String())
 		return
 	}
 
-	_, _ = buf.WriteTo(p.writer)
+	_ = NewSystemInfoResult(info, p.theme).Render(w)
+}
+
+// NewSystemInfo returns a SystemInfoResult for the given info using p's theme.
+// Use this with Logger.Render to route the output through the logger's console writer.
+func (p *Pretty) NewSystemInfo(info *SystemInfo) *SystemInfoResult {
+	return NewSystemInfoResult(info, p.theme)
 }
 
 // TreeItem represents a node in a hierarchical display tree.
