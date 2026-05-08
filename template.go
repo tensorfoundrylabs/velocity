@@ -22,15 +22,15 @@ const (
 )
 
 type Template struct {
-	timeFormat       string
-	fieldSep         string
-	fieldPairSep     string
-	levelStyle       LevelStyle
-	fieldDisplayMode FieldDisplayMode
+	timeFormat   string
+	fieldSep     string
+	fieldPairSep string
 	// cachedPrefixWidth and cachedIndentStr are computed at construction for tree mode.
 	// For badge style the prefix is constant; for text/icon styles we cache the worst-case
 	// (widest level label) so tree alignment is stable across log levels.
 	cachedIndentStr   string
+	levelStyle        LevelStyle
+	fieldDisplayMode  FieldDisplayMode
 	cachedPrefixWidth int
 	showTime          bool
 	showLevel         bool
