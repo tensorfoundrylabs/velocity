@@ -29,9 +29,9 @@ func TestLogger_Render_WritesIndentedOutput(t *testing.T) {
 	cfg.StructuredOutput = nil
 
 	log := NewWithConfig(cfg)
-	indent := log.consoleWriter.template.CachedIndentStr()
+	indent := log.consoleWriter.template.CachedMessageIndentStr()
 	if indent == "" {
-		t.Fatal("expected non-empty cached indent string")
+		t.Fatal("expected non-empty cached message indent string")
 	}
 
 	// First-line indent matters: table top borders, banners and other block

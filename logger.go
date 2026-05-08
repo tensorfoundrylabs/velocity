@@ -589,7 +589,7 @@ func (l *Logger) Render(r Renderable) {
 		return
 	}
 
-	indent := l.consoleWriter.template.CachedIndentStr()
+	indent := l.consoleWriter.template.CachedMessageIndentStr()
 
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)

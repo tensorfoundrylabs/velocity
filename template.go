@@ -26,17 +26,23 @@ type Template struct {
 	fieldSep     string
 	fieldPairSep string
 	// cachedPrefixWidth and cachedIndentStr are computed at construction for tree mode.
-	// For badge style the prefix is constant; for text/icon styles we cache the worst-case
-	// (widest level label) so tree alignment is stable across log levels.
-	cachedIndentStr   string
-	levelStyle        LevelStyle
-	fieldDisplayMode  FieldDisplayMode
-	cachedPrefixWidth int
-	showTime          bool
-	showLevel         bool
-	showMessage       bool
-	showFields        bool
-	useColours        bool
+	// Tree mode positions ├/└ glyphs slightly past the message column, so the cached
+	// width is intentionally wider than the actual message column by one space — this
+	// matches the existing visual where field labels nest under the message text.
+	cachedIndentStr string
+	// cachedMessageIndentStr aligns flush under the message column (timestamp + 1 +
+	// level + 1). Used by Logger.Render so block output (tables, banners, boxes)
+	// lands at the same column as log message text.
+	cachedMessageIndentStr string
+	levelStyle             LevelStyle
+	fieldDisplayMode       FieldDisplayMode
+	cachedPrefixWidth      int
+	cachedMessageColumn    int
+	showTime               bool
+	showLevel              bool
+	showMessage            bool
+	showFields             bool
+	useColours             bool
 }
 
 type LevelStyle int
@@ -386,7 +392,48 @@ func (t *Template) computePrefixWidth() int {
 func (t *Template) initCache() {
 	t.cachedPrefixWidth = t.computePrefixWidth()
 	t.cachedIndentStr = strings.Repeat(" ", t.cachedPrefixWidth)
+	t.cachedMessageColumn = t.computeMessageColumn()
+	t.cachedMessageIndentStr = strings.Repeat(" ", t.cachedMessageColumn)
 }
+
+// computeMessageColumn returns the visible column where the message text begins:
+// timestamp + space + level + space. Unlike computePrefixWidth this uses the actual
+// rendered widths (badge is 6 chars, not 7), so block output via Logger.Render lands
+// flush under the message text rather than at the tree-glyph offset.
+func (t *Template) computeMessageColumn() int {
+	width := 0
+
+	if t.showTime {
+		width += len(referenceTime.Format(t.timeFormat))
+		width++
+	}
+
+	if t.showLevel {
+		switch t.levelStyle {
+		case LevelStyleIcon:
+			maxIcon := 0
+			for _, lvl := range []Level{LevelDebug, LevelInfo, LevelWarn, LevelError, LevelFatal} {
+				if n := len(lvl.Icon()); n > maxIcon {
+					maxIcon = n
+				}
+			}
+			width += maxIcon
+			width++
+		case LevelStyleBadge:
+			width += 6 // [XXXX] is exactly 6 chars
+			width++
+		case LevelStyleText:
+			width += 5 // widest level label
+			width++
+		}
+	}
+
+	return width
+}
+
+// CachedMessageIndentStr returns the indent string that aligns flush under the
+// message column. Used by Logger.Render for block output like tables and banners.
+func (t *Template) CachedMessageIndentStr() string { return t.cachedMessageIndentStr }
 
 type TemplateBuilder struct {
 	template *Template
