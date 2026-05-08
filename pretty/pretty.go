@@ -81,7 +81,8 @@ func (p *Pretty) Debug(message string) {
 
 // printStyled ignores write errors to ensure pretty printing never fails.
 func (p *Pretty) printStyled(icon, message string, colour velocity.Colour) {
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(128)
+	defer velocity.PutBuffer(buf)
 	buf.WriteString(colour.ANSI(true))
 	buf.WriteString(icon)
 	buf.WriteString(" ")
@@ -103,7 +104,8 @@ func (p *Pretty) Section(title string) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(128)
+	defer velocity.PutBuffer(buf)
 	buf.WriteString(p.theme.CachedMessageFg())
 	buf.WriteString(title)
 	buf.WriteString(velocity.Reset)
@@ -121,7 +123,8 @@ func (p *Pretty) Section(title string) {
 
 // Box draws a bordered box around content, with an optional title in the top border.
 func (p *Pretty) Box(title, content string) {
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(512)
+	defer velocity.PutBuffer(buf)
 
 	// Split first so width is based on the longest line, not total content bytes.
 	lines := strings.Split(content, "\n")
@@ -188,7 +191,8 @@ func (p *Pretty) Box(title, content string) {
 
 // Panel draws a simple bordered block with a title bar.
 func (p *Pretty) Panel(title, content string) {
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(256)
+	defer velocity.PutBuffer(buf)
 	buf.WriteString(p.theme.CachedMessageFg())
 	if title != "" {
 		buf.WriteString("▓ ")
@@ -203,7 +207,8 @@ func (p *Pretty) Panel(title, content string) {
 
 // Bullet prints an indented bullet point at the given nesting level.
 func (p *Pretty) Bullet(level int, text string) {
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(128)
+	defer velocity.PutBuffer(buf)
 	indent := strings.Repeat("  ", level)
 	bullets := []string{"•", "◦", "▪", "▫"}
 	bullet := bullets[level%len(bullets)]
@@ -231,7 +236,8 @@ func (p *Pretty) KeyValue(key, value string) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(128)
+	defer velocity.PutBuffer(buf)
 	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString(key)
 	buf.WriteString(velocity.Reset)
@@ -256,7 +262,8 @@ func (p *Pretty) Table(headers []string, rows [][]string) {
 	}
 
 	colWidths := p.calculateColumnWidths(headers, rows)
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(1024)
+	defer velocity.PutBuffer(buf)
 
 	p.writeTableTopBorder(buf, colWidths)
 	p.writeTableHeaders(buf, headers, colWidths)
@@ -421,7 +428,8 @@ func (p *Pretty) Tree(nodes []TreeItem) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(512)
+	defer velocity.PutBuffer(buf)
 	for i, node := range nodes {
 		p.writePrettyTreeItem(buf, node, "", i == len(nodes)-1)
 	}
@@ -494,7 +502,8 @@ func (p *Pretty) Raw(text string) {
 
 // Banner draws a double-border box around text.
 func (p *Pretty) Banner(text string) {
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(512)
+	defer velocity.PutBuffer(buf)
 	lines := strings.Split(text, "\n")
 
 	maxLen := 0
@@ -576,7 +585,8 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 		p.theme = velocity.ThemeNightOwl
 	}
 
-	buf := &bytes.Buffer{}
+	buf := velocity.GetBuffer(512)
+	defer velocity.PutBuffer(buf)
 
 	if info.Title != "" {
 		buf.WriteString(p.theme.CachedInfoColourFg())
