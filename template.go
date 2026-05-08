@@ -314,12 +314,16 @@ func (t *Template) CachedIndentStr() string { return t.cachedIndentStr }
 // calculatePrefixWidth determines indentation needed for tree alignment.
 // For badge style the width is constant; for text/icon styles it uses the
 // actual entry level so per-call calculation is unavoidable for variable widths.
+//
+// We use referenceTime (a non-UTC fixed zone) to measure timestamp width rather
+// than entry.Time, keeping this consistent with computePrefixWidth. Without this,
+// UTC-zoned machines produce a 5-byte shorter RFC3339 string ("Z" vs "+HH:MM"),
+// causing the cached and per-call widths to diverge.
 func (t *Template) calculatePrefixWidth(entry *Entry) int {
 	width := 0
 
 	if t.showTime && !entry.Time.IsZero() {
-		timeStr := entry.Time.Format(t.timeFormat)
-		width += len(timeStr)
+		width += len(referenceTime.Format(t.timeFormat))
 		width++
 	}
 
