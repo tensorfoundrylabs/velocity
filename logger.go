@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -529,4 +530,109 @@ func NopLogger() *Logger {
 	cfg.ConsoleLevel = LevelOff
 	cfg.StructuredLevel = LevelOff
 	return NewWithConfig(cfg)
+}
+
+// Render writes r to the console writer, indented to align with the message column.
+// Each line after the first is prefixed with spaces equal to the template prefix width
+// so the output sits flush with log messages in tree mode.
+//
+// JSON writers and MultiWriter silently ignore Render calls — indented rich output
+// is only meaningful on a terminal-backed console writer.
+//
+// Render is nil-safe: a nil logger or nil renderable is a no-op.
+func (l *Logger) Render(r Renderable) {
+	if l == nil || r == nil || l.consoleWriter == nil {
+		return
+	}
+
+	prefixWidth := l.consoleWriter.template.CachedPrefixWidth()
+	indent := strings.Repeat(" ", prefixWidth)
+
+	tmp := GetTemplateBuffer()
+	defer PutTemplateBuffer(tmp)
+
+	// Render into the temporary buffer, then indent and write under the lock.
+	if err := r.Render(tmp); err != nil {
+		return
+	}
+
+	out := indentLines(tmp.Bytes(), indent)
+
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(out)
+	l.consoleWriter.mu.Unlock()
+}
+
+// RenderRaw writes r flush-left to the console writer, with no indentation.
+// Like Render, it is terminal-only and ignored by JSON/multi writers.
+// Nil-safe.
+func (l *Logger) RenderRaw(r Renderable) {
+	if l == nil || r == nil || l.consoleWriter == nil {
+		return
+	}
+
+	tmp := GetTemplateBuffer()
+	defer PutTemplateBuffer(tmp)
+
+	if err := r.Render(tmp); err != nil {
+		return
+	}
+
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(tmp.Bytes())
+	l.consoleWriter.mu.Unlock()
+}
+
+// Newline writes a single newline to the console writer under the same mutex as log calls,
+// preventing interleaving with concurrent log output.
+// Nil-safe.
+func (l *Logger) Newline() {
+	if l == nil || l.consoleWriter == nil {
+		return
+	}
+
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(newlineByte)
+	l.consoleWriter.mu.Unlock()
+}
+
+// indentLines prefixes every line in b after the first with indent.
+// The first line is left unmodified so existing margin/padding is preserved.
+func indentLines(b []byte, indent string) []byte {
+	if len(b) == 0 || indent == "" {
+		return b
+	}
+
+	// Count newlines to size the output buffer without reallocation.
+	nlCount := 0
+	for _, c := range b {
+		if c == '\n' {
+			nlCount++
+		}
+	}
+
+	out := make([]byte, 0, len(b)+nlCount*len(indent))
+	first := true
+	start := 0
+
+	for i, c := range b {
+		if c == '\n' {
+			out = append(out, b[start:i+1]...)
+			start = i + 1
+			if first {
+				first = false
+			}
+			// Prefix every subsequent line that has content.
+			if start < len(b) {
+				out = append(out, indent...)
+			}
+		}
+	}
+
+	// Append any trailing content without a newline.
+	if start < len(b) {
+		out = append(out, b[start:]...)
+	}
+
+	return out
 }
