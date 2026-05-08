@@ -56,6 +56,10 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 	templateCopy := *TemplateDefault
 	templateCopy.fieldDisplayMode = fieldDisplayMode
 	templateCopy.useColours = useColours
+	// Recompute cached widths after mutation. fieldDisplayMode and useColours do not affect
+	// prefix widths today, but initCache is cheap and prevents stale caches if future
+	// mutations here are width-affecting.
+	templateCopy.initCache()
 
 	w := &ConsoleWriter{
 		out:             out,
