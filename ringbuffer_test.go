@@ -1,7 +1,9 @@
 package velocity
 
 import (
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -49,6 +51,106 @@ func TestRingBuffer_ConcurrentWrites(t *testing.T) {
 	// With larger buffer, should flush most or all entries
 	if actualBytes == 0 {
 		t.Error("Expected some bytes to be flushed")
+	}
+}
+
+// TestRingBuffer_WriterPreemptedBeforeClaim deterministically reproduces the
+// double-claim race that commit 31018f4 fixed.
+//
+// The exact scenario:
+//  1. Writer A wins the outer head CAS for slot 0 (head=0). It exits the
+//     sequence spin (expected==0). The hook fires and stalls writer A here.
+//  2. We manually simulate what the flusher's skipSlot does: advance expected
+//     for slot 0 to the next-round value (0 + size = 4) and bump tail. We also
+//     skip slot 1 (bump tail again) so the overflow guard passes for writer B.
+//  3. Writer B wins head=4 (wrapping to slot 0 again). expected==4, so B passes
+//     the sequence spin. With the CAS fix, B advances expected to 5. Without it,
+//     expected stays at 4.
+//  4. The hook releases writer A. Without the CAS fix, A writes "writer-A\n"
+//     into slot 0 — which B owns — producing a double-write. With the fix, A's
+//     CAS(0→1) fails because expected is 5, so A drops.
+//
+// Slot ownership is asserted by inspecting committed and data directly, making
+// the test fully deterministic and independent of flusher timing.
+func TestRingBuffer_WriterPreemptedBeforeClaim(t *testing.T) {
+	t.Parallel()
+
+	// Restore the hook after this test so parallel tests are unaffected.
+	t.Cleanup(func() { afterSequenceSpinHook = nil })
+
+	buf := &safeBuffer{}
+
+	// Size-4 ring: idx = head & 3, so head=0 and head=4 both land on slot 0.
+	// Stop the flusher so we control all slot-state transitions ourselves.
+	rb := NewRingBuffer(buf, 4)
+	close(rb.stopCh)
+	<-rb.doneCh
+
+	hookFired := make(chan struct{})
+	releaseA := make(chan struct{})
+
+	afterSequenceSpinHook = func() {
+		afterSequenceSpinHook = nil // fire exactly once
+		close(hookFired)
+		<-releaseA
+	}
+
+	var writerAOK atomic.Bool
+	writerADone := make(chan struct{})
+	go func() {
+		// Writer A: outer CAS claims head=0 → slot 0. Sequence spin exits
+		// (expected==0). Hook fires; writer A stalls here.
+		writerAOK.Store(rb.Write([]byte("writer-A\n")))
+		close(writerADone)
+	}()
+
+	select {
+	case <-hookFired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("hook never fired — writer A did not reach the preemption window")
+	}
+
+	// Writer A is stalled between sequence-spin exit and the CAS claim.
+	// Its local `head` is 0; slot 0's expected is still 0 (unclaimed).
+	//
+	// Simulate skipSlot for slot 0: expected → 0+4=4, tail → 1.
+	size := uint64(len(rb.entries)) // == 4
+	rb.entries[0].expected.Store(size)
+	rb.tail.Store(1)
+
+	// Simulate skipSlot for slot 1 so tail=2. This satisfies the overflow guard:
+	// writer B needs nextHead(5) - tail(2) = 3 <= mask(3).
+	rb.entries[1].expected.Store(1 + size) // next-round value for slot 1
+	rb.tail.Store(2)
+
+	// Advance head to 4 so writer B lands on slot 0 next round.
+	rb.head.Store(4)
+
+	// Writer B: head=4, idx=0. expected==4==head, passes the spin immediately.
+	// The CAS fix: B does CAS(4→5); expected becomes 5. Without fix: expected stays 4.
+	writerBOK := rb.Write([]byte("writer-B\n"))
+
+	// Release writer A. With the fix, A tries CAS(0→1) on expected==5 → fails → dropped.
+	// Without the fix, A writes "writer-A\n" over B's slot 0.
+	close(releaseA)
+
+	select {
+	case <-writerADone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer A goroutine did not finish — possible deadlock")
+	}
+
+	if writerBOK {
+		// B wrote first. A should have been dropped by the failed CAS.
+		// If A also wrote (double-claim), slot 0's data will contain "writer-A".
+		committed := rb.entries[0].committed.Load()
+		data := string(rb.entries[0].data[:rb.entries[0].size.Load()])
+		if committed == 1 && strings.Contains(data, "writer-A") {
+			t.Errorf("double-claim: writer A overwrote writer B's slot — CAS claim fix is broken")
+		}
+		if writerAOK.Load() {
+			t.Errorf("both writers reported success for the same physical slot — double-claim bug")
+		}
 	}
 }
 

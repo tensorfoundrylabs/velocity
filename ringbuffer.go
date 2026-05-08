@@ -100,6 +100,10 @@ func NewRingBuffer(writer io.Writer, size int) *RingBuffer {
 	return rb
 }
 
+// afterSequenceSpinHook is called in tests between the sequence-spin exit and
+// the CAS claim to simulate preemption and expose double-claim races.
+var afterSequenceSpinHook func()
+
 // Write adds a log entry to the ring buffer.
 // Returns false if the buffer is full and the message was dropped.
 func (rb *RingBuffer) Write(data []byte) bool {
@@ -128,6 +132,12 @@ func (rb *RingBuffer) Write(data []byte) bool {
 					rb.dropped.Add(1)
 					return false
 				}
+			}
+
+			// Allow tests to inject a pause between spin exit and the claim CAS,
+			// reproducing the preemption window the fix targets.
+			if afterSequenceSpinHook != nil {
+				afterSequenceSpinHook()
 			}
 
 			// Atomically claim the write section by advancing expected from head to
