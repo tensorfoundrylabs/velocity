@@ -100,6 +100,48 @@ func TestLogger_Render_NilSafety(t *testing.T) {
 	log.Render(nil)
 }
 
+// TestLogger_Render_JSONWriterIgnores verifies that Render is a no-op when the logger
+// has only a JSON writer and no console writer, so structured output is not polluted.
+func TestLogger_Render_JSONWriterIgnores(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+
+	cfg := DefaultConfig()
+	cfg.ConsoleOutput = nil // no console writer
+	cfg.StructuredOutput = &jsonBuf
+	cfg.StructuredLevel = LevelDebug
+
+	log := NewWithConfig(cfg)
+
+	r := &testRenderable{content: "should-not-appear\n"}
+	log.Render(r)
+	log.RenderRaw(r)
+	log.Newline()
+
+	// JSON output must be empty — Render is terminal-only.
+	if jsonBuf.Len() != 0 {
+		t.Errorf("expected empty JSON output after Render, got: %q", jsonBuf.String())
+	}
+}
+
+// TestLogger_Render_NoConsoleWriter verifies that Render is a no-op when
+// consoleWriter is nil (e.g. logger constructed without a console output).
+func TestLogger_Render_NoConsoleWriter(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = nil
+
+	log := NewWithConfig(cfg)
+
+	// Must not panic.
+	log.Render(&testRenderable{content: "noop\n"})
+	log.RenderRaw(&testRenderable{content: "noop\n"})
+	log.Newline()
+}
+
 func TestLogger_Render_ConcurrentWithInfo(t *testing.T) {
 	t.Parallel()
 
