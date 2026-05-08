@@ -639,8 +639,10 @@ func (l *Logger) Newline() {
 	l.consoleWriter.mu.Unlock()
 }
 
-// indentLines prefixes every line in b after the first with indent.
-// The first line is left unmodified so existing margin/padding is preserved.
+// indentLines prefixes every non-empty line in b with indent. Render writes a
+// self-contained block at the message column, so the first line must also be
+// indented; otherwise multi-line output like table top borders lands flush-left
+// while subsequent lines align to the indent column.
 func indentLines(b []byte, indent string) []byte {
 	if len(b) == 0 || indent == "" {
 		return b
@@ -654,18 +656,15 @@ func indentLines(b []byte, indent string) []byte {
 		}
 	}
 
-	out := make([]byte, 0, len(b)+nlCount*len(indent))
-	first := true
+	out := make([]byte, 0, len(b)+(nlCount+1)*len(indent))
+	out = append(out, indent...)
 	start := 0
 
 	for i, c := range b {
 		if c == '\n' {
 			out = append(out, b[start:i+1]...)
 			start = i + 1
-			if first {
-				first = false
-			}
-			// Prefix every subsequent line that has content.
+			// Prefix the next line only if it has content.
 			if start < len(b) {
 				out = append(out, indent...)
 			}

@@ -29,18 +29,27 @@ func TestLogger_Render_WritesIndentedOutput(t *testing.T) {
 	cfg.StructuredOutput = nil
 
 	log := NewWithConfig(cfg)
+	indent := log.consoleWriter.template.CachedIndentStr()
+	if indent == "" {
+		t.Fatal("expected non-empty cached indent string")
+	}
 
+	// First-line indent matters: table top borders, banners and other block
+	// renderables write the very first line at the indent column.
 	r := &testRenderable{content: "line1\nline2\n"}
 	log.Render(r)
 
 	out := buf.String()
-	if !strings.Contains(out, "line1") {
-		t.Errorf("expected 'line1' in output, got: %s", out)
-	}
-	// The second line should have some indent (from cachedPrefixWidth).
 	lines := strings.Split(out, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 lines, got: %q", out)
+	}
+
+	for i, want := range []string{"line1", "line2"} {
+		expected := indent + want
+		if lines[i] != expected {
+			t.Errorf("line %d: expected %q, got %q", i, expected, lines[i])
+		}
 	}
 }
 
