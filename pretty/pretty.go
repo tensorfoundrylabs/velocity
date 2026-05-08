@@ -104,7 +104,7 @@ func (p *Pretty) Section(title string) {
 	}
 
 	buf := &bytes.Buffer{}
-	buf.WriteString(p.theme.MessageColour.ANSI(true))
+	buf.WriteString(p.theme.CachedMessageFg())
 	buf.WriteString(title)
 	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
@@ -152,7 +152,7 @@ func (p *Pretty) Box(title, content string) {
 		topFill -= len([]rune(title)) + 1 // subtract title runes and its trailing "─"
 	}
 
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString("┌─")
 	if title != "" {
 		buf.WriteString(title)
@@ -164,19 +164,19 @@ func (p *Pretty) Box(title, content string) {
 	buf.WriteString("\n")
 
 	for _, line := range lines {
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString("│ ")
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.MessageColour.ANSI(true))
+		buf.WriteString(p.theme.CachedMessageFg())
 		buf.WriteString(padRightRunes(line, width-3))
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString("│")
 		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
 	}
 
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString("└")
 	buf.WriteString(strings.Repeat("─", width-2))
 	buf.WriteString("┘")
@@ -189,7 +189,7 @@ func (p *Pretty) Box(title, content string) {
 // Panel draws a simple bordered block with a title bar.
 func (p *Pretty) Panel(title, content string) {
 	buf := &bytes.Buffer{}
-	buf.WriteString(p.theme.MessageColour.ANSI(true))
+	buf.WriteString(p.theme.CachedMessageFg())
 	if title != "" {
 		buf.WriteString("▓ ")
 		buf.WriteString(title)
@@ -209,11 +209,11 @@ func (p *Pretty) Bullet(level int, text string) {
 	bullet := bullets[level%len(bullets)]
 
 	buf.WriteString(indent)
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString(bullet)
 	buf.WriteString(velocity.Reset)
 	buf.WriteString(" ")
-	buf.WriteString(p.theme.MessageColour.ANSI(true))
+	buf.WriteString(p.theme.CachedMessageFg())
 	buf.WriteString(text)
 	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
@@ -232,11 +232,11 @@ func (p *Pretty) KeyValue(key, value string) {
 	}
 
 	buf := &bytes.Buffer{}
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString(key)
 	buf.WriteString(velocity.Reset)
 	buf.WriteString(": ")
-	buf.WriteString(p.theme.FieldValColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldValFg())
 	buf.WriteString(value)
 	buf.WriteString(velocity.Reset)
 	buf.WriteString("\n")
@@ -329,7 +329,7 @@ func padRightRunes(s string, length int) string {
 }
 
 func (p *Pretty) writeTableTopBorder(buf *bytes.Buffer, colWidths []int) {
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	for i, width := range colWidths {
 		buf.WriteString(strings.Repeat("─", width+2))
 		if i < len(colWidths)-1 {
@@ -341,17 +341,17 @@ func (p *Pretty) writeTableTopBorder(buf *bytes.Buffer, colWidths []int) {
 }
 
 func (p *Pretty) writeTableHeaders(buf *bytes.Buffer, headers []string, colWidths []int) {
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	for i, header := range headers {
 		if i > 0 {
 			buf.WriteString("│")
 		}
 		buf.WriteString(" ")
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.TableHeader.ANSI(true))
+		buf.WriteString(p.theme.CachedTableHeaderFg())
 		buf.WriteString(padRight(header, colWidths[i]))
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString(" ")
 	}
 	buf.WriteString(velocity.Reset)
@@ -359,7 +359,7 @@ func (p *Pretty) writeTableHeaders(buf *bytes.Buffer, headers []string, colWidth
 }
 
 func (p *Pretty) writeTableHeaderSeparator(buf *bytes.Buffer, colWidths []int) {
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	for i, width := range colWidths {
 		buf.WriteString(strings.Repeat("─", width+2))
 		if i < len(colWidths)-1 {
@@ -377,16 +377,16 @@ func (p *Pretty) writeTableRows(buf *bytes.Buffer, rows [][]string, colWidths []
 }
 
 func (p *Pretty) writeTableRow(buf *bytes.Buffer, row []string, colWidths []int) {
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	for i, cell := range row {
 		if i >= len(colWidths) {
 			break
 		}
 		buf.WriteString(" ")
-		buf.WriteString(p.theme.MessageColour.ANSI(true))
+		buf.WriteString(p.theme.CachedMessageFg())
 		buf.WriteString(padRightVisible(cell, colWidths[i]))
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString(" ")
 		if i < len(colWidths)-1 {
 			buf.WriteString("│")
@@ -397,7 +397,7 @@ func (p *Pretty) writeTableRow(buf *bytes.Buffer, row []string, colWidths []int)
 }
 
 func (p *Pretty) writeTableBottomBorder(buf *bytes.Buffer, colWidths []int) {
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	for i, width := range colWidths {
 		buf.WriteString(strings.Repeat("─", width+2))
 		if i < len(colWidths)-1 {
@@ -466,7 +466,7 @@ func (p *Pretty) writePrettyTreeItem(buf *bytes.Buffer, node TreeItem, prefix st
 
 	buf.WriteString(prefix)
 	buf.WriteString(connector)
-	buf.WriteString(p.theme.MessageColour.ANSI(true))
+	buf.WriteString(p.theme.CachedMessageFg())
 	if node.Value != nil {
 		fmt.Fprintf(buf, "%s: %v", node.Key, node.Value)
 	} else {
@@ -509,7 +509,7 @@ func (p *Pretty) Banner(text string) {
 	contentWidth := maxLen
 	boxWidth := contentWidth + 2
 
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString("╔")
 	buf.WriteString(strings.Repeat("─", boxWidth))
 	buf.WriteString("╗")
@@ -517,19 +517,19 @@ func (p *Pretty) Banner(text string) {
 	buf.WriteString("\n")
 
 	for _, line := range lines {
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString("│ ")
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.MessageColour.ANSI(true))
+		buf.WriteString(p.theme.CachedMessageFg())
 		buf.WriteString(padRightRunes(line, contentWidth))
 		buf.WriteString(velocity.Reset)
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString(" │")
 		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
 	}
 
-	buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString("╚")
 	buf.WriteString(strings.Repeat("─", boxWidth))
 	buf.WriteString("╝")
@@ -579,7 +579,7 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 	buf := &bytes.Buffer{}
 
 	if info.Title != "" {
-		buf.WriteString(p.theme.InfoColour.ANSI(true))
+		buf.WriteString(p.theme.CachedInfoColourFg())
 		buf.WriteString("▓ ")
 		buf.WriteString(info.Title)
 		if info.Version != "" {
@@ -592,11 +592,11 @@ func (p *Pretty) SystemInfo(info *SystemInfo) {
 	}
 
 	for _, pair := range info.Fields {
-		buf.WriteString(p.theme.FieldKeyColour.ANSI(true))
+		buf.WriteString(p.theme.CachedFieldKeyFg())
 		buf.WriteString(padRight(pair.Key+":", 20))
 		buf.WriteString(velocity.Reset)
 		buf.WriteString(" ")
-		buf.WriteString(p.theme.MessageColour.ANSI(true))
+		buf.WriteString(p.theme.CachedMessageFg())
 		buf.WriteString(pair.Value)
 		buf.WriteString(velocity.Reset)
 		buf.WriteString("\n")
