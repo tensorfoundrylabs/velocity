@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+
 // Entry represents a single log entry designed for reuse via sync.Pool.
 type Entry struct {
 	Time time.Time
@@ -41,11 +42,12 @@ type Entry struct {
 }
 
 // entryPool manages Entry object reuse to minimise allocations.
+// Buffer is intentionally omitted here; Buffer() lazy-allocates on first use
+// so entries that never call Buffer() (the majority) pay nothing.
 var entryPool = sync.Pool{
 	New: func() any {
 		return &Entry{
 			Fields: GetFieldSlice(),
-			buffer: bytes.NewBuffer(make([]byte, 0, 256)),
 		}
 	},
 }
@@ -56,10 +58,13 @@ func GetEntry() *Entry {
 		// Fallback in case pool returns unexpected type
 		e = &Entry{
 			Fields: GetFieldSlice(),
-			buffer: bytes.NewBuffer(make([]byte, 0, 256)),
 		}
 	}
 	e.Reset()
+	// Clear the buffer's content from the previous use without releasing the allocation.
+	if e.buffer != nil {
+		e.buffer.Reset()
+	}
 	e.refCount.Store(1)
 	return e
 }
@@ -73,9 +78,8 @@ func (e *Entry) Reset() {
 
 	e.Fields = e.Fields[:0]
 
-	if e.buffer != nil {
-		e.buffer.Reset()
-	}
+	// Don't reset e.buffer — nil stays nil, allocated buffer keeps its capacity
+	// and will be Reset on next Buffer() call if reused.
 
 	e.Caller = ""
 	e.Function = ""

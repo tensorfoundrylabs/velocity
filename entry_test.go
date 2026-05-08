@@ -7,6 +7,37 @@ import (
 	"time"
 )
 
+// TestEntry_Buffer_LazyAlloc verifies that the entry buffer is not allocated
+// until Buffer() is first called, and that Bytes/String return empty before then.
+func TestEntry_Buffer_LazyAlloc(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+
+	// Buffer must be nil before first call — no eager alloc.
+	if e.buffer != nil {
+		t.Fatal("expected nil buffer before first Buffer() call")
+	}
+
+	if got := e.Bytes(); got != nil {
+		t.Fatalf("Bytes() before Buffer() should be nil, got %v", got)
+	}
+	if got := e.String(); got != "" {
+		t.Fatalf("String() before Buffer() should be empty, got %q", got)
+	}
+
+	// Buffer() must lazy-allocate and return a usable buffer.
+	buf := e.Buffer()
+	if buf == nil {
+		t.Fatal("Buffer() returned nil")
+	}
+
+	buf.WriteString("hello")
+	if got := e.String(); got != "hello" {
+		t.Fatalf("expected %q, got %q", "hello", got)
+	}
+}
+
 func TestEntry_ReferenceCount_PreventsEarlyPoolReturn(t *testing.T) {
 	entry := GetEntry()
 	entry.SetMessage("test")
