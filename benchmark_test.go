@@ -336,3 +336,56 @@ func BenchmarkBufferPool_GetPut(b *testing.B) {
 		pool.Put(buf)
 	}
 }
+
+// ---- Render API benchmarks --------------------------------------------------
+
+// BenchmarkLogger_Render measures the cost of one Logger.Render call with a
+// small pre-built TableResult (3 rows, 2 columns). Construction is excluded
+// from the timer so we isolate the indentation + write path.
+func BenchmarkLogger_Render(b *testing.B) {
+	l := newDiscardLogger()
+	// Import pretty types via the renderable interface — we keep the root
+	// benchmark free of the pretty package import by using a minimal inline Renderable.
+	payload := []byte("col1  col2\ncell1 cell2\ncell3 cell4\ncell5 cell6\n")
+	r := &bytesRenderable{data: payload}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Render(r)
+	}
+}
+
+// BenchmarkLogger_RenderRaw measures the flush-left write path — no indentation
+// computation, so should be slightly cheaper than Render.
+func BenchmarkLogger_RenderRaw(b *testing.B) {
+	l := newDiscardLogger()
+	payload := []byte("col1  col2\ncell1 cell2\ncell3 cell4\ncell5 cell6\n")
+	r := &bytesRenderable{data: payload}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.RenderRaw(r)
+	}
+}
+
+// BenchmarkLogger_Newline measures the trivial-call overhead of inserting a
+// blank line under the console writer mutex.
+func BenchmarkLogger_Newline(b *testing.B) {
+	l := newDiscardLogger()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Newline()
+	}
+}
+
+// bytesRenderable is a minimal Renderable used in benchmarks to avoid importing
+// the pretty package from the root benchmark file.
+type bytesRenderable struct {
+	data []byte
+}
+
+func (r *bytesRenderable) Render(w io.Writer) error {
+	_, err := w.Write(r.data)
+	return err
+}
