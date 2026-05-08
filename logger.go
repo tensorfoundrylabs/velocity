@@ -353,11 +353,12 @@ func (l *Logger) LogEntry(e *Entry) {
 		return
 	}
 	// Prepend base fields from With() so child loggers propagate their fields.
+	// Reuse the existing slice when baseFields fit to avoid a fresh allocation.
 	if len(l.baseFields) > 0 {
-		combined := make([]Field, 0, len(l.baseFields)+len(e.Fields))
-		combined = append(combined, l.baseFields...)
-		combined = append(combined, e.Fields...)
-		e.Fields = combined
+		existing := e.Fields
+		e.Fields = e.Fields[:0]
+		e.WithFields(l.baseFields...)
+		e.WithFields(existing...)
 	}
 	if l.cfg != nil {
 		if e.Level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
