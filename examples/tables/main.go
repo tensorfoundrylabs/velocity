@@ -20,12 +20,10 @@ func main() {
 	sf := log.Status()
 	p := pretty.NewFromLogger(log)
 
-	// Render the table flush-left via RenderRaw so it sits as a standalone report
-	// rather than being indented under a log line.
 	log.Info("=== Pretty Table ===")
 	log.Newline()
 	log.Info("service health check results")
-	log.RenderRaw(p.NewTable(
+	log.Render(p.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
 			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
@@ -39,7 +37,7 @@ func main() {
 
 	log.Info("=== GPU Node Table ===")
 	log.Newline()
-	log.RenderRaw(p.NewTable(
+	log.Render(p.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
 			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
@@ -69,7 +67,7 @@ func main() {
 	// Wide table with many columns. Columns auto-size to content.
 	log.Info("=== Wide Table (auto-sized columns) ===")
 	log.Newline()
-	log.RenderRaw(p.NewTable(
+	log.Render(p.NewTable(
 		[]string{"PID", "User", "CPU%", "Mem%", "VSZ", "RSS", "TTY", "Stat", "Command"},
 		[][]string{
 			{"1", "root", "0.0", "0.1", "168k", "12k", "?", "Ss", "/sbin/init"},
