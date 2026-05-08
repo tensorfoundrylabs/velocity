@@ -444,6 +444,42 @@ func (l *Logger) Theme() *Theme {
 	return l.cfg.ConsoleTheme
 }
 
+// SetTheme updates the active theme on all writers that support it.
+// Updates cfg.ConsoleTheme so subsequent With() clones and WithTemplate calls inherit the new theme.
+// Nil theme is treated as explicit colour-disable; writers receive nil and handle it themselves.
+// Nil-safe.
+func (l *Logger) SetTheme(theme *Theme) {
+	if l == nil {
+		return
+	}
+
+	if l.cfg != nil {
+		l.cfg.ConsoleTheme = theme
+	}
+
+	type themeSetter interface{ SetTheme(*Theme) }
+
+	if s, ok := any(l.consoleWriter).(themeSetter); ok && l.consoleWriter != nil {
+		s.SetTheme(theme)
+	}
+
+	l.writersMu.RLock()
+	defer l.writersMu.RUnlock()
+
+	if l.additionalWriters == nil {
+		return
+	}
+
+	l.additionalWriters.mu.Lock()
+	defer l.additionalWriters.mu.Unlock()
+
+	for _, w := range l.additionalWriters.writers {
+		if s, ok := w.(themeSetter); ok {
+			s.SetTheme(theme)
+		}
+	}
+}
+
 // Status returns the StatusFormatter for coloured status indicators.
 // Safe to call even if logger is nil - returns a non-coloured formatter.
 func (l *Logger) Status() *StatusFormatter {
