@@ -30,7 +30,7 @@ func main() {
 	)
 	defer func() { _ = log.Close() }()
 
-	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
+	p := pretty.NewFromLogger(log)
 
 	stageBanner(log)
 	stageClusterDiscovery(log, p)
@@ -61,7 +61,7 @@ func stageBanner(log *velocity.Logger) {
 
 	banner := pretty.CreateBanner("Terminal Velocity", "0.1.0", "tensorfoundry.io", ascii)
 	log.Banner(strings.Split(strings.TrimRight(banner, "\n"), "\n")...)
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stageClusterDiscovery scans for available GPU nodes and reports what it finds.
@@ -90,7 +90,7 @@ func stageClusterDiscovery(log *velocity.Logger, p *pretty.Pretty) {
 		velocity.Int("gpus", 8),
 		velocity.String("cuda", "13.0"),
 	)
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stageDeploymentConfig displays the model deployment configuration as a tree.
@@ -121,7 +121,7 @@ func stageDeploymentConfig(log *velocity.Logger, p *pretty.Pretty) {
 		{Key: "Max Sequence Length", Value: 8192},
 	})
 
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stagePreflightChecks runs pre-flight validation across all nodes and reports results.
@@ -162,7 +162,7 @@ func stagePreflightChecks(log *velocity.Logger, p *pretty.Pretty) {
 		velocity.String("required", "35 GB"),
 	)
 
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stageModelDistribution downloads model weights and builds inference containers.
@@ -239,7 +239,7 @@ func stageModelDistribution(log *velocity.Logger, p *pretty.Pretty) {
 	}
 
 	distLog.Info("inference containers ready", velocity.String("image", "velocity/llama3-70b-awq:0.1.0"))
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stageNodeDeployment pushes the model to each node in turn.
@@ -290,7 +290,7 @@ func stageNodeDeployment(log *velocity.Logger, p *pretty.Pretty) string {
 		}
 	}
 
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 	return failed
 }
 
@@ -324,7 +324,7 @@ func stageRecovery(log *velocity.Logger, p *pretty.Pretty, failedNode string) {
 		velocity.String("lb_config", "updated"),
 	)
 
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stageHealthVerification pings every endpoint and shows a summary table.
@@ -346,7 +346,7 @@ func stageHealthVerification(log *velocity.Logger, p *pretty.Pretty) {
 		rows,
 	)
 
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 }
 
 // stageSummary prints the final deployment summary box and the completion log line.
@@ -367,7 +367,7 @@ func stageSummary(log *velocity.Logger, p *pretty.Pretty, started time.Time) {
 	)
 
 	p.Box("Deployment Summary", content)
-	_, _ = fmt.Fprintln(os.Stdout)
+	log.Newline()
 
 	log.Info("deployment complete",
 		velocity.Int("nodes_total", 4),

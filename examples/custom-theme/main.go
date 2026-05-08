@@ -6,7 +6,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"time"
 
@@ -60,8 +59,8 @@ func main() {
 		velocity.WithLevel(velocity.LevelDebug),
 	)
 
-	fmt.Println("=== Cyberpunk Theme ===")
-	fmt.Println()
+	log.Info("=== Cyberpunk Theme ===")
+	log.Newline()
 
 	// All log levels pick up the theme colours.
 	log.Debug("neural link initialised", velocity.String("interface", "BCI-7"))
@@ -69,7 +68,7 @@ func main() {
 	log.Warn("ICE detected on subnet", velocity.String("subnet", "10.77.0.0/16"), velocity.Float64("threat", 0.82))
 	log.Error("intrusion countermeasure triggered", velocity.String("target", "db-vault-03"), velocity.Duration("lockout", 30*time.Second))
 
-	fmt.Println()
+	log.Newline()
 
 	// Detailed mode shows fields as a tree, same colours.
 	log.InfoDetailed("system status",
@@ -80,10 +79,11 @@ func main() {
 		velocity.String("cooling", "liquid nitrogen"),
 	)
 
-	fmt.Println()
+	log.Newline()
 
-	// Pretty output inherits the theme too.
-	p := pretty.New(os.Stdout, ThemeCyberpunk)
+	// Pretty output routes through the logger so it serialises under the same mutex
+	// and inherits the theme automatically.
+	p := pretty.NewFromLogger(log)
 
 	p.Section("Mission Briefing")
 
@@ -96,7 +96,7 @@ func main() {
 	p.KeyValue("Reward", "50,000 eddies")
 	p.KeyValue("Fixer", "Rogue Amendiares")
 
-	fmt.Println()
+	log.Newline()
 
 	// Status formatter picks up the theme for coloured OK/FAIL/WARN.
 	sf := velocity.NewStatusFormatter(ThemeCyberpunk, true)
@@ -111,7 +111,7 @@ func main() {
 		},
 	)
 
-	fmt.Println()
+	log.Newline()
 
 	// Tree display with the theme.
 	p.Tree([]pretty.TreeItem{
@@ -130,7 +130,7 @@ func main() {
 		},
 	})
 
-	fmt.Println()
+	log.Newline()
 
 	// Child loggers inherit the theme through the parent's writer.
 	mission := log.With(velocity.String("op", "blackout"), velocity.String("agent", "V"))
@@ -138,6 +138,6 @@ func main() {
 	mission.Warn("guard patrol detected", velocity.Int("hostiles", 3), velocity.Duration("eta", 45*time.Second))
 	mission.Info("relic acquired", velocity.Bool("detected", false))
 
-	fmt.Println()
+	log.Newline()
 	p.Success("Mission complete. Get paid, choom.")
 }

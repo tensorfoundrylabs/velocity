@@ -61,7 +61,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "close error: %v\n", err)
 	}
 
-	fmt.Println()
+	log.Newline()
 	fmt.Printf("--- JSON writer received %d bytes ---\n", jsonBuf.Len())
 	fmt.Println(jsonBuf.String())
 

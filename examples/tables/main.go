@@ -4,7 +4,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
@@ -19,14 +18,14 @@ func main() {
 	)
 
 	sf := log.Status()
-	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
+	p := pretty.NewFromLogger(log)
 
-	// Pretty table renders directly without log-line indentation.
-	// Good for standalone reports and dashboards.
-	fmt.Println("=== Pretty Table ===")
-	fmt.Println()
+	// Render the table flush-left via RenderRaw so it sits as a standalone report
+	// rather than being indented under a log line.
+	log.Info("=== Pretty Table ===")
+	log.Newline()
 	log.Info("service health check results")
-	p.Table(
+	log.RenderRaw(p.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
 			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
@@ -35,14 +34,12 @@ func main() {
 			{"notifications", sf.Fail("DOWN"), "-", "ap-southeast-2"},
 			{"analytics", sf.Okay("HEALTHY"), "28ms", "us-west-2"},
 		},
-	)
-	fmt.Println()
+	))
+	log.Newline()
 
-	// Pretty table renders directly without log-line indentation.
-	// Good for standalone reports and dashboards.
-	fmt.Println("=== GPU Node Table ===")
-	fmt.Println()
-	p.Table(
+	log.Info("=== GPU Node Table ===")
+	log.Newline()
+	log.RenderRaw(p.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
 			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
@@ -50,12 +47,13 @@ func main() {
 			{"node-2", "A100 80GB", "78.9 / 80.0 GB", sf.Warn("98%"), "82C"},
 			{"node-3", "A100 80GB", "0.0 / 80.0 GB", sf.Fail("0%"), "34C"},
 		},
-	)
-	fmt.Println()
+	))
+	log.Newline()
 
-	// Tables work without colour too. Passing nil theme gives plain output.
-	fmt.Println("=== Plain Table (no theme, no colour) ===")
-	fmt.Println()
+	// Tables work without colour too. pretty.New(os.Stdout, nil) demonstrates
+	// the standalone constructor without a logger or theme.
+	log.Info("=== Plain Table (no theme, no colour) ===")
+	log.Newline()
 	plain := pretty.New(os.Stdout, nil)
 	plain.Table(
 		[]string{"Endpoint", "Method", "Calls/sec", "P99"},
@@ -66,12 +64,12 @@ func main() {
 			{"/health", "GET", "10,000", "1ms"},
 		},
 	)
-	fmt.Println()
+	log.Newline()
 
 	// Wide table with many columns. Columns auto-size to content.
-	fmt.Println("=== Wide Table (auto-sized columns) ===")
-	fmt.Println()
-	p.Table(
+	log.Info("=== Wide Table (auto-sized columns) ===")
+	log.Newline()
+	log.RenderRaw(p.NewTable(
 		[]string{"PID", "User", "CPU%", "Mem%", "VSZ", "RSS", "TTY", "Stat", "Command"},
 		[][]string{
 			{"1", "root", "0.0", "0.1", "168k", "12k", "?", "Ss", "/sbin/init"},
@@ -79,5 +77,5 @@ func main() {
 			{"1204", "nginx", "0.3", "0.2", "32M", "8M", "?", "S", "nginx: worker process"},
 			{"1891", "prometheus", "1.2", "0.8", "256M", "64M", "?", "Sl", "/usr/bin/prometheus"},
 		},
-	)
+	))
 }

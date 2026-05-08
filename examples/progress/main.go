@@ -4,7 +4,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"time"
 
@@ -67,5 +66,5 @@ func main() {
 	rb.Complete()
 
 	log.Info("Rollback complete", velocity.String("version", "v1.9.3"))
-	_, _ = fmt.Fprintln(os.Stdout, "Pipeline finished.")
+	log.Info("pipeline finished")
 }

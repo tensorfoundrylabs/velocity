@@ -150,7 +150,7 @@ func main() {
 			"Estimated downtime: 0 seconds (rolling update with readiness gates).\n"+
 			"On-call: alice@example.com | Incident channel: #incidents")
 
-	fmt.Println()
+	log.Newline()
 	log.Info("pre-flight complete, starting deployment")
 	log.Warn("production namespace check failed, continuing with staging only")
 	log.Info("deployment finished",
