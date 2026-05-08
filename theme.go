@@ -1,5 +1,7 @@
 package velocity
 
+import "sync"
+
 type Colour struct {
 	colour256 int
 	r, g, b   uint8
@@ -38,6 +40,10 @@ func (c Colour) ANSI(foreground bool) string {
 
 const Reset = "\033[0m"
 
+// Theme holds colour configuration for a logger. Colour fields are treated as immutable
+// after the first call to Cache() or EnsureCached(). To switch themes at runtime, build a
+// new Theme and pass it to SetTheme — mutating colour fields on an active Theme after caching
+// produces undefined cached values.
 type Theme struct {
 	// Per-level foreground codes, indexed by Level constant.
 	cachedLevelFg [6]string
@@ -53,6 +59,10 @@ type Theme struct {
 	// Cached codes used by the pretty package to avoid per-render allocs.
 	cachedTableHeaderFg string
 	cachedInfoColourFg  string
+
+	// cacheOnce ensures Cache() populates the cached fields exactly once,
+	// even when called concurrently.
+	cacheOnce sync.Once
 
 	DebugColour Colour
 	InfoColour  Colour
@@ -77,24 +87,31 @@ type Theme struct {
 }
 
 // Cache pre-computes ANSI sequences for all colours used in hot-path rendering.
-// Built-in themes call this automatically via cachedTheme.
-// Logger constructors and SetTheme call ensureCached internally, so explicit Cache() calls are
-// not required when themes enter through those paths. Not safe to call concurrently.
+// Idempotent and concurrent-safe: the body runs exactly once regardless of how many goroutines
+// call Cache() simultaneously. Subsequent calls are no-ops.
+// Built-in themes call this automatically via cachedTheme. Logger constructors and SetTheme
+// call EnsureCached internally, so explicit Cache() calls are not required when themes enter
+// through those paths.
 func (t *Theme) Cache() {
-	t.cachedTimestampFg = t.TimestampColour.ANSI(true)
-	t.cachedMessageFg = t.MessageColour.ANSI(true)
-	t.cachedFieldKeyFg = t.FieldKeyColour.ANSI(true)
-	t.cachedFieldValFg = t.FieldValColour.ANSI(true)
-	t.cachedErrorValFg = t.ErrorValColour.ANSI(true)
-	t.cachedLevelFg[LevelDebug] = t.DebugColour.ANSI(true)
-	t.cachedLevelFg[LevelInfo] = t.InfoColour.ANSI(true)
-	t.cachedLevelFg[LevelWarn] = t.WarnColour.ANSI(true)
-	t.cachedLevelFg[LevelError] = t.ErrorColour.ANSI(true)
-	t.cachedLevelFg[LevelFatal] = t.FatalColour.ANSI(true)
-	t.cachedLevelFg[LevelOff] = t.InfoColour.ANSI(true)
-	// Extra codes consumed by the pretty package.
-	t.cachedTableHeaderFg = t.TableHeader.ANSI(true)
-	t.cachedInfoColourFg = t.InfoColour.ANSI(true)
+	if t == nil {
+		return
+	}
+	t.cacheOnce.Do(func() {
+		t.cachedTimestampFg = t.TimestampColour.ANSI(true)
+		t.cachedMessageFg = t.MessageColour.ANSI(true)
+		t.cachedFieldKeyFg = t.FieldKeyColour.ANSI(true)
+		t.cachedFieldValFg = t.FieldValColour.ANSI(true)
+		t.cachedErrorValFg = t.ErrorValColour.ANSI(true)
+		t.cachedLevelFg[LevelDebug] = t.DebugColour.ANSI(true)
+		t.cachedLevelFg[LevelInfo] = t.InfoColour.ANSI(true)
+		t.cachedLevelFg[LevelWarn] = t.WarnColour.ANSI(true)
+		t.cachedLevelFg[LevelError] = t.ErrorColour.ANSI(true)
+		t.cachedLevelFg[LevelFatal] = t.FatalColour.ANSI(true)
+		t.cachedLevelFg[LevelOff] = t.InfoColour.ANSI(true)
+		// Extra codes consumed by the pretty package.
+		t.cachedTableHeaderFg = t.TableHeader.ANSI(true)
+		t.cachedInfoColourFg = t.InfoColour.ANSI(true)
+	})
 }
 
 // CachedTableHeaderFg returns the pre-computed ANSI foreground for the table header colour.
@@ -113,33 +130,29 @@ func (t *Theme) CachedFieldKeyFg() string { return t.cachedFieldKeyFg }
 func (t *Theme) CachedFieldValFg() string { return t.cachedFieldValFg }
 
 // cachedTheme calls Cache on t and returns it, used for package-level theme initialisation.
-func cachedTheme(t Theme) *Theme {
+func cachedTheme(t *Theme) *Theme {
 	t.Cache()
-	return &t
+	return t
 }
 
-// ensureCached returns a fully-cached *Theme. If t is already a package-level cached theme
-// (i.e. cachedMessageFg is non-empty) it is returned as-is. Otherwise the value is cloned and
-// cached so the original user-constructed theme is not mutated and no concurrent readers race
-// the write.
+// ensureCached calls Cache on t in-place and returns the same pointer.
+// Safe to call concurrently: sync.Once inside Cache() guarantees at-most-once execution.
 func ensureCached(t *Theme) *Theme {
-	if t == nil || t.cachedMessageFg != "" {
-		return t
+	if t == nil {
+		return nil
 	}
-	clone := *t
-	clone.Cache()
-	return &clone
+	t.Cache()
+	return t
 }
 
-// EnsureCached returns a fully-cached *Theme safe for use by writers and formatters.
-// If the theme's ANSI sequences are already populated it is returned unchanged.
-// Otherwise a clone is made, cached, and returned — the original is not mutated.
-// Use this from external packages (e.g. pretty) that cannot access the internal clone helper.
+// EnsureCached caches the theme's ANSI sequences in-place and returns the receiver.
+// Idempotent and concurrent-safe. Use this from external packages (e.g. pretty) that
+// cannot access the internal helper.
 func (t *Theme) EnsureCached() *Theme {
 	return ensureCached(t)
 }
 
-var ThemeNightOwl = cachedTheme(Theme{
+var ThemeNightOwl = cachedTheme(&Theme{
 	Name:             "Night Owl",
 	DebugColour:      RGB(0xC7, 0x92, 0xEA), // #C792EA
 	InfoColour:       RGB(0x82, 0xAA, 0xFF), // #82AAFF
@@ -158,7 +171,7 @@ var ThemeNightOwl = cachedTheme(Theme{
 	TableHeader:      RGB(0x7F, 0xD3, 0xFF), // Teal #7FD3FF
 })
 
-var ThemeSolarized = cachedTheme(Theme{
+var ThemeSolarized = cachedTheme(&Theme{
 	Name:             "Solarized",
 	DebugColour:      Colour256(61),
 	InfoColour:       Colour256(33),
@@ -177,7 +190,7 @@ var ThemeSolarized = cachedTheme(Theme{
 	TableHeader:      Colour256(37),  // Cyan
 })
 
-var ThemeDracula = cachedTheme(Theme{
+var ThemeDracula = cachedTheme(&Theme{
 	Name:             "Dracula",
 	DebugColour:      Colour256(141),
 	InfoColour:       Colour256(81),
@@ -196,7 +209,7 @@ var ThemeDracula = cachedTheme(Theme{
 	TableHeader:      Colour256(87),  // Cyan
 })
 
-var ThemeNord = cachedTheme(Theme{
+var ThemeNord = cachedTheme(&Theme{
 	Name:             "Nord",
 	DebugColour:      Colour256(139),
 	InfoColour:       Colour256(109),

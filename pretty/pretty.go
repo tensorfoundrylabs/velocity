@@ -31,8 +31,8 @@ func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	if theme == nil {
 		theme = velocity.ThemeNightOwl
 	} else {
-		// EnsureCached clones and caches the theme only when needed, so the caller's
-		// pointer is not mutated and no race occurs if the theme is shared elsewhere.
+		// EnsureCached populates ANSI codes in-place via sync.Once — concurrent-safe,
+		// always returns the same pointer.
 		theme = theme.EnsureCached()
 	}
 	if w == nil {

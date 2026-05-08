@@ -35,8 +35,8 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 		displayTimezone = time.Local
 	}
 
-	// Ensure ANSI sequences are populated. ensureCached clones uncached themes so the
-	// caller's original pointer is not mutated and concurrent readers cannot race the write.
+	// Ensure ANSI sequences are populated. ensureCached populates in-place via sync.Once,
+	// so it is safe to call concurrently and returns the same pointer.
 	theme = ensureCached(theme)
 
 	w := &ConsoleWriterRB{
