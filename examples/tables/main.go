@@ -77,4 +77,20 @@ func main() {
 			{"1891", "prometheus", "1.2", "0.8", "256M", "64M", "?", "Sl", "/usr/bin/prometheus"},
 		},
 	))
+	log.Newline()
+
+	// Use log.Render to nest a small table under a related log line. The table
+	// indents to the message column, visually grouping with the entry above.
+	// Best for narrow tables; wide tables still want RenderRaw to avoid wrapping.
+	fmt.Println("=== Indented Table (under a log line via log.Render) ===")
+	fmt.Println()
+	log.Info("migrations applied", velocity.Int("count", 3))
+	log.Render(p.NewTable(
+		[]string{"Migration", "Duration", "Status"},
+		[][]string{
+			{"001_initial_schema.sql", "5ms", sf.Okay("OK")},
+			{"002_webhooks.sql", "2ms", sf.Okay("OK")},
+			{"003_model_access.sql", "3ms", sf.Okay("OK")},
+		},
+	))
 }
