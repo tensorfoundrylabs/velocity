@@ -31,11 +31,11 @@ type Template struct {
 	// For badge style the prefix is constant; for text/icon styles we cache the worst-case
 	// (widest level label) so tree alignment is stable across log levels.
 	cachedPrefixWidth int
-	showTime         bool
-	showLevel        bool
-	showMessage      bool
-	showFields       bool
-	useColours       bool
+	showTime          bool
+	showLevel         bool
+	showMessage       bool
+	showFields        bool
+	useColours        bool
 }
 
 type LevelStyle int

@@ -416,4 +416,3 @@ func (r *SystemInfoResult) Render(w io.Writer) error {
 	_, err := buf.WriteTo(w)
 	return err
 }
-

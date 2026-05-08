@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-
 // Entry represents a single log entry designed for reuse via sync.Pool.
 type Entry struct {
 	Time time.Time

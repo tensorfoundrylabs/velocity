@@ -345,7 +345,6 @@ func writeTreeItemStandalone(w io.Writer, node TreeItem, prefix string, isLast b
 	}
 }
 
-
 // Raw writes text directly to the writer without any formatting.
 func (p *Pretty) Raw(text string) {
 	_, _ = io.WriteString(p.writer, text)
@@ -361,7 +360,6 @@ func (p *Pretty) Banner(text string) {
 func (p *Pretty) NewBanner(text string) *BannerResult {
 	return NewBannerResult(text, p.theme)
 }
-
 
 // SystemInfo is startup/configuration metadata for display.
 type SystemInfo struct {
