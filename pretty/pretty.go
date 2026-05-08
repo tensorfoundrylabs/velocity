@@ -25,9 +25,13 @@ type Pretty struct {
 
 // New returns a Pretty that writes to w using the given theme.
 // If theme is nil, ThemeNightOwl is used.
+// If w is nil, output is discarded — prefer NewFromLogger when a logger exists.
 func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	if theme == nil {
 		theme = velocity.ThemeNightOwl
+	}
+	if w == nil {
+		w = io.Discard
 	}
 	return &Pretty{
 		writer: w,
@@ -37,8 +41,8 @@ func New(w io.Writer, theme *velocity.Theme) *Pretty {
 
 // NewFromLogger returns a Pretty whose output is routed through log's console writer,
 // serialised under the same mutex as concurrent log calls to prevent interleaving.
-// The pretty output is indented to align with the message column so it sits flush
-// with tree-mode log fields.
+// This is the preferred constructor when a logger exists: output aligns with the
+// message column and sits flush with tree-mode log fields.
 // Returns nil if log is nil.
 func NewFromLogger(log *velocity.Logger) *Pretty {
 	if log == nil {

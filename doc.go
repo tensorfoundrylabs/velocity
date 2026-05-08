@@ -23,4 +23,9 @@
 //   - PresetContainer: JSON with container-friendly defaults
 //   - PresetTesting: minimal output for test harnesses
 //   - PresetHighPerformance: sampling and ring-buffer batching
+//
+// Rich terminal output from velocity/pretty can be mixed with log lines via
+// the Renderable interface. Logger.Render writes indented output aligned with
+// the message column; Logger.RenderRaw writes flush-left. Logger.Newline inserts
+// a blank line under the same mutex as log calls to prevent interleaving.
 package velocity

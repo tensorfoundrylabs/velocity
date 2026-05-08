@@ -45,6 +45,7 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `buffer.go` | Tiered `BufferPool`, zero-copy `BytesBuffer`, `AppendTime`, `UnsafeString` |
 | `pool.go` | `sync.Pool` instances for entries, fields, buffers |
 | `errors.go` | Sentinel errors |
+| `renderable.go` | `Renderable` interface; all `*Result` types (`BoxResult`, `TableResult`, `BannerResult`, `TreeResult`, `KeyValueResult`, `SystemInfoResult`) |
 | `doc.go` | Package documentation |
 
 ### `velocity/pretty` (`package pretty`)
@@ -52,6 +53,7 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | File | Purpose |
 |------|---------|
 | `pretty.go` | `Pretty` type, `Box`, `Panel`, `Banner`, `Table`, `Tree`, `Bullet`, `KeyValue`, `SystemInfo`, `TreeItem` |
+| `renderable.go` | Result types implementing `velocity.Renderable`; pooled render paths for all pretty primitives |
 | `progress.go` | `ProgressBar`, `Spinner`, `MultiProgress`, `SpinnerStyle` with CAS-guarded stop |
 | `doc.go` | Package documentation |
 
@@ -75,7 +77,7 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `writer_multi_test.go` | Multi-writer fan-out, shutdown drain |
 | `ringbuffer_test.go` | Concurrent writes, overflow, bounded spin, zero-length, min size |
 | `progress_test.go` | Concurrent Complete/Stop, nil SetStyle (in `pretty/`) |
-| `benchmark_test.go` | 19 benchmarks covering hot paths, fields, writers, pooling |
+| `benchmark_test.go` | Benchmarks covering hot paths, fields, writers, pooling, tree-mode, Render API |
 | `entry_test.go` | Entry pool, ref counting, concurrent access |
 | `with_test.go` | `With()`, `WithTemplate`, nil/empty |
 | `fatal_test.go` | Fatal handler, nil logger subprocess test |
@@ -85,6 +87,8 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `level_test.go` | Level parsing, atomic level |
 | `logger_addwriter_test.go` | Dynamic writer add/remove |
 | `logger_detailed_test.go` | Detailed logger behaviour |
+| `logger_render_test.go` | `Logger.Render`, `RenderRaw`, `Newline`; JSON writer ignore; no-console no-op |
+| `logger_settheme_test.go` | `Logger.Theme()`, `SetTheme` propagation, `With()` clone inheritance |
 | `integration_test.go` | End-to-end integration |
 
 ### `velocity/pretty`
@@ -94,6 +98,8 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `box_test.go` | Long title, border alignment, empty content, Unicode |
 | `banner_test.go` | Banner rendering |
 | `progress_test.go` | Concurrent Complete/Stop, nil SetStyle |
+| `renderable_test.go` | Compile-time Renderable compliance; render parity for all result types |
+| `pretty_logger_test.go` | `NewFromLogger` routing; nil logger returns nil |
 
 ### `velocity/slog`
 
@@ -123,6 +129,7 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 - `MultiWriter`: per-writer buffered channels (256 cap), non-blocking send, `Retain()`/`Release()` lifecycle. Workers close their own writer via defer. Shutdown drain uses `for range ch` to guarantee all entries are processed.
 - `RingBuffer`: CAS-based circular buffer, power-of-2 sizing, atomic commit flags, batched flush. Bounded spins (1000 iterations) in both writer and flusher to prevent hangs. Minimum size of 2 enforced. Flusher uses a single reusable batch buffer to avoid per-entry allocations. Shutdown flushes batchBuf before draining the ring.
 - `Entry` ref counting: `atomic.Int32`, CAS return to pool prevents double-release
+- `Logger.Render`/`RenderRaw`/`Newline`: render into a pooled buffer outside the lock, then acquire `consoleWriter.mu` only for the final write — same mutex as log calls, so rich output cannot interleave with log lines
 
 ## Dependency Graph
 

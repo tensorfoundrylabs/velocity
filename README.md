@@ -64,6 +64,8 @@ import (
 - **Tree display** (in `velocity/pretty`). Hierarchical data with box-drawing characters
 - **Tables** (in `velocity/pretty`). Auto-width columns with box-drawing borders
 - **Progress** (in `velocity/pretty`). `ProgressBar`, `Spinner` (5 animation styles), `MultiProgress`. Thread-safe with CAS-guarded stop
+- **Renderable output**. `Logger.Render(r)` writes any `Renderable` (box, table, tree, etc.) indented to the message column; `Logger.RenderRaw` writes flush-left; `Logger.Newline` inserts a blank line. All serialised under the console writer mutex
+- **Theme switching**. `Logger.SetTheme` propagates a new theme to all active writers; `Logger.Theme` returns the current theme for use by `pretty.NewFromLogger`
 - **Child loggers**. `With()` for scoped fields, `WithTemplate()` for output format. Both inherit writers, sampler, base fields
 - **Context integration**. `NewContext()`, `FromContext()`, `ContextWithFields()`
 - **Dynamic writers**. `AddWriter()`/`RemoveWriter()` at runtime, thread-safe. Workers close their own writer on shutdown
@@ -178,6 +180,22 @@ p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
 p.Box("Deploy Complete", "All services running")
 p.Banner("v2.1.0 - Production release")
 ```
+
+When a logger exists, prefer `NewFromLogger` — output routes through the logger's console writer and aligns with the message column:
+
+```go
+log := velocity.NewDevelopment()
+p := pretty.NewFromLogger(log)
+
+log.Info("deploying services")
+log.Newline()
+log.Render(p.NewTable([]string{"Service", "Status"}, [][]string{
+    {"api", "running"},
+    {"worker", "running"},
+}))
+```
+
+`Logger.Render` indents each rendered line to align with log message text. `Logger.RenderRaw` writes flush-left. `Logger.Newline` inserts a blank line, all serialised under the console writer's mutex.
 
 ### Log rotation with lumberjack
 

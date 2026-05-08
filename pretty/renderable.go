@@ -24,7 +24,7 @@ func NewBoxResult(title, content string, theme *velocity.Theme) *BoxResult {
 	return &BoxResult{title: title, content: content, theme: theme}
 }
 
-// Render writes the box to w.
+// Render writes the bordered box (title + content) to w.
 func (r *BoxResult) Render(w io.Writer) error {
 	buf := velocity.GetBuffer(512)
 	defer velocity.PutBuffer(buf)
@@ -103,7 +103,8 @@ func NewTableResult(headers []string, rows [][]string, theme *velocity.Theme) *T
 	return &TableResult{headers: headers, rows: rows, theme: theme}
 }
 
-// Render writes the table to w.
+// Render writes the aligned table with auto-sized columns to w.
+// Returns nil without writing if headers or rows are empty.
 func (r *TableResult) Render(w io.Writer) error {
 	if len(r.headers) == 0 || len(r.rows) == 0 {
 		return nil
@@ -231,7 +232,7 @@ func NewBannerResult(text string, theme *velocity.Theme) *BannerResult {
 	return &BannerResult{text: text, theme: theme}
 }
 
-// Render writes the banner to w.
+// Render writes the double-border banner box to w.
 func (r *BannerResult) Render(w io.Writer) error {
 	buf := velocity.GetBuffer(512)
 	defer velocity.PutBuffer(buf)
@@ -296,7 +297,7 @@ func NewTreeResult(nodes []TreeItem, theme *velocity.Theme) *TreeResult {
 	return &TreeResult{nodes: nodes, theme: theme}
 }
 
-// Render writes the tree to w.
+// Render writes the tree hierarchy with box-drawing connectors to w.
 func (r *TreeResult) Render(w io.Writer) error {
 	buf := velocity.GetBuffer(512)
 	defer velocity.PutBuffer(buf)
@@ -351,7 +352,7 @@ func NewKeyValueResult(key, value string, theme *velocity.Theme) *KeyValueResult
 	return &KeyValueResult{key: key, value: value, theme: theme}
 }
 
-// Render writes the key-value pair to w.
+// Render writes "key: value\n" with theme colouring to w.
 func (r *KeyValueResult) Render(w io.Writer) error {
 	buf := velocity.GetBuffer(128)
 	defer velocity.PutBuffer(buf)
@@ -381,7 +382,8 @@ func NewSystemInfoResult(info *SystemInfo, theme *velocity.Theme) *SystemInfoRes
 	return &SystemInfoResult{info: info, theme: theme}
 }
 
-// Render writes the system info block to w.
+// Render writes the titled block of key-value system info pairs to w.
+// Returns nil without writing if info is nil.
 func (r *SystemInfoResult) Render(w io.Writer) error {
 	if r.info == nil {
 		return nil
