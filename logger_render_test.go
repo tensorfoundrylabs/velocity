@@ -13,6 +13,31 @@ type testRenderable struct {
 	content string
 }
 
+// TestLogger_Render_IndentMatchesCustomTimeFormat guards against a stale-cache bug:
+// applying a custom TimeFormat after construction must recompute the cached message
+// indent string, otherwise log lines render with one timestamp width while
+// log.Render uses the indent computed from the construction-time format.
+func TestLogger_Render_IndentMatchesCustomTimeFormat(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	cfg := DefaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+	cfg.TimeFormat = "2006-01-02 15:04:05" // 19 chars, shorter than RFC3339
+
+	log := NewWithConfig(cfg)
+	indent := log.consoleWriter.template.CachedMessageIndentStr()
+
+	// Expected width: 19 (time) + 1 (space) + 6 (badge "[INFO]") + 1 (space) = 27.
+	const expectedWidth = 27
+	if len(indent) != expectedWidth {
+		t.Fatalf("expected indent width %d for custom TimeFormat, got %d", expectedWidth, len(indent))
+	}
+}
+
 func (r *testRenderable) Render(w io.Writer) error {
 	_, err := w.Write([]byte(r.content))
 	return err

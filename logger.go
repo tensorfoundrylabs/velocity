@@ -51,9 +51,13 @@ func NewWithConfig(cfg *Config) *Logger {
 	// Initialise console writer if configured
 	if cfg.ConsoleOutput != nil && cfg.ConsoleOutput != io.Discard {
 		logger.consoleWriter = NewConsoleWriterWithOptions(cfg.ConsoleOutput, cfg.ConsoleTheme, cfg.DisplayTimezone, cfg.FieldDisplayMode)
-		// Apply time format if specified
+		// Apply time format if specified. Recompute cached prefix widths so
+		// Logger.Render's indent matches the actual rendered timestamp width —
+		// otherwise a custom TimeFormat shorter than RFC3339 leaves the indent
+		// stale at the construction-time width.
 		if cfg.TimeFormat != "" && logger.consoleWriter != nil {
 			logger.consoleWriter.template.timeFormat = cfg.TimeFormat
+			logger.consoleWriter.template.initCache()
 		}
 		// Status formatter respects terminal capability and colours
 		isTTY := logger.consoleWriter != nil && logger.consoleWriter.IsTTY()
