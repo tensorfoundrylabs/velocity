@@ -95,6 +95,9 @@ func (*JSONWriter) writeJSONTime(buf *BytesBuffer, t time.Time, layout string) {
 	_ = buf.WriteByte('"')
 }
 
+// jsonHexDigits is the hex alphabet used for JSON \uXXXX control-character escaping.
+const jsonHexDigits = "0123456789abcdef"
+
 func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 	_ = buf.WriteByte('"')
 
@@ -118,7 +121,16 @@ func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 			buf.WriteString(`\f`)
 		default:
 			if c < 32 {
-				_, _ = fmt.Fprintf(buf, `\u%04x`, c)
+				// Inline the \uXXXX escape using a stack buffer to avoid the fmt.Fprintf
+				// allocation and the intermediate string that fmt.Sprintf would produce.
+				var seq [6]byte
+				seq[0] = '\\'
+				seq[1] = 'u'
+				seq[2] = '0'
+				seq[3] = '0'
+				seq[4] = jsonHexDigits[c>>4]
+				seq[5] = jsonHexDigits[c&0x0f]
+				_, _ = buf.Write(seq[:])
 			} else {
 				_ = buf.WriteByte(c)
 			}

@@ -81,6 +81,37 @@ func TestJSONWriter_AddCaller(t *testing.T) {
 	}
 }
 
+// TestJSONWriter_ControlCharEscaping verifies that control characters in strings
+// are encoded as \uXXXX sequences rather than raw bytes.
+func TestJSONWriter_ControlCharEscaping(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	// Build message with raw control chars at runtime so the source stays clean.
+	msg := "ctrl:" + string([]byte{0x01, 0x1f})
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: msg,
+	}
+
+	if err := w.Write(e); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	output := buf.String()
+	// The JSON encoder must produce  and , not raw control bytes.
+	if !strings.Contains(output, "\\u0001") {
+		t.Errorf("expected \\u0001 escape in JSON output, got: %s", output)
+	}
+	if !strings.Contains(output, "\\u001f") {
+		t.Errorf("expected \\u001f escape in JSON output, got: %s", output)
+	}
+}
+
 func TestJSONWriter_CallerEscaping(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewJSONWriter(&buf)
