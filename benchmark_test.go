@@ -275,6 +275,55 @@ func BenchmarkJSONWriter_Parallel(b *testing.B) {
 	})
 }
 
+// ---- Tree-mode rendering benchmarks ----------------------------------------
+
+// BenchmarkInfo_TreeMode measures the badge-style tree-mode path where the
+// cachedIndentStr is used in place of strings.Repeat on every field.
+func BenchmarkInfo_TreeMode(b *testing.B) {
+	cfg := DefaultConfig()
+	cfg.ConsoleOutput = io.Discard
+	cfg.StructuredOutput = nil
+	cfg.ConsoleLevel = LevelDebug
+	cfg.FieldDisplayMode = FieldDisplayTree
+	l := NewWithConfig(cfg)
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("tree mode entry", fields...)
+	}
+}
+
+// BenchmarkInfo_TreeMode_Parallel measures concurrent tree-mode throughput.
+func BenchmarkInfo_TreeMode_Parallel(b *testing.B) {
+	cfg := DefaultConfig()
+	cfg.ConsoleOutput = io.Discard
+	cfg.StructuredOutput = nil
+	cfg.ConsoleLevel = LevelDebug
+	cfg.FieldDisplayMode = FieldDisplayTree
+	l := NewWithConfig(cfg)
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			l.Info("tree mode entry", fields...)
+		}
+	})
+}
+
+// BenchmarkInfoDetailed_TreeMode measures the InfoDetailed path which always forces
+// tree display regardless of the configured FieldDisplayMode.
+func BenchmarkInfoDetailed_TreeMode(b *testing.B) {
+	l := newDiscardLogger()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.InfoDetailed("detailed entry", fields...)
+	}
+}
+
 // ---- Buffer pool benchmarks -------------------------------------------------
 
 func BenchmarkBufferPool_GetPut(b *testing.B) {
