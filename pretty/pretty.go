@@ -23,6 +23,8 @@ type Pretty struct {
 	theme  *velocity.Theme
 }
 
+// New returns a Pretty that writes to w using the given theme.
+// If theme is nil, ThemeNightOwl is used.
 func New(w io.Writer, theme *velocity.Theme) *Pretty {
 	if theme == nil {
 		theme = velocity.ThemeNightOwl
