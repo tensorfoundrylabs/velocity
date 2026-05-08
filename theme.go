@@ -50,6 +50,10 @@ type Theme struct {
 	cachedFieldValFg  string
 	cachedErrorValFg  string
 
+	// Cached codes used by the pretty package to avoid per-render allocs.
+	cachedTableHeaderFg string
+	cachedInfoColourFg  string
+
 	DebugColour Colour
 	InfoColour  Colour
 	WarnColour  Colour
@@ -72,8 +76,9 @@ type Theme struct {
 	TableHeader Colour
 }
 
-// Cache pre-computes ANSI sequences for all colours used in the hot-path template renderer.
-// Call this after constructing a custom Theme to avoid per-log allocations.
+// Cache pre-computes ANSI sequences for all colours used in hot-path rendering.
+// Call this after constructing a custom Theme to avoid per-render allocations.
+// The built-in themes call this automatically via cachedTheme.
 func (t *Theme) Cache() {
 	t.cachedTimestampFg = t.TimestampColour.ANSI(true)
 	t.cachedMessageFg = t.MessageColour.ANSI(true)
@@ -86,7 +91,25 @@ func (t *Theme) Cache() {
 	t.cachedLevelFg[LevelError] = t.ErrorColour.ANSI(true)
 	t.cachedLevelFg[LevelFatal] = t.FatalColour.ANSI(true)
 	t.cachedLevelFg[LevelOff] = t.InfoColour.ANSI(true)
+	// Extra codes consumed by the pretty package.
+	t.cachedTableHeaderFg = t.TableHeader.ANSI(true)
+	t.cachedInfoColourFg = t.InfoColour.ANSI(true)
 }
+
+// CachedTableHeaderFg returns the pre-computed ANSI foreground for the table header colour.
+func (t *Theme) CachedTableHeaderFg() string { return t.cachedTableHeaderFg }
+
+// CachedInfoColourFg returns the pre-computed ANSI foreground for the info colour.
+func (t *Theme) CachedInfoColourFg() string { return t.cachedInfoColourFg }
+
+// CachedMessageFg returns the pre-computed ANSI foreground for the message colour.
+func (t *Theme) CachedMessageFg() string { return t.cachedMessageFg }
+
+// CachedFieldKeyFg returns the pre-computed ANSI foreground for field keys.
+func (t *Theme) CachedFieldKeyFg() string { return t.cachedFieldKeyFg }
+
+// CachedFieldValFg returns the pre-computed ANSI foreground for field values.
+func (t *Theme) CachedFieldValFg() string { return t.cachedFieldValFg }
 
 // cachedTheme calls Cache on t and returns it, used for package-level theme initialisation.
 func cachedTheme(t Theme) *Theme {
