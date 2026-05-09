@@ -16,11 +16,11 @@ func TestStatusKindString(t *testing.T) {
 		kind StatusKind
 		want string
 	}{
-		{StatusOK, "OK"},
+		{StatusOK, "OKAY"},
 		{StatusFail, "FAIL"},
 		{StatusWarn, "WARN"},
 		{StatusInfo, "INFO"},
-		{StatusPending, "PENDING"},
+		{StatusPending, "WAIT"},
 		{StatusSkipped, "SKIP"},
 		// Unknown value falls back to "INFO".
 		{StatusKind(200), "INFO"},
@@ -83,8 +83,8 @@ func TestStatusItemRenderTTY(t *testing.T) {
 
 	out := buf.String()
 	// Badge must be present with correct padding.
-	if !strings.Contains(out, "[OK     ]") {
-		t.Errorf("expected badge [OK     ], got: %q", out)
+	if !strings.Contains(out, "[OKAY]") {
+		t.Errorf("expected badge [OKAY], got: %q", out)
 	}
 	if !strings.Contains(out, "user signed in") {
 		t.Errorf("expected message in output, got: %q", out)
@@ -94,34 +94,26 @@ func TestStatusItemRenderTTY(t *testing.T) {
 	}
 }
 
-// TestStatusItemBadgeAlignment verifies that all six status kinds produce
-// badges of identical visible width so consecutive items align in a terminal.
-func TestStatusItemBadgeAlignment(t *testing.T) {
+// TestStatusItemBadgeCompact verifies each status kind produces its own compact
+// bracketed token without padding (e.g. [OKAY] not [OK     ]). Variable widths are
+// expected and intentional, matching the level-badge style.
+func TestStatusItemBadgeCompact(t *testing.T) {
 	t.Parallel()
 
-	kinds := []StatusKind{
-		StatusOK, StatusFail, StatusWarn, StatusInfo, StatusPending, StatusSkipped,
+	cases := map[StatusKind]string{
+		StatusOK:      "[OKAY]",
+		StatusFail:    "[FAIL]",
+		StatusWarn:    "[WARN]",
+		StatusInfo:    "[INFO]",
+		StatusPending: "[WAIT]",
+		StatusSkipped: "[SKIP]",
 	}
-
-	// Find visible badge width for each kind by stripping everything after the ']'.
-	badgeWidths := make([]int, 0, len(kinds))
-	for _, k := range kinds {
+	for k, want := range cases {
 		item := NewStatusItem(k, "msg", ThemeMono, true)
 		var buf bytes.Buffer
 		_ = item.Render(&buf)
-		line := buf.String()
-		end := strings.Index(line, "]")
-		if end < 0 {
-			t.Fatalf("kind %s: no ']' found in output %q", k.String(), line)
-		}
-		// +1 to include the ']' itself.
-		badgeWidths = append(badgeWidths, end+1)
-	}
-
-	for i := 1; i < len(badgeWidths); i++ {
-		if badgeWidths[i] != badgeWidths[0] {
-			t.Errorf("badge width mismatch: %s=%d vs %s=%d",
-				kinds[0].String(), badgeWidths[0], kinds[i].String(), badgeWidths[i])
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("kind %s: expected badge %q in output, got %q", k.String(), want, buf.String())
 		}
 	}
 }
@@ -141,8 +133,8 @@ func TestStatusItemRenderPlain(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "[FAIL   ]") {
-		t.Errorf("expected badge [FAIL   ], got: %q", out)
+	if !strings.Contains(out, "[FAIL]") {
+		t.Errorf("expected badge [FAIL], got: %q", out)
 	}
 	if !strings.Contains(out, "payment refused") {
 		t.Errorf("expected message in output, got: %q", out)
@@ -162,7 +154,7 @@ func TestStatusItemString(t *testing.T) {
 	if !strings.Contains(s, "slow query") {
 		t.Errorf("String() missing message: %q", s)
 	}
-	if !strings.Contains(s, "[WARN   ]") {
+	if !strings.Contains(s, "[WARN]") {
 		t.Errorf("String() missing badge: %q", s)
 	}
 }

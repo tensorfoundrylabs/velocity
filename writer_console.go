@@ -149,7 +149,7 @@ func buildStatusLine(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Locatio
 		_ = buf.WriteByte(' ')
 	}
 
-	// Status badge: '[' + coloured token (padded to statusBadgeWidth) + ']'.
+	// Status badge: '[' + coloured token + ']' — variable width, no padding.
 	token := e.statusKind.String()
 	slot := e.statusKind.Slot()
 	_ = buf.WriteByte('[')
@@ -157,15 +157,9 @@ func buildStatusLine(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Locatio
 		prefix, suffix := theme.Wrap(slot)
 		buf.WriteString(prefix)
 		buf.WriteString(token)
-		if pad := statusBadgeWidth - len(token); pad > 0 {
-			buf.WriteString(strings.Repeat(" ", pad))
-		}
 		buf.WriteString(suffix)
 	} else {
 		buf.WriteString(token)
-		if pad := statusBadgeWidth - len(token); pad > 0 {
-			buf.WriteString(strings.Repeat(" ", pad))
-		}
 	}
 	_ = buf.WriteByte(']')
 	buf.WriteString(statusBadgeSep)

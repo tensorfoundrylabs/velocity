@@ -3,7 +3,6 @@ package velocity
 import (
 	"bytes"
 	"io"
-	"strings"
 )
 
 // StatusKind identifies the semantic outcome of an operation for StatusItem rendering.
@@ -18,13 +17,14 @@ const (
 	StatusSkipped                   // intentionally bypassed
 )
 
-// String returns the canonical label for a StatusKind.
-// Used as the JSON field value ("ok", "fail", etc.) when lowercased, and as
-// the badge text in console output.
+// String returns the badge label for a StatusKind. All labels are 4 chars so
+// badges render at uniform width matching the level badges ([INFO], [WARN]).
+// JSON output uses statusJSONValue() instead, which returns canonical lowercase
+// names (ok, pending, etc.) for queryability.
 func (k StatusKind) String() string {
 	switch k {
 	case StatusOK:
-		return "OK"
+		return "OKAY"
 	case StatusFail:
 		return "FAIL"
 	case StatusWarn:
@@ -32,7 +32,7 @@ func (k StatusKind) String() string {
 	case StatusInfo:
 		return "INFO"
 	case StatusPending:
-		return "PENDING"
+		return "WAIT"
 	case StatusSkipped:
 		return "SKIP"
 	default:
@@ -98,13 +98,9 @@ const (
 // The sentinel is package-private — callers never see it.
 const statusKindNone StatusKind = 0xFF
 
-// statusBadgeWidth is the fixed visible width of the status token inside the
-// brackets. Sized to PENDING (7 chars), the longest token, so all badges align.
-// Badge format: '[' + 7-char padded token + ']' = 9 visible chars.
-const statusBadgeWidth = 7
-
-// statusBadgeSep is the separator between the badge and the message text.
-const statusBadgeSep = "   "
+// statusBadgeSep is the single space between the badge and the message text,
+// matching the level-badge spacing in the standard log line template.
+const statusBadgeSep = " "
 
 // StatusItem is a Renderable that displays an outcome badge followed by a message
 // and optional structured fields. On TTY it renders a coloured [ OK ] style badge;
@@ -173,14 +169,10 @@ func renderStatusItemTTY(buf *bytes.Buffer, kind StatusKind, msg string, theme *
 	// Unstyled left bracket.
 	buf.WriteByte('[')
 
-	// Coloured token padded to statusBadgeWidth, left-justified.
+	// Coloured token, no padding — width follows the natural token length.
 	prefix, suffix := theme.Wrap(slot)
 	buf.WriteString(prefix)
 	buf.WriteString(token)
-	// Pad with spaces so all tokens occupy the same width.
-	if pad := statusBadgeWidth - len(token); pad > 0 {
-		buf.WriteString(strings.Repeat(" ", pad))
-	}
 	buf.WriteString(suffix)
 
 	// Unstyled right bracket + separator.
@@ -209,9 +201,6 @@ func renderStatusItemPlain(buf *bytes.Buffer, kind StatusKind, msg string, field
 	token := kind.String()
 	buf.WriteByte('[')
 	buf.WriteString(token)
-	if pad := statusBadgeWidth - len(token); pad > 0 {
-		buf.WriteString(strings.Repeat(" ", pad))
-	}
 	buf.WriteByte(']')
 	buf.WriteString(statusBadgeSep)
 	buf.WriteString(msg)
