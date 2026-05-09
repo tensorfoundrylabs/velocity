@@ -22,7 +22,7 @@ Benchmarks: `go test -bench=. -benchmem -count=3 ./...`
 
 ## Package Structure
 
-Three packages: root `velocity`, `velocity/live`, and `velocity/slog`.
+Three packages: root `velocity`, `velocity/live`, and `velocity/slogbridge`.
 
 ### Root (`package velocity`)
 
@@ -59,7 +59,7 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slog`.
 | `progress.go` | `ProgressBar`, `Spinner`, `MultiProgress`, `SpinnerStyle` with CAS-guarded stop |
 | `doc.go` | Package documentation |
 
-### `velocity/slog` (`package velocityslog`)
+### `velocity/slogbridge` (`package slogbridge`)
 
 | File | Purpose |
 |------|---------|
@@ -103,7 +103,7 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slog`.
 |------|----------|
 | `progress_test.go` | Concurrent Complete/Stop, nil SetStyle |
 
-### `velocity/slog`
+### `velocity/slogbridge`
 
 | File | Coverage |
 |------|----------|
@@ -117,13 +117,13 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slog`.
 ## Design Principles
 
 - **Zero-alloc hot path**: Fields use `unsafe.Pointer` + `int64` storage. Integer fields write directly via `formatInt` stack buffer. Entry pooling via `sync.Pool` with CAS-based return. ANSI codes pre-cached on `Theme`. Timestamps via `time.AppendFormat`. Floats via `strconv.FormatFloat`. Writers format outside the mutex, locking only for I/O.
-- **Three-package split**: Core logging and all Renderables (boxes, banners, tables, trees) live in the root package — this eliminates the import cycle that previously blocked `log.Table()`. Stateful animated types (spinners, progress bars) live in `velocity/live` because they own goroutines with explicit lifecycle. The slog bridge lives in `velocity/slog` (`package velocityslog`) to avoid pulling `log/slog` into callers that don't need it.
+- **Three-package split**: Core logging and all Renderables (boxes, banners, tables, trees) live in the root package — this eliminates the import cycle that previously blocked `log.Table()`. Stateful animated types (spinners, progress bars) live in `velocity/live` because they own goroutines with explicit lifecycle. The slog bridge lives in `velocity/slogbridge` (`package slogbridge`) to avoid pulling `log/slog` into callers that don't need it.
 - **Field constructors**: `String` (formerly `StringField`), `Error` (formerly `ErrorField`), `Int`, `Float64`, `Bool`, `Duration`, `Time`, `Stringer`, `Bytes`. Typed nils caught via `reflect` in `Error`/`Stringer` constructors.
 - **Nil-safe**: Every public method handles nil receivers. Typed nils caught via `reflect` in `Error`/`Stringer` constructors.
 - **Thread-safe**: Atomic level checks, mutex-protected writers, lock-free ring buffer. Progress/spinner stop uses `CompareAndSwap` to prevent double-close panics.
 - **No `encoding/json`**: JSON writer is hand-rolled for performance.
 - **Caller capture**: `AddCaller` populates file:line, rendered by all four writer paths (JSON, template, console fallback, ring buffer fallback).
-- **slog bridge**: `velocityslog.Handler` implements `log/slog.Handler`. WithAttrs pre-converts to velocity Fields. WithGroup caches dotted prefix. Level mapping via `mapSlogLevel`. Entry pool used for Handle.
+- **slog bridge**: `slogbridge.Handler` implements `log/slog.Handler`. WithAttrs pre-converts to velocity Fields. WithGroup caches dotted prefix. Level mapping via `mapSlogLevel`. Entry pool used for Handle.
 
 ## Concurrency
 
@@ -137,7 +137,7 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slog`.
 
 ```
 velocity/live    --> (no imports from root — standalone stateful types)
-velocity/slog    --> velocity (imports root for Logger, Entry, Field, Level)
+velocity/slogbridge --> velocity (imports root for Logger, Entry, Field, Level)
 ```
 
 ## Linting

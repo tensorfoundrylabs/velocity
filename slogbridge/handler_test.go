@@ -1,4 +1,4 @@
-package velocityslog_test
+package slogbridge_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	velocity "github.com/tensorfoundrylabs/velocity"
-	velocityslog "github.com/tensorfoundrylabs/velocity/slog"
+	slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
 )
 
 // newTestLogger creates a logger writing JSON to buf for easy assertion.
@@ -21,7 +21,7 @@ func newTestLogger(buf *bytes.Buffer) *velocity.Logger {
 func TestSlogHandler_NilLogger(t *testing.T) {
 	t.Parallel()
 
-	h := velocityslog.NewHandler(nil)
+	h := slogbridge.NewHandler(nil)
 
 	ctx := context.Background()
 	if h.Enabled(ctx, slog.LevelInfo) {
@@ -42,7 +42,7 @@ func TestSlogHandler_BasicLogging(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl.Info("hello world")
 	out := buf.String()
@@ -55,7 +55,7 @@ func TestSlogHandler_WithAttrs(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl = sl.With("component", "auth", "version", 3)
 	sl.Info("login")
@@ -73,7 +73,7 @@ func TestSlogHandler_WithGroup(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl = sl.WithGroup("server").With("host", "localhost")
 	sl.Info("starting")
@@ -92,7 +92,7 @@ func TestSlogHandler_LevelFiltering(t *testing.T) {
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
 	l.SetLevel(velocity.LevelInfo)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl.Debug("should be filtered")
 
@@ -110,7 +110,7 @@ func TestSlogHandler_FieldTypes(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	now := time.Now()
 	sl.Info("typed fields",
@@ -134,7 +134,7 @@ func TestSlogHandler_Enabled(t *testing.T) {
 	t.Parallel()
 	l := velocity.New(nil)
 	l.SetLevel(velocity.LevelWarn)
-	h := velocityslog.NewHandler(l)
+	h := slogbridge.NewHandler(l)
 
 	ctx := context.Background()
 	if h.Enabled(ctx, slog.LevelDebug) {
@@ -155,7 +155,7 @@ func TestSlogHandler_NestedGroups(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl = sl.WithGroup("a").WithGroup("b")
 	sl.Info("nested", slog.String("key", "val"))
@@ -170,7 +170,7 @@ func TestSlogHandler_EmptyAttr(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	h := velocityslog.NewHandler(l)
+	h := slogbridge.NewHandler(l)
 
 	// WithAttrs with empty slice should return same handler.
 	h2 := h.WithAttrs(nil)
@@ -196,7 +196,7 @@ func TestSlogHandler_ConcurrentHandle(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	var wg sync.WaitGroup
 	for range 100 {
@@ -211,7 +211,7 @@ func TestSlogHandler_ConcurrentHandle(t *testing.T) {
 
 func BenchmarkSlogHandler_Info(b *testing.B) {
 	l := velocity.New(nil) // nil discards console output
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	b.ReportAllocs()
 	b.ResetTimer()

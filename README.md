@@ -36,7 +36,7 @@ log := velocity.NewWithBuilder(velocity.PresetProduction())     // structured JS
 import (
     "github.com/tensorfoundrylabs/velocity"              // core logging, writers, config, themes
     "github.com/tensorfoundrylabs/velocity/pretty"       // boxes, panels, banners, tables, trees, progress
-    velocityslog "github.com/tensorfoundrylabs/velocity/slog"  // log/slog bridge
+    slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"  // log/slog bridge
 )
 ```
 
@@ -44,13 +44,13 @@ import (
 |---------|-------------|
 | `velocity` | Core logger with typed fields, console/JSON/multi/ring-buffer writers, themes, templates |
 | `velocity/pretty` | Rich CLI display: `Box`, `Panel`, `Banner`, `Table`, `Tree`, `ProgressBar`, `Spinner` |
-| `velocity/slog` | `Handler` implementing `log/slog.Handler` (package name: `velocityslog`) |
+| `velocity/slogbridge` | `Handler` implementing `log/slog.Handler` (package name: `slogbridge`) |
 
 ## Features
 
 - **Zero-alloc on the hot path** — typed fields (`String`, `Int`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer` storage with no `interface{}` boxing; 5 and 10 pre-built fields log at 34-39 ns with 0 allocs
 - **Sub-100 ns logging** — 27 ns with no fields, 2.1 ns for disabled levels, 5.5 ns through a sampler
-- **slog bridge** — `velocityslog.NewHandler` implements `log/slog.Handler` for incremental adoption
+- **slog bridge** — `slogbridge.NewHandler` implements `log/slog.Handler` for incremental adoption
 - **Rich terminal output** — boxes, panels, banners, tables, trees, progress bars and spinners in `velocity/pretty`
 - **4 colour themes** — Night Owl (RGB), Solarized, Dracula, Nord; ANSI codes pre-cached at init
 - **Log sampling** — `CountSampler` checked before pool acquisition; no allocs on the skip path
@@ -127,10 +127,10 @@ The comparative benchmark suite lives in `benchmarks/` as a separate Go module.
 ### log/slog bridge
 
 ```go
-import velocityslog "github.com/tensorfoundrylabs/velocity/slog"
+import slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
 
 logger := velocity.NewDevelopment()
-slog.SetDefault(velocityslog.NewLogger(logger))
+slog.SetDefault(slogbridge.NewLogger(logger))
 
 slog.Info("request handled", "method", "GET", "status", 200, "duration", 42*time.Millisecond)
 ```

@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
-	velocityslog "github.com/tensorfoundrylabs/velocity/slog"
+	slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	vlog.Info("Velocity logger initialised")
 
 	// Wrap it so existing slog callers don't need any changes.
-	sl := velocityslog.NewLogger(vlog)
+	sl := slogbridge.NewLogger(vlog)
 	slog.SetDefault(sl)
 
 	// From here on, all slog calls route through velocity's writers.

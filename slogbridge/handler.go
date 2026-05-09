@@ -1,4 +1,4 @@
-package velocityslog
+package slogbridge
 
 import (
 	"context"
