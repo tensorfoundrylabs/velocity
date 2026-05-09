@@ -28,6 +28,92 @@ func (w *JSONWriter) Write(e *Entry) error {
 	return w.WriteSecure(e, false, "[REDACTED]")
 }
 
+// WriteStatus emits a status-aware JSON line. The StatusKind is serialised as
+// a "status" field with a lowercase value (e.g. "ok", "fail"). All other fields
+// are serialised normally via WriteSecure. The badge text is never embedded in
+// the message — JSON consumers must read the "status" field.
+func (w *JSONWriter) WriteStatus(e *Entry) error {
+	return w.WriteStatusSecure(e, false, "[REDACTED]")
+}
+
+// WriteStatusSecure is the trust-aware JSON status write path.
+func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark string) error {
+	rawBuf := w.bufPool.Get(HintStructuredLog)
+	buf := NewBytesBuffer(rawBuf)
+
+	w.formatJSONStatusSecure(buf, e, trusted, redactionMark)
+
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		w.bufPool.Put(rawBuf)
+		return ErrWriterClosed
+	}
+	_, err := w.out.Write(buf.Bytes())
+	if err == nil {
+		_, err = w.out.Write(newlineByte)
+	}
+	w.mu.Unlock()
+
+	w.bufPool.Put(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
+}
+
+func (w *JSONWriter) formatJSONStatusSecure(buf *BytesBuffer, e *Entry, trusted bool, redactionMark string) {
+	_ = buf.WriteByte('{')
+
+	w.writeJSONString(buf, "timestamp")
+	_ = buf.WriteByte(':')
+	w.writeJSONTime(buf, e.Time, time.RFC3339Nano)
+
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "level")
+	_ = buf.WriteByte(':')
+	w.writeJSONString(buf, e.Level.String())
+
+	// Emit the status field before message so consumers can filter without parsing.
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "status")
+	_ = buf.WriteByte(':')
+	w.writeJSONString(buf, e.statusKind.statusJSONValue())
+
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "message")
+	_ = buf.WriteByte(':')
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	w.writeJSONString(buf, msg)
+
+	if e.Caller != "" {
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "caller")
+		_ = buf.WriteByte(':')
+		w.writeJSONString(buf, e.Caller)
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "line")
+		_ = buf.WriteByte(':')
+		buf.WriteInt(int64(e.Line))
+	}
+
+	for _, f := range e.Fields {
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, f.Key)
+		_ = buf.WriteByte(':')
+		w.writeJSONFieldValueSecure(buf, f, trusted, redactionMark)
+	}
+
+	_ = buf.WriteByte('}')
+}
+
 // WriteSecure implements SecureWriter. trusted controls whether Secure field
 // values are emitted as plaintext or as redactionMark. JSON writers are typically
 // called with trusted=false; a trusted JSON sink (e.g. an internal audit log)

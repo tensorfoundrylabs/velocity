@@ -1,10 +1,12 @@
 package velocity
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +90,160 @@ func (w *ConsoleWriter) cacheLevelColours() {
 	for _, lvl := range levels {
 		w.levelColours[lvl] = w.theme.cachedLevelCode(lvl)
 	}
+}
+
+// WriteStatus renders a status-badged log line for entries produced by Logger.Status.
+// The badge replaces the normal level label on TTY; on non-TTY it falls back to the
+// standard formatEntrySecure path so the output remains readable without ANSI.
+func (w *ConsoleWriter) WriteStatus(e *Entry) error {
+	return w.WriteStatusSecure(e, w.isTTY, "[REDACTED]")
+}
+
+// WriteStatusSecure is the trust-aware status write path, mirroring WriteSecure.
+func (w *ConsoleWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark string) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ErrWriterClosed
+	}
+	tmpl := w.template
+	theme := w.theme
+	tz := w.displayTimezone
+	isTTY := w.isTTY
+	w.mu.Unlock()
+
+	tempBuf := GetTemplateBuffer()
+	defer PutTemplateBuffer(tempBuf)
+
+	switch {
+	case isTTY && tmpl != nil:
+		buildStatusLine(tempBuf, e, theme, tz, trusted, redactionMark)
+	case tmpl != nil:
+		// Non-TTY: use the standard path so the output is undecorated but complete.
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+	default:
+		// Fallback: no template, produce a minimal status line.
+		fmt.Fprintf(tempBuf, "[%s] %s\n", e.statusKind.String(), e.Message)
+	}
+
+	w.mu.Lock()
+	_, err := w.out.Write(tempBuf.Bytes())
+	w.mu.Unlock()
+	return err
+}
+
+// buildStatusLine builds the TTY status line into buf:
+// timestamp + " " + badge + "   " + message + fields + "\n"
+// The badge format is '[' + coloured-padded-token + ']' at fixed width.
+func buildStatusLine(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Location, trusted bool, redactionMark string) {
+	// Timestamp (reuses AppendFormat to avoid intermediate string alloc).
+	if !e.Time.IsZero() {
+		if theme != nil {
+			buf.WriteString(theme.cachedTimestampFgStr())
+		}
+		displayTime := e.Time.In(tz)
+		buf.Write(displayTime.AppendFormat(buf.AvailableBuffer(), time.RFC3339))
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		_ = buf.WriteByte(' ')
+	}
+
+	// Status badge: '[' + coloured token (padded to statusBadgeWidth) + ']'.
+	token := e.statusKind.String()
+	slot := e.statusKind.Slot()
+	_ = buf.WriteByte('[')
+	if theme != nil {
+		prefix, suffix := theme.Wrap(slot)
+		buf.WriteString(prefix)
+		buf.WriteString(token)
+		if pad := statusBadgeWidth - len(token); pad > 0 {
+			buf.WriteString(strings.Repeat(" ", pad))
+		}
+		buf.WriteString(suffix)
+	} else {
+		buf.WriteString(token)
+		if pad := statusBadgeWidth - len(token); pad > 0 {
+			buf.WriteString(strings.Repeat(" ", pad))
+		}
+	}
+	_ = buf.WriteByte(']')
+	buf.WriteString(statusBadgeSep)
+
+	// Message (with secure-tag handling).
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	if theme != nil {
+		buf.WriteString(theme.cachedMessageFgStr())
+	}
+	buf.WriteString(msg)
+	if theme != nil {
+		buf.WriteString(Reset)
+	}
+
+	// Caller (if present).
+	if e.Caller != "" {
+		_ = buf.WriteByte(' ')
+		_ = buf.WriteByte('(')
+		buf.WriteString(e.Caller)
+		_ = buf.WriteByte(':')
+		buf.Write(strconv.AppendInt(nil, int64(e.Line), 10))
+		_ = buf.WriteByte(')')
+	}
+
+	// Fields rendered key=value inline.
+	for _, f := range e.Fields {
+		_ = buf.WriteByte(' ')
+		keyCode := ""
+		valCode := ""
+		if theme != nil {
+			keyCode = theme.CachedFieldKeyFg()
+			if f.Type == FieldTypeError {
+				valCode = theme.cachedErrorValFgStr()
+			} else {
+				valCode = theme.CachedFieldValFg()
+			}
+		}
+		if keyCode != "" {
+			buf.WriteString(keyCode)
+		}
+		buf.WriteString(f.Key)
+		if keyCode != "" {
+			buf.WriteString(Reset)
+		}
+		_ = buf.WriteByte('=')
+		if valCode != "" {
+			buf.WriteString(valCode)
+		}
+		// Quote string-like types to match console writer convention.
+		switch f.Type {
+		case FieldTypeString, FieldTypeError, FieldTypeStringer, FieldTypeTruncated:
+			_ = buf.WriteByte('"')
+			if trusted {
+				f.writeFormattedTrusted(buf)
+			} else {
+				f.writeFormattedWithMark(buf, redactionMark)
+			}
+			_ = buf.WriteByte('"')
+		default:
+			if trusted {
+				f.writeFormattedTrusted(buf)
+			} else {
+				f.writeFormattedWithMark(buf, redactionMark)
+			}
+		}
+		if valCode != "" {
+			buf.WriteString(Reset)
+		}
+	}
+
+	_ = buf.WriteByte('\n')
 }
 
 func (w *ConsoleWriter) SetTemplate(t *Template) {

@@ -401,6 +401,78 @@ func (l *Logger) Error(msg string, fields ...Field) {
 	l.log(LevelError, msg, fields...)
 }
 
+// Status logs a message at the given level with a StatusKind badge.
+// The console writer renders a coloured "[OK    ]" badge aligned to a fixed width.
+// The JSON writer emits a "status" field with the lowercase kind string.
+// All standard log-call semantics apply: level filtering, sampling, base fields.
+func (l *Logger) Status(level Level, kind StatusKind, msg string, fields ...Field) {
+	if l == nil {
+		fmt.Fprintf(os.Stderr, "[%s] %s\n", kind.String(), msg)
+		return
+	}
+	if l.closed.Load() || !l.isEnabled(level) {
+		return
+	}
+	l.logStatus(level, kind, msg, fields...)
+}
+
+// logStatus is the internal implementation of Status, mirroring logInternal
+// but setting entry.statusKind before dispatching to writers.
+func (l *Logger) logStatus(level Level, kind StatusKind, msg string, fields ...Field) {
+	if l == nil {
+		return
+	}
+
+	if l.sampler != nil && !l.sampler.Sample(level, msg) {
+		return
+	}
+
+	entry := GetEntry()
+	defer entry.Release()
+
+	entry.SetLevel(level)
+	entry.SetMessage(msg)
+	entry.SetTime(time.Now())
+	entry.forceTreeDisplay = l.forceTreeDisplay
+	entry.statusKind = kind
+
+	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		entry.maybeSecure = true
+	}
+
+	if len(l.baseFields) > 0 {
+		entry.WithFields(l.baseFields...)
+	}
+	if len(fields) > 0 {
+		entry.WithFields(fields...)
+	}
+
+	l.captureCaller(entry, 0)
+
+	if l.cfg != nil {
+		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
+			if err := l.consoleWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+			}
+		}
+
+		if level >= l.cfg.StructuredLevel && l.jsonWriter != nil {
+			if err := l.jsonWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+			}
+		}
+
+		entry.Write()
+
+		l.writersMu.RLock()
+		if l.additionalWriters != nil {
+			_ = l.additionalWriters.Write(entry)
+		}
+		l.writersMu.RUnlock()
+		return
+	}
+
+	entry.Write()
+}
+
 func (l *Logger) Fatal(msg string, fields ...Field) {
 	if l == nil {
 		fmt.Fprintf(os.Stderr, "[FATL] %s\n", msg)

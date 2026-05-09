@@ -39,6 +39,12 @@ type Entry struct {
 	// Kept on Entry (not inlined into every Field) because the common case is false.
 	maybeSecure bool
 
+	// statusKind carries the StatusKind for Logger.Status calls.
+	// statusKindNone (0xFF) means no status was set; this allows StatusOK (0) to be
+	// a valid value without ambiguity. One byte — measured to have zero hot-path cost
+	// on entries that never call Logger.Status.
+	statusKind StatusKind
+
 	// Reference count for pool safety
 	// Starts at 1 when acquired, decremented on Release
 	// Only returned to pool when count reaches 0
@@ -92,6 +98,7 @@ func (e *Entry) Reset() {
 	e.written.Store(0)
 	e.forceTreeDisplay = false
 	e.maybeSecure = false
+	e.statusKind = statusKindNone
 	e.refCount.Store(0)
 }
 
