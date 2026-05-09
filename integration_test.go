@@ -32,7 +32,7 @@ func TestIntegration(_ *testing.T) {
 			WithTheme(theme),
 			WithLevel(LevelInfo),
 		)
-		log.Info("Testing theme", String("theme", theme.Name))
+		log.Info("Testing theme", String("theme", theme.Name()))
 	}
 }
 

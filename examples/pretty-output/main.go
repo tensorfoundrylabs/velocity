@@ -35,14 +35,12 @@ func main() {
 	// Section headers make it easy to scan a long run's output.
 	p.Section("Pre-flight Checks")
 
-	// log.Style() returns the active theme. Use its colour fields to produce
-	// ANSI tokens for checklist-style output. Phase 2 adds Theme.Format(slot, s)
-	// as a dedicated API; this is the Phase 1 pattern.
+	// Theme.Format(slot, s) colours cell content using semantic slots.
+	// The theme handles all ANSI construction; call sites stay readable.
 	style := log.Style()
-	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
-	statusOK := colour(style.StatusOKColour, "OK")
-	statusWarn := colour(style.StatusWarnColour, "WARN (non-prod)")
-	statusFail := colour(style.StatusFailColour, "FAIL")
+	statusOK := style.Format(velocity.SlotStatusOK, "OK")
+	statusWarn := style.Format(velocity.SlotStatusWarn, "WARN (non-prod)")
+	statusFail := style.Format(velocity.SlotStatusFail, "FAIL")
 	fmt.Printf("  %-30s %s\n", "Docker daemon reachable:", statusOK)
 	fmt.Printf("  %-30s %s\n", "Registry credentials:", statusOK)
 	fmt.Printf("  %-30s %s\n", "Kubernetes context:", statusWarn)

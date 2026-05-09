@@ -1,6 +1,6 @@
-// Package main cycles through velocity's four built-in themes so you can see
-// how each one styles the different log levels. Run this in a terminal that
-// supports 256-colour or true-colour output for the full effect.
+// Package main cycles through velocity's built-in themes and demonstrates
+// Theme.Format(slot, s) for each semantic style slot. Run in a terminal
+// with 256-colour or true-colour support for the full effect.
 package main
 
 import (
@@ -17,6 +17,7 @@ func main() {
 		velocity.ThemeSolarized,
 		velocity.ThemeDracula,
 		velocity.ThemeNord,
+		velocity.ThemeMono,
 	}
 
 	for _, theme := range themes {
@@ -25,7 +26,7 @@ func main() {
 }
 
 func showTheme(theme *velocity.Theme) {
-	fmt.Printf("\n--- Theme: %s ---\n\n", theme.Name)
+	fmt.Printf("\n--- Theme: %s ---\n\n", theme.Name())
 
 	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
@@ -48,4 +49,26 @@ func showTheme(theme *velocity.Theme) {
 		velocity.Duration("rollout", 32*time.Second),
 		velocity.Bool("canary", false),
 	)
+
+	// Theme.Format(slot, s) — semantic colouring without raw ANSI.
+	// Each slot has a well-defined role across all built-in themes.
+	fmt.Printf("\n  Style slots:\n")
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotGood, "SlotGood — success / positive outcome"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotBad, "SlotBad  — error / failure"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotWarn, "SlotWarn — warning / degraded"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotInfo, "SlotInfo — informational"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotMuted, "SlotMuted — secondary / de-emphasised"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotStrong, "SlotStrong — emphasis"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotHeading, "SlotHeading — section headings"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotEndpoint, "SlotEndpoint — service/URL labels"))
+	fmt.Printf("    %s\n", theme.Format(velocity.SlotTableHeader, "SlotTableHeader — column headers"))
+
+	// Status badge demonstration using Wrap for prefix/suffix embedding.
+	okPfx, okSfx := theme.Wrap(velocity.SlotStatusOK)
+	warnPfx, warnSfx := theme.Wrap(velocity.SlotStatusWarn)
+	failPfx, failSfx := theme.Wrap(velocity.SlotStatusFail)
+	infoPfx, infoSfx := theme.Wrap(velocity.SlotStatusInfo)
+	fmt.Printf("\n  Status slots (via Wrap):\n")
+	fmt.Printf("    %s[ OK ]%s  %s[WARN]%s  %s[FAIL]%s  %s[INFO]%s\n",
+		okPfx, okSfx, warnPfx, warnSfx, failPfx, failSfx, infoPfx, infoSfx)
 }

@@ -132,9 +132,8 @@ func stagePreflightChecks(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Pre-flight Checks")
 
 	style := log.Style()
-	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
-	okCell := colour(style.StatusOKColour, "OK")
-	warnCell := colour(style.StatusWarnColour, "WARN")
+	okCell := style.Format(velocity.SlotStatusOK, "OK")
+	warnCell := style.Format(velocity.SlotStatusWarn, "WARN")
 
 	rows := [][]string{
 		{"GPU Memory", "node-0", okCell, "79.8 GB free"},
@@ -337,10 +336,9 @@ func stageHealthVerification(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Health Verification")
 
 	style := log.Style()
-	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
-	healthyCell := colour(style.StatusOKColour, "HEALTHY")
-	relocatedCell := colour(style.StatusInfoColour, "RELOCATED")
-	failedCell := colour(style.StatusFailColour, "FAILED")
+	healthyCell := style.Format(velocity.SlotStatusOK, "HEALTHY")
+	relocatedCell := style.Format(velocity.SlotStatusInfo, "RELOCATED")
+	failedCell := style.Format(velocity.SlotStatusFail, "FAILED")
 
 	rows := [][]string{
 		{"node-0", "llama-3.1-70b-awq", healthyCell, "38 ms", "http://10.0.1.10:8080/v1"},

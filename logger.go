@@ -466,8 +466,7 @@ func (l *Logger) SetTheme(theme *Theme) {
 		return
 	}
 
-	// Ensure ANSI sequences are populated without mutating the caller's pointer.
-	theme = ensureCached(theme)
+	// Themes are immutable from construction — ANSI codes already populated.
 
 	if l.cfg != nil {
 		l.cfg.ConsoleTheme = theme

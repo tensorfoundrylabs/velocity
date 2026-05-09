@@ -123,7 +123,7 @@ func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *The
 	if entry.Caller != "" {
 		_ = buf.WriteByte(' ')
 		if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedTimestampFg)
+			buf.WriteString(theme.cachedTimestampFgStr())
 		}
 		buf.WriteString(entry.Caller)
 		_ = buf.WriteByte(':')
@@ -148,7 +148,7 @@ func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *The
 
 func (t *Template) writeTimestampWithTimezone(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location) {
 	if t.useColours && theme != nil {
-		buf.WriteString(theme.cachedTimestampFg)
+		buf.WriteString(theme.cachedTimestampFgStr())
 	}
 
 	displayTime := entry.Time.In(displayTimezone)
@@ -166,10 +166,7 @@ func (t *Template) writeLevel(buf *bytes.Buffer, entry *Entry, theme *Theme) {
 
 	var levelCode string
 	if t.useColours && theme != nil {
-		lvl := entry.Level
-		if lvl >= 0 && int(lvl) < len(theme.cachedLevelFg) {
-			levelCode = theme.cachedLevelFg[lvl]
-		}
+		levelCode = theme.cachedLevelCode(entry.Level)
 	}
 
 	switch t.levelStyle {
@@ -206,7 +203,7 @@ func (t *Template) writeLevel(buf *bytes.Buffer, entry *Entry, theme *Theme) {
 
 func (t *Template) writeMessage(buf *bytes.Buffer, entry *Entry, theme *Theme) {
 	if t.useColours && theme != nil {
-		buf.WriteString(theme.cachedMessageFg)
+		buf.WriteString(theme.cachedMessageFgStr())
 	}
 
 	buf.WriteString(entry.Message)
@@ -232,7 +229,7 @@ func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *The
 		}
 
 		if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldKeyFg)
+			buf.WriteString(theme.cachedFieldKeyFgStr())
 		}
 		buf.WriteString(field.Key)
 		if t.useColours && theme != nil {
@@ -242,9 +239,9 @@ func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *The
 		buf.WriteString(t.fieldPairSep)
 
 		if t.useColours && field.Type == FieldTypeError && theme != nil {
-			buf.WriteString(theme.cachedErrorValFg)
+			buf.WriteString(theme.cachedErrorValFgStr())
 		} else if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldValFg)
+			buf.WriteString(theme.cachedFieldValFgStr())
 		}
 
 		field.writeFormatted(buf)
@@ -280,7 +277,7 @@ func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme
 		buf.WriteString(treeChar)
 
 		if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldKeyFg)
+			buf.WriteString(theme.cachedFieldKeyFgStr())
 		}
 		buf.WriteString(field.Key)
 		if t.useColours && theme != nil {
@@ -290,9 +287,9 @@ func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme
 		buf.WriteString(t.fieldPairSep)
 
 		if t.useColours && field.Type == FieldTypeError && theme != nil {
-			buf.WriteString(theme.cachedErrorValFg)
+			buf.WriteString(theme.cachedErrorValFgStr())
 		} else if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldValFg)
+			buf.WriteString(theme.cachedFieldValFgStr())
 		}
 
 		field.writeFormatted(buf)

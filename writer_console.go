@@ -37,17 +37,13 @@ func NewConsoleWriterWithTimezone(out io.Writer, theme *Theme, displayTimezone *
 }
 
 func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *time.Location, fieldDisplayMode FieldDisplayMode) *ConsoleWriter {
-	// Track if theme was explicitly nil for disabling colors
+	// Track if theme was explicitly nil for disabling colours.
 	useColours := true
 	if theme == nil {
 		theme = ThemeNightOwl
-		useColours = false // Explicitly disable colors when theme is nil
-	} else {
-		// Ensure ANSI sequences are populated for user-defined themes constructed via struct
-		// literal. ensureCached populates in-place via sync.Once, so it is safe to call
-		// concurrently and always returns the same pointer.
-		theme = ensureCached(theme)
+		useColours = false
 	}
+	// Themes are immutable from NewTheme — no caching step needed here.
 
 	if displayTimezone == nil {
 		displayTimezone = time.Local
@@ -81,7 +77,8 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 	return w
 }
 
-// cacheLevelColours pre-computes ANSI codes to avoid allocation during log writes
+// cacheLevelColours pre-computes ANSI codes to avoid allocation during log writes.
+// The theme carries pre-cached strings from construction, so this is a straight copy.
 func (w *ConsoleWriter) cacheLevelColours() {
 	if w.theme == nil {
 		return
@@ -89,8 +86,7 @@ func (w *ConsoleWriter) cacheLevelColours() {
 
 	levels := []Level{LevelDebug, LevelInfo, LevelWarn, LevelError, LevelFatal}
 	for _, lvl := range levels {
-		c := w.theme.GetColourForLevel(lvl)
-		w.levelColours[lvl] = c.ANSI(true)
+		w.levelColours[lvl] = w.theme.cachedLevelCode(lvl)
 	}
 }
 

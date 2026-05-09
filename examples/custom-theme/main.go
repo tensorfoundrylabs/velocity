@@ -1,6 +1,5 @@
-// Custom theme example. Shows how to define your own colour palette
-// and have it flow through the entire velocity stack: log lines,
-// pretty output, status indicators, and tables.
+// Custom theme example. Shows how to define your own colour palette using NewTheme
+// and ThemeOption, then use Theme.Format(slot, s) to colour arbitrary output.
 //
 // This one is a cyberpunk theme. Hot pinks, electric blues, neon greens.
 package main
@@ -14,41 +13,33 @@ import (
 )
 
 // ThemeCyberpunk is a neon-on-dark palette inspired by Night City.
-var ThemeCyberpunk = cyberpunkTheme()
-
-func cyberpunkTheme() *velocity.Theme {
-	t := &velocity.Theme{
-		Name: "Cyberpunk",
-
-		// Log levels: each gets a distinct neon tone.
-		DebugColour: velocity.RGB(0x8B, 0x5C, 0xF6), // purple
-		InfoColour:  velocity.RGB(0x00, 0xD4, 0xFF), // electric blue
-		WarnColour:  velocity.RGB(0xFF, 0xE6, 0x00), // neon yellow
-		ErrorColour: velocity.RGB(0xFF, 0x00, 0x6E), // hot pink
-		FatalColour: velocity.RGB(0xFF, 0x00, 0x00), // red
-
-		// Chrome: the structural bits around your log messages.
-		TimestampColour: velocity.RGB(0x5A, 0x5A, 0x7A), // dim steel
-		MessageColour:   velocity.RGB(0xE0, 0xE0, 0xFF), // cool white
-		FieldKeyColour:  velocity.RGB(0x00, 0xFF, 0xAA), // neon green
-		FieldValColour:  velocity.RGB(0xCC, 0xCC, 0xEE), // soft lavender
-		ErrorValColour:  velocity.RGB(0xFF, 0x00, 0x6E), // hot pink (matches error)
-
-		// Status indicators for tables and operation results.
-		StatusOKColour:   velocity.RGB(0x00, 0xFF, 0xAA), // neon green
-		StatusFailColour: velocity.RGB(0xFF, 0x00, 0x6E), // hot pink
-		StatusWarnColour: velocity.RGB(0xFF, 0xE6, 0x00), // neon yellow
-		StatusInfoColour: velocity.RGB(0x00, 0xD4, 0xFF), // electric blue
-
-		// Table headers.
-		TableHeader: velocity.RGB(0xBB, 0x86, 0xFC), // bright purple
-	}
-
-	// Pre-compute ANSI escape sequences so they aren't generated per log line.
-	t.Cache()
-
-	return t
-}
+var ThemeCyberpunk = velocity.NewTheme("Cyberpunk",
+	// Log levels: each gets a distinct neon tone.
+	velocity.WithLevelColours(
+		velocity.RGB(0x8B, 0x5C, 0xF6), // debug: purple
+		velocity.RGB(0x00, 0xD4, 0xFF), // info: electric blue
+		velocity.RGB(0xFF, 0xE6, 0x00), // warn: neon yellow
+		velocity.RGB(0xFF, 0x00, 0x6E), // error: hot pink
+		velocity.RGB(0xFF, 0x00, 0x00), // fatal: red
+	),
+	// Chrome: the structural bits around your log messages.
+	velocity.WithTimestampColour(velocity.RGB(0x5A, 0x5A, 0x7A)), // dim steel
+	velocity.WithMessageColour(velocity.RGB(0xE0, 0xE0, 0xFF)),   // cool white
+	velocity.WithFieldColours(
+		velocity.RGB(0x00, 0xFF, 0xAA), // key: neon green
+		velocity.RGB(0xCC, 0xCC, 0xEE), // value: soft lavender
+		velocity.RGB(0xFF, 0x00, 0x6E), // error value: hot pink
+	),
+	// Status and semantic slots for use with Theme.Format.
+	velocity.WithStyleSlot(velocity.SlotStatusOK, velocity.RGB(0x00, 0xFF, 0xAA)),
+	velocity.WithStyleSlot(velocity.SlotStatusFail, velocity.RGB(0xFF, 0x00, 0x6E)),
+	velocity.WithStyleSlot(velocity.SlotStatusWarn, velocity.RGB(0xFF, 0xE6, 0x00)),
+	velocity.WithStyleSlot(velocity.SlotStatusInfo, velocity.RGB(0x00, 0xD4, 0xFF)),
+	velocity.WithStyleSlot(velocity.SlotTableHeader, velocity.RGB(0xBB, 0x86, 0xFC)),
+	velocity.WithStyleSlot(velocity.SlotGood, velocity.RGB(0x00, 0xFF, 0xAA)),
+	velocity.WithStyleSlot(velocity.SlotBad, velocity.RGB(0xFF, 0x00, 0x6E)),
+	velocity.WithStyleSlot(velocity.SlotMuted, velocity.RGB(0x5A, 0x5A, 0x7A)),
+)
 
 func main() {
 	// Wire up the theme through the logger. Every writer and formatter
@@ -98,19 +89,16 @@ func main() {
 
 	log.Newline()
 
-	// log.Style() returns the active theme. Use its ANSI codes directly to
-	// colour table cell content. Phase 2 adds Theme.Format(slot, s) as a
-	// cleaner API; this is the Phase 1 idiom.
+	// Theme.Format(slot, s) is the v2 way to colour cell content.
+	// No raw ANSI construction needed; the theme handles escape codes.
 	style := log.Style()
-	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
-
 	p.Table(
 		[]string{"Implant", "Status", "Integrity"},
 		[][]string{
-			{"Kiroshi Optics Mk.3", colour(style.StatusOKColour, "ONLINE"), "98%"},
-			{"Mantis Blades", colour(style.StatusOKColour, "ONLINE"), "100%"},
-			{"Sandevistan Mk.4", colour(style.StatusWarnColour, "DEGRADED"), "67%"},
-			{"Monowire", colour(style.StatusFailColour, "OFFLINE"), "12%"},
+			{"Kiroshi Optics Mk.3", style.Format(velocity.SlotStatusOK, "ONLINE"), "98%"},
+			{"Mantis Blades", style.Format(velocity.SlotStatusOK, "ONLINE"), "100%"},
+			{"Sandevistan Mk.4", style.Format(velocity.SlotStatusWarn, "DEGRADED"), "67%"},
+			{"Monowire", style.Format(velocity.SlotStatusFail, "OFFLINE"), "12%"},
 		},
 	)
 

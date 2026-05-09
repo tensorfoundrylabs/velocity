@@ -23,9 +23,6 @@ type Pretty struct {
 func NewPretty(w io.Writer, theme *Theme) *Pretty {
 	if theme == nil {
 		theme = ThemeNightOwl
-	} else {
-		// EnsureCached populates ANSI codes in-place via sync.Once — concurrent-safe.
-		theme = theme.EnsureCached()
 	}
 	if w == nil {
 		w = io.Discard
@@ -42,7 +39,7 @@ func NewPrettyFromLogger(log *Logger) *Pretty {
 	}
 	return &Pretty{
 		writer: &prettyLoggerWriter{log: log},
-		theme:  log.Theme().EnsureCached(),
+		theme:  log.Theme(),
 	}
 }
 
@@ -199,7 +196,7 @@ func (p *Pretty) Success(message string) {
 		fmt.Println("✅ " + message)
 		return
 	}
-	p.printStyled("✅", message, p.theme.InfoColour)
+	p.printStyled("✅", message, p.theme.cachedLevelCode(LevelInfo))
 }
 
 // Warn prints a warning-styled message. Nil-safe: falls back to stdout.
@@ -208,7 +205,7 @@ func (p *Pretty) Warn(message string) {
 		fmt.Println("⚠️ " + message)
 		return
 	}
-	p.printStyled("⚠️", message, p.theme.WarnColour)
+	p.printStyled("⚠️", message, p.theme.cachedLevelCode(LevelWarn))
 }
 
 // Error prints an error-styled message. Nil-safe: falls back to stdout.
@@ -217,7 +214,7 @@ func (p *Pretty) Error(message string) {
 		fmt.Println("❌ " + message)
 		return
 	}
-	p.printStyled("❌", message, p.theme.ErrorColour)
+	p.printStyled("❌", message, p.theme.cachedLevelCode(LevelError))
 }
 
 // Info prints an info-styled message. Nil-safe: falls back to stdout.
@@ -226,17 +223,17 @@ func (p *Pretty) Info(message string) {
 		fmt.Println("ℹ️ " + message)
 		return
 	}
-	p.printStyled("ℹ️", message, p.theme.InfoColour)
+	p.printStyled("ℹ️", message, p.theme.cachedLevelCode(LevelInfo))
 }
 
-// Muted prints a dimmed message using the timestamp colour — useful for secondary
+// Muted prints a dimmed message using the timestamp/muted colour — useful for secondary
 // output that should recede visually (hints, paths, supplementary context).
 func (p *Pretty) Muted(message string) {
 	if p == nil {
 		fmt.Println(message)
 		return
 	}
-	p.printStyled("", message, p.theme.TimestampColour)
+	p.printStyled("", message, p.theme.cachedTimestampFgStr())
 }
 
 // Debug prints a debug-styled message. Nil-safe: falls back to stdout.
@@ -245,15 +242,15 @@ func (p *Pretty) Debug(message string) {
 		fmt.Println("🐛 " + message)
 		return
 	}
-	p.printStyled("🐛", message, p.theme.DebugColour)
+	p.printStyled("🐛", message, p.theme.cachedLevelCode(LevelDebug))
 }
 
 // printStyled writes an ANSI-coloured line. Write errors are silently dropped —
 // pretty printing must never fail the caller.
-func (p *Pretty) printStyled(icon, message string, colour Colour) {
+func (p *Pretty) printStyled(icon, message, ansiCode string) {
 	buf := GetBuffer(128)
 	defer PutBuffer(buf)
-	buf.WriteString(colour.ANSI(true))
+	buf.WriteString(ansiCode)
 	if icon != "" {
 		buf.WriteString(icon)
 		buf.WriteString(" ")

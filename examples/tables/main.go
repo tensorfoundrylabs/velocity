@@ -17,13 +17,9 @@ func main() {
 		velocity.WithLevel(velocity.LevelDebug),
 	)
 
-	// log.Style() returns the active theme. Use its colour fields directly
-	// to produce ANSI-coloured cell content. Phase 2 will add Theme.Format(slot, s)
-	// as a cleaner API for this pattern.
+	// Theme.Format(slot, s) is the canonical way to colour cell content in v2.
+	// The theme handles all ANSI construction; callers just pick a semantic slot.
 	style := log.Style()
-	ok := func(s string) string { return style.StatusOKColour.ANSI(true) + s + velocity.Reset }
-	warn := func(s string) string { return style.StatusWarnColour.ANSI(true) + s + velocity.Reset }
-	fail := func(s string) string { return style.StatusFailColour.ANSI(true) + s + velocity.Reset }
 	theme := velocity.ThemeNightOwl
 
 	fmt.Println("=== Pretty Table ===")
@@ -32,11 +28,11 @@ func main() {
 	log.RenderRaw(velocity.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
-			{"auth-api", ok("HEALTHY"), "12ms", "us-east-1"},
-			{"payments", ok("HEALTHY"), "45ms", "us-east-1"},
-			{"search", warn("DEGRADED"), "380ms", "eu-west-1"},
-			{"notifications", fail("DOWN"), "-", "ap-southeast-2"},
-			{"analytics", ok("HEALTHY"), "28ms", "us-west-2"},
+			{"auth-api", style.Format(velocity.SlotStatusOK, "HEALTHY"), "12ms", "us-east-1"},
+			{"payments", style.Format(velocity.SlotStatusOK, "HEALTHY"), "45ms", "us-east-1"},
+			{"search", style.Format(velocity.SlotStatusWarn, "DEGRADED"), "380ms", "eu-west-1"},
+			{"notifications", style.Format(velocity.SlotStatusFail, "DOWN"), "-", "ap-southeast-2"},
+			{"analytics", style.Format(velocity.SlotStatusOK, "HEALTHY"), "28ms", "us-west-2"},
 		},
 		theme,
 	))
@@ -47,10 +43,10 @@ func main() {
 	log.RenderRaw(velocity.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
-			{"node-0", "A100 80GB", "72.3 / 80.0 GB", ok("89%"), "68C"},
-			{"node-1", "A100 80GB", "65.1 / 80.0 GB", ok("81%"), "65C"},
-			{"node-2", "A100 80GB", "78.9 / 80.0 GB", warn("98%"), "82C"},
-			{"node-3", "A100 80GB", "0.0 / 80.0 GB", fail("0%"), "34C"},
+			{"node-0", "A100 80GB", "72.3 / 80.0 GB", style.Format(velocity.SlotStatusOK, "89%"), "68C"},
+			{"node-1", "A100 80GB", "65.1 / 80.0 GB", style.Format(velocity.SlotStatusOK, "81%"), "65C"},
+			{"node-2", "A100 80GB", "78.9 / 80.0 GB", style.Format(velocity.SlotStatusWarn, "98%"), "82C"},
+			{"node-3", "A100 80GB", "0.0 / 80.0 GB", style.Format(velocity.SlotStatusFail, "0%"), "34C"},
 		},
 		theme,
 	))
@@ -95,9 +91,9 @@ func main() {
 	log.Table(
 		[]string{"Migration", "Duration", "Status"},
 		[][]string{
-			{"001_initial_schema.sql", "5ms", ok("OK")},
-			{"002_webhooks.sql", "2ms", ok("OK")},
-			{"003_model_access.sql", "3ms", ok("OK")},
+			{"001_initial_schema.sql", "5ms", style.Format(velocity.SlotStatusOK, "OK")},
+			{"002_webhooks.sql", "2ms", style.Format(velocity.SlotStatusOK, "OK")},
+			{"003_model_access.sql", "3ms", style.Format(velocity.SlotStatusOK, "OK")},
 		},
 	)
 }
