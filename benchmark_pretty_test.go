@@ -1,4 +1,4 @@
-package pretty_test
+package velocity_test
 
 import (
 	"io"
@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	benchHeaders = []string{"Service", "Status"}
-	benchRows    = [][]string{
+	benchPrettyHeaders = []string{"Service", "Status"}
+	benchPrettyRows    = [][]string{
 		{"api-gateway", "running"},
 		{"worker", "stopped"},
 		{"scheduler", "running"},
@@ -32,7 +32,7 @@ func BenchmarkPretty_NewFromLogger_Table(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		p.Table(benchHeaders, benchRows)
+		p.Table(benchPrettyHeaders, benchPrettyRows)
 	}
 }
 
@@ -42,6 +42,6 @@ func BenchmarkPretty_New_Table(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		p.Table(benchHeaders, benchRows)
+		p.Table(benchPrettyHeaders, benchPrettyRows)
 	}
 }

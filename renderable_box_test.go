@@ -1,4 +1,4 @@
-package pretty_test
+package velocity_test
 
 import (
 	"bytes"

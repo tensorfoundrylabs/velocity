@@ -1,4 +1,4 @@
-package pretty
+package live
 
 import (
 	"io"

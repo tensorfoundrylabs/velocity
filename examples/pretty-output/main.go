@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
 )
 
 func main() {
@@ -30,7 +29,7 @@ func main() {
 		" |____/ \\___| .__/|_|\\___/ \\__, |",
 		"            |_|            |___/ ",
 	}
-	banner := pretty.CreateBanner("Deploy", "4.2.0", "https://deploy.example.com", ascii)
+	banner := velocity.CreateBanner("Deploy", "4.2.0", "https://deploy.example.com", ascii)
 	fmt.Print(banner)
 
 	// Section headers make it easy to scan a long run's output.

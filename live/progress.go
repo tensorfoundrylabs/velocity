@@ -1,4 +1,4 @@
-package pretty
+package live
 
 import (
 	"fmt"
@@ -327,6 +327,7 @@ func (s *Spinner) start() {
 	}()
 }
 
+// SpinnerStyle selects the animation frame set.
 type SpinnerStyle int
 
 const (

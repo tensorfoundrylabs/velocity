@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
+	"github.com/tensorfoundrylabs/velocity/live"
 )
 
 func main() {
@@ -59,7 +59,7 @@ func stageBanner(log *velocity.Logger) {
 		"                            /____/               ",
 	}
 
-	banner := pretty.CreateBanner("Terminal Velocity", "0.1.0", "tensorfoundry.io", ascii)
+	banner := velocity.CreateBanner("Terminal Velocity", "0.1.0", "tensorfoundry.io", ascii)
 	log.Banner(strings.Split(strings.TrimRight(banner, "\n"), "\n")...)
 	log.Newline()
 }
@@ -68,7 +68,7 @@ func stageBanner(log *velocity.Logger) {
 func stageClusterDiscovery(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Cluster Discovery")
 
-	spinner := pretty.NewSpinner(os.Stdout, "Scanning network for GPU nodes...")
+	spinner := live.NewSpinner(os.Stdout, "Scanning network for GPU nodes...")
 	time.Sleep(1200 * time.Millisecond)
 	spinner.StopWithSuccess("Found 4 nodes with 16 GPUs total")
 
@@ -178,7 +178,7 @@ func stageModelDistribution(log *velocity.Logger, p *velocity.Pretty) {
 
 	const weightBytes int64 = 35_000 // units = MB (35 GB quantised)
 
-	pb := pretty.NewProgressBar(os.Stdout, weightBytes, "Downloading model weights")
+	pb := live.NewProgressBar(os.Stdout, weightBytes, "Downloading model weights")
 
 	// Drive the progress bar without logging mid-loop. Mixing log writes with
 	// a progress bar on the same writer causes line-overwrite interleaving.
@@ -202,7 +202,7 @@ func stageModelDistribution(log *velocity.Logger, p *velocity.Pretty) {
 	)
 
 	// Container build is quicker but still worth showing.
-	cb := pretty.NewProgressBar(os.Stdout, 15, "Building inference containers")
+	cb := live.NewProgressBar(os.Stdout, 15, "Building inference containers")
 	layers := []string{
 		"base: nvcr.io/nvidia/pytorch:24.01",
 		"layer: vllm==0.4.2",
@@ -268,7 +268,7 @@ func stageNodeDeployment(log *velocity.Logger, p *velocity.Pretty) string {
 			velocity.String("ip", node.ip),
 		)
 
-		spinner := pretty.NewSpinner(os.Stdout, fmt.Sprintf("Deploying to %s (%s)...", node.name, node.ip))
+		spinner := live.NewSpinner(os.Stdout, fmt.Sprintf("Deploying to %s (%s)...", node.name, node.ip))
 		time.Sleep(900 * time.Millisecond)
 
 		if node.willFail {
@@ -317,7 +317,7 @@ func stageRecovery(log *velocity.Logger, p *velocity.Pretty, failedNode string) 
 		velocity.String("strategy", "single-node-overflow"),
 	)
 
-	spinner := pretty.NewSpinner(os.Stdout, fmt.Sprintf("Reallocating %s workload to node-0...", failedNode))
+	spinner := live.NewSpinner(os.Stdout, fmt.Sprintf("Reallocating %s workload to node-0...", failedNode))
 	time.Sleep(1400 * time.Millisecond)
 	spinner.StopWithSuccess("Workload reallocated, node-0 running at 2x replicas")
 

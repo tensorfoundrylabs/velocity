@@ -22,7 +22,7 @@ Benchmarks: `go test -bench=. -benchmem -count=3 ./...`
 
 ## Package Structure
 
-Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
+Three packages: root `velocity`, `velocity/live`, and `velocity/slog`.
 
 ### Root (`package velocity`)
 
@@ -48,15 +48,14 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `buffer.go` | Tiered `BufferPool`, zero-copy `BytesBuffer`, `AppendTime`, `UnsafeString` |
 | `pool.go` | `sync.Pool` instances for entries, fields, buffers |
 | `errors.go` | Sentinel errors |
-| `renderable.go` | `Renderable` interface; all `*Result` types (`BoxResult`, `TableResult`, `BannerResult`, `TreeResult`, `KeyValueResult`, `SystemInfoResult`) |
+| `renderable.go` | `Renderable` interface; all renderable types (`Box`, `Table`, `Banner`, `Tree`, `KeyValue`, `SystemInfo`) |
+| `pretty.go` | `Pretty` facade, `CreateBanner` helper |
 | `doc.go` | Package documentation |
 
-### `velocity/pretty` (`package pretty`)
+### `velocity/live` (`package live`)
 
 | File | Purpose |
 |------|---------|
-| `pretty.go` | `Pretty` type, `Box`, `Panel`, `Banner`, `Table`, `Tree`, `Bullet`, `KeyValue`, `SystemInfo`, `TreeItem` |
-| `renderable.go` | Result types implementing `velocity.Renderable`; pooled render paths for all pretty primitives |
 | `progress.go` | `ProgressBar`, `Spinner`, `MultiProgress`, `SpinnerStyle` with CAS-guarded stop |
 | `doc.go` | Package documentation |
 
@@ -79,8 +78,8 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `writer_console_rb_test.go` | Timezone in fallback path |
 | `writer_multi_test.go` | Multi-writer fan-out, shutdown drain |
 | `ringbuffer_test.go` | Concurrent writes, overflow, bounded spin, zero-length, min size |
-| `progress_test.go` | Concurrent Complete/Stop, nil SetStyle (in `pretty/`) |
 | `benchmark_test.go` | Benchmarks covering hot paths, fields, writers, pooling, tree-mode, Render API |
+| `benchmark_pretty_test.go` | Pretty facade benchmarks: NewFromLogger and standalone paths |
 | `entry_test.go` | Entry pool, ref counting, concurrent access |
 | `with_test.go` | `With()`, `WithTemplate`, nil/empty |
 | `fatal_test.go` | Fatal handler, nil logger subprocess test |
@@ -93,16 +92,16 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 | `logger_render_test.go` | `Logger.Render`, `RenderRaw`, `Newline`; JSON writer ignore; no-console no-op |
 | `logger_settheme_test.go` | `Logger.Theme()`, `SetTheme` propagation, `With()` clone inheritance |
 | `integration_test.go` | End-to-end integration |
+| `renderable_banner_test.go` | Banner rendering: single-line, multi-line, Unicode, trailing whitespace |
+| `renderable_box_test.go` | Long title, border alignment, empty content, Unicode |
+| `renderable_parity_test.go` | Compile-time Renderable compliance; render parity for all types |
+| `pretty_test.go` | `NewPretty`, `NewPrettyFromLogger`, nil receiver, method coverage |
 
-### `velocity/pretty`
+### `velocity/live`
 
 | File | Coverage |
 |------|----------|
-| `box_test.go` | Long title, border alignment, empty content, Unicode |
-| `banner_test.go` | Banner rendering |
 | `progress_test.go` | Concurrent Complete/Stop, nil SetStyle |
-| `renderable_test.go` | Compile-time Renderable compliance; render parity for all result types |
-| `pretty_logger_test.go` | `NewFromLogger` routing; nil logger returns nil |
 
 ### `velocity/slog`
 
@@ -118,7 +117,7 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 ## Design Principles
 
 - **Zero-alloc hot path**: Fields use `unsafe.Pointer` + `int64` storage. Integer fields write directly via `formatInt` stack buffer. Entry pooling via `sync.Pool` with CAS-based return. ANSI codes pre-cached on `Theme`. Timestamps via `time.AppendFormat`. Floats via `strconv.FormatFloat`. Writers format outside the mutex, locking only for I/O.
-- **Three-package split**: Core logging stays in the root package. Pretty-printing (boxes, panels, banners, tables, trees, progress) lives in `velocity/pretty` to keep the root package focused on the hot path. The slog bridge lives in `velocity/slog` (`package velocityslog`) to avoid pulling `log/slog` into callers that don't need it.
+- **Three-package split**: Core logging and all Renderables (boxes, banners, tables, trees) live in the root package — this eliminates the import cycle that previously blocked `log.Table()`. Stateful animated types (spinners, progress bars) live in `velocity/live` because they own goroutines with explicit lifecycle. The slog bridge lives in `velocity/slog` (`package velocityslog`) to avoid pulling `log/slog` into callers that don't need it.
 - **Field constructors**: `String` (formerly `StringField`), `Error` (formerly `ErrorField`), `Int`, `Float64`, `Bool`, `Duration`, `Time`, `Stringer`, `Bytes`. Typed nils caught via `reflect` in `Error`/`Stringer` constructors.
 - **Nil-safe**: Every public method handles nil receivers. Typed nils caught via `reflect` in `Error`/`Stringer` constructors.
 - **Thread-safe**: Atomic level checks, mutex-protected writers, lock-free ring buffer. Progress/spinner stop uses `CompareAndSwap` to prevent double-close panics.
@@ -137,7 +136,7 @@ Three packages: root `velocity`, `velocity/pretty`, and `velocity/slog`.
 ## Dependency Graph
 
 ```
-velocity/pretty  --> velocity (imports root for Logger, Field types)
+velocity/live    --> (no imports from root — standalone stateful types)
 velocity/slog    --> velocity (imports root for Logger, Entry, Field, Level)
 ```
 

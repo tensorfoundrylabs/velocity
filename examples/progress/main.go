@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
+	"github.com/tensorfoundrylabs/velocity/live"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 
 	// Show a progress bar simulating a dependency download.
 	// Total is the number of packages we're pretending to fetch.
-	pb := pretty.NewProgressBar(os.Stdout, 10, "Downloading deps")
+	pb := live.NewProgressBar(os.Stdout, 10, "Downloading deps")
 	for i := range int64(10) {
 		time.Sleep(80 * time.Millisecond)
 		pb.Increment(1)
@@ -32,19 +32,19 @@ func main() {
 	// Cycle through all five spinner styles so you can see what each looks like.
 	// Each one runs for about half a second, which is enough to see a few frames.
 	spinners := []struct {
-		style   pretty.SpinnerStyle
+		style   live.SpinnerStyle
 		label   string
 		success string
 	}{
-		{pretty.SpinnerStyleBraille, "Compiling (braille)...", "Compiled"},
-		{pretty.SpinnerStyleDots, "Linking (dots)...", "Linked"},
-		{pretty.SpinnerStyleArrows, "Packaging (arrows)...", "Packaged"},
-		{pretty.SpinnerStyleBounce, "Pushing image (bounce)...", "Image pushed"},
-		{pretty.SpinnerStyleBar, "Health check (bar)...", ""},
+		{live.SpinnerStyleBraille, "Compiling (braille)...", "Compiled"},
+		{live.SpinnerStyleDots, "Linking (dots)...", "Linked"},
+		{live.SpinnerStyleArrows, "Packaging (arrows)...", "Packaged"},
+		{live.SpinnerStyleBounce, "Pushing image (bounce)...", "Image pushed"},
+		{live.SpinnerStyleBar, "Health check (bar)...", ""},
 	}
 
 	for i, sp := range spinners {
-		s := pretty.NewSpinner(os.Stdout, sp.label)
+		s := live.NewSpinner(os.Stdout, sp.label)
 		s.SetStyle(sp.style)
 		time.Sleep(500 * time.Millisecond)
 
@@ -58,7 +58,7 @@ func main() {
 
 	// Second progress bar: simulating a rollback after the failed health check.
 	log.Warn("Rolling back to previous version")
-	rb := pretty.NewProgressBar(os.Stdout, 5, "Rolling back")
+	rb := live.NewProgressBar(os.Stdout, 5, "Rolling back")
 	for range int64(5) {
 		time.Sleep(100 * time.Millisecond)
 		rb.Increment(1)
