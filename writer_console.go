@@ -505,6 +505,17 @@ func consoleFormatValueCore(buf *BytesBuffer, f Field) {
 			buf.WriteString(" items]")
 		}
 
+	case FieldTypeContinuationLines:
+		// Continuation lines are rendered by WriteContinue; in generic paths emit a hint.
+		if f.value != nil {
+			lines := *(*[]string)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(lines)))
+			_ = buf.WriteByte('[')
+			_, _ = buf.Write(tmp[:n])
+			buf.WriteString(" lines]")
+		}
+
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing
 	}
@@ -641,6 +652,80 @@ func buildGroupLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Locat
 		if theme != nil {
 			buf.WriteString(Reset)
 		}
+		buf.WriteByte('\n')
+	}
+}
+
+// WriteContinue renders a ContinuationBlock log entry. The header line is the
+// standard log line; continuation lines follow with the │ glyph prefix indented
+// to the message column so they land flush under the header text.
+func (w *ConsoleWriter) WriteContinue(e *Entry, lines []string) error {
+	return w.WriteContinueSecure(e, lines, w.isTTY, "[REDACTED]")
+}
+
+// WriteContinueSecure is the trust-aware continuation write path.
+func (w *ConsoleWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool, redactionMark string) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ErrWriterClosed
+	}
+	tmpl := w.template
+	theme := w.theme
+	tz := w.displayTimezone
+	isTTY := w.isTTY
+	w.mu.Unlock()
+
+	tempBuf := GetTemplateBuffer()
+	defer PutTemplateBuffer(tempBuf)
+
+	switch {
+	case isTTY && tmpl != nil:
+		buildContinueLineTTY(tempBuf, e, theme, tz, trusted, redactionMark, lines, tmpl)
+	case tmpl != nil:
+		// Non-TTY: standard template for the header, then plain continuation lines.
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		writeContinuationLines(tempBuf, lines, tmpl.CachedMessageIndentStr(), false, nil)
+	default:
+		fmt.Fprintf(tempBuf, "%s\n", e.Message)
+		writeContinuationLines(tempBuf, lines, "", false, nil)
+	}
+
+	w.mu.Lock()
+	_, err := w.out.Write(tempBuf.Bytes())
+	w.mu.Unlock()
+	return err
+}
+
+// buildContinueLineTTY builds the full TTY continuation block: the standard log
+// header (timestamp + level badge + message) then each continuation line indented
+// to the message column with a SlotContinuation-coloured │ glyph.
+func buildContinueLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Location, trusted bool, redactionMark string, lines []string, tmpl *Template) {
+	// Header: identical to the standard TTY log line.
+	tmpl.buildWithTimezoneSecure(buf, e, theme, tz, trusted, redactionMark)
+	// buildWithTimezoneSecure appends '\n'; continuation lines follow directly.
+	writeContinuationLines(buf, lines, tmpl.CachedMessageIndentStr(), true, theme)
+}
+
+// writeContinuationLines appends each line prefixed with the message-column indent
+// and the │ glyph. When styled is true and theme is non-nil, the glyph is wrapped
+// with SlotContinuation ANSI codes.
+func writeContinuationLines(buf *bytes.Buffer, lines []string, indent string, styled bool, theme *Theme) {
+	var glyphPrefix, glyphSuffix string
+	if styled && theme != nil {
+		glyphPrefix, glyphSuffix = theme.Wrap(SlotContinuation)
+	}
+
+	for _, line := range lines {
+		buf.WriteString(indent)
+		if glyphPrefix != "" {
+			buf.WriteString(glyphPrefix)
+		}
+		buf.WriteString(continuationGlyphSep)
+		if glyphSuffix != "" {
+			buf.WriteString(glyphSuffix)
+		}
+		buf.WriteString(line)
 		buf.WriteByte('\n')
 	}
 }

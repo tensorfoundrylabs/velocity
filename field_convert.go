@@ -98,6 +98,15 @@ func FieldValueToString(f Field) string {
 		var tmp [20]byte
 		n := formatInt(tmp[:], int64(len(items)))
 		return "[" + UnsafeString(tmp[:n]) + " items]"
+	case FieldTypeContinuationLines:
+		// Return a human-readable hint; continuation-aware writers handle lines directly.
+		if f.value == nil {
+			return "[0 lines]"
+		}
+		lines := *(*[]string)(f.value)
+		var tmp [20]byte
+		n := formatInt(tmp[:], int64(len(lines)))
+		return "[" + UnsafeString(tmp[:n]) + " lines]"
 	case FieldTypeUnknown:
 		return ""
 	}

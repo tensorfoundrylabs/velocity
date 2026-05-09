@@ -575,6 +575,9 @@ func (l *Logger) isEnabled(level Level) bool {
 }
 
 // captureCaller populates entry with caller information if configured.
+// extraSkip lets callers that add extra frames (e.g. wrappers) adjust the skip depth.
+//
+//nolint:unparam // extraSkip is always 0 today but reserved for future use by non-direct call paths
 func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	if l.cfg == nil || !l.cfg.AddCaller {
 		return

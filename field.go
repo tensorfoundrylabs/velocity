@@ -39,6 +39,11 @@ const (
 	// Stored as a typed Field so Entry layout stays unchanged — entries that never
 	// call Logger.Group pay zero cost.
 	FieldTypeGroupItems
+
+	// FieldTypeContinuationLines carries a []string for Logger.Continue calls.
+	// Stored as a typed Field so Entry layout stays unchanged — entries that never
+	// call Logger.Continue pay zero cost.
+	FieldTypeContinuationLines
 )
 
 // Field represents a structured log field optimised for minimal allocations.
@@ -328,6 +333,9 @@ func (f Field) Value() any {
 		// Items are handled directly by group-aware writers.
 		// Returning nil here prevents fmt fallback from trying to dereference the slice pointer.
 		return nil
+	case FieldTypeContinuationLines:
+		// Lines are handled directly by continuation-aware writers.
+		return nil
 	case FieldTypeUnknown:
 		return nil
 	}
@@ -415,6 +423,17 @@ func (f Field) writeFormatted(buf interface {
 			_, _ = buf.WriteString("[")
 			_, _ = buf.Write(tmp[:n])
 			_, _ = buf.WriteString(" items]")
+		}
+	case FieldTypeContinuationLines:
+		// Continuation lines are rendered by WriteContinue directly.
+		// In generic contexts emit the line count as a hint.
+		if f.value != nil {
+			lines := *(*[]string)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(lines)))
+			_, _ = buf.WriteString("[")
+			_, _ = buf.Write(tmp[:n])
+			_, _ = buf.WriteString(" lines]")
 		}
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing

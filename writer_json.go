@@ -492,22 +492,137 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.
 
-	case FieldTypeGroupItems:
-		// Group items are emitted directly by formatJSONGroupSecure; in the generic
-		// field path emit the count as a number so the JSON remains valid.
-		if f.value != nil {
-			items := *(*[]GroupItem)(f.value)
-			var tmp [20]byte
-			n := formatInt(tmp[:], int64(len(items)))
-			_, _ = buf.Write(tmp[:n])
-		} else {
-			buf.WriteString("0")
-		}
+	case FieldTypeGroupItems, FieldTypeContinuationLines:
+		// Typed slice fields are emitted by their dedicated write methods (WriteGroup,
+		// WriteContinue). In the generic field path emit the element count so the JSON
+		// remains valid without leaking the raw Go slice pointer.
+		writeJSONSliceCount(buf, f)
 
 	case FieldTypeUnknown:
 		// Null prevents JSON parsing errors when field type cannot be determined
 		buf.WriteString("null")
 	}
+}
+
+// writeJSONSliceCount emits the element count for typed-slice fields (GroupItems,
+// ContinuationLines) in the generic JSON field path. Dedicated write methods
+// (WriteGroup, WriteContinue) emit the full structured representation; this is
+// the fallback for additional writers that receive the field but don't specialise.
+func writeJSONSliceCount(buf *BytesBuffer, f Field) {
+	if f.value == nil {
+		buf.WriteString("0")
+		return
+	}
+	var count int
+	switch f.Type { //nolint:exhaustive // only GroupItems and ContinuationLines are valid callers; default is unreachable
+	case FieldTypeGroupItems:
+		count = len(*(*[]GroupItem)(f.value))
+	case FieldTypeContinuationLines:
+		count = len(*(*[]string)(f.value))
+	default:
+		count = 0
+	}
+	var tmp [20]byte
+	n := formatInt(tmp[:], int64(count))
+	_, _ = buf.Write(tmp[:n])
+}
+
+// WriteContinue emits a JSON entry for a Logger.Continue call.
+// The continuation lines are emitted as a "continuation" array. OSC 8 hyperlink
+// escape sequences are stripped from each line — JSON consumers are aggregators
+// that cannot render terminal control sequences and must not receive raw ESC bytes.
+func (w *JSONWriter) WriteContinue(e *Entry, lines []string) error {
+	return w.WriteContinueSecure(e, lines, false, "[REDACTED]")
+}
+
+// WriteContinueSecure is the trust-aware continuation JSON write path.
+func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool, redactionMark string) error {
+	rawBuf := w.bufPool.Get(HintStructuredLog)
+	buf := NewBytesBuffer(rawBuf)
+
+	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
+
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		w.bufPool.Put(rawBuf)
+		return ErrWriterClosed
+	}
+	_, err := w.out.Write(buf.Bytes())
+	if err == nil {
+		_, err = w.out.Write(newlineByte)
+	}
+	w.mu.Unlock()
+
+	w.bufPool.Put(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
+}
+
+func (w *JSONWriter) formatJSONContinueSecure(buf *BytesBuffer, e *Entry, lines []string, trusted bool, redactionMark string) {
+	_ = buf.WriteByte('{')
+
+	w.writeJSONString(buf, "timestamp")
+	_ = buf.WriteByte(':')
+	w.writeJSONTime(buf, e.Time)
+
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "level")
+	_ = buf.WriteByte(':')
+	w.writeJSONString(buf, e.Level.String())
+
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "message")
+	_ = buf.WriteByte(':')
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	w.writeJSONString(buf, msg)
+
+	if e.Caller != "" {
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "caller")
+		_ = buf.WriteByte(':')
+		w.writeJSONString(buf, e.Caller)
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "line")
+		_ = buf.WriteByte(':')
+		buf.WriteInt(int64(e.Line))
+	}
+
+	// Continuation lines as a JSON array. OSC 8 sequences are stripped because
+	// log aggregators cannot render terminal control sequences.
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, continuationKey)
+	_ = buf.WriteByte(':')
+	_ = buf.WriteByte('[')
+	for i, line := range lines {
+		if i > 0 {
+			_ = buf.WriteByte(',')
+		}
+		w.writeJSONString(buf, stripOSC8(line))
+	}
+	_ = buf.WriteByte(']')
+
+	// Any additional Fields on the entry (base fields from With()).
+	for _, f := range e.Fields {
+		if f.Type == FieldTypeContinuationLines {
+			continue // already emitted above
+		}
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, f.Key)
+		_ = buf.WriteByte(':')
+		w.writeJSONFieldValueSecure(buf, f, trusted, redactionMark)
+	}
+
+	_ = buf.WriteByte('}')
 }
 
 // Flush drains any buffered output without closing the writer.
