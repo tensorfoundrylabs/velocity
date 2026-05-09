@@ -23,7 +23,7 @@ func main() {
 
 	// Night Owl gives us a dark, high-contrast palette that looks excellent on
 	// any decent terminal. It's the default for a reason.
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithTheme(velocity.ThemeNightOwl),
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelDebug),

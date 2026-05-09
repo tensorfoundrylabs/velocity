@@ -50,11 +50,10 @@ var libraries = []Library{
 	{
 		Name: "velocity",
 		Setup: func() any {
-			cfg := velocity.DefaultConfig()
-			cfg.StructuredOutput = io.Discard
-			cfg.StructuredLevel = velocity.LevelDebug
-			cfg.ConsoleOutput = nil
-			return velocity.NewWithConfig(cfg)
+			return velocity.New(
+				velocity.WithStructuredOutput(io.Discard),
+				velocity.WithStructuredLevel(velocity.LevelDebug),
+			)
 		},
 		Info: func(l any) {
 			l.(*velocity.Logger).Info("request completed")
@@ -76,11 +75,10 @@ var libraries = []Library{
 			)
 		},
 		AccumulatedCtx: func() any {
-			cfg := velocity.DefaultConfig()
-			cfg.StructuredOutput = io.Discard
-			cfg.StructuredLevel = velocity.LevelDebug
-			cfg.ConsoleOutput = nil
-			l := velocity.NewWithConfig(cfg)
+			l := velocity.New(
+				velocity.WithStructuredOutput(io.Discard),
+				velocity.WithStructuredLevel(velocity.LevelDebug),
+			)
 			return l.With(
 				velocity.String("k1", "v1"),
 				velocity.String("k2", "v2"),
@@ -497,11 +495,10 @@ var disabledLibraries = []Library{
 	{
 		Name: "velocity",
 		Setup: func() any {
-			cfg := velocity.DefaultConfig()
-			cfg.StructuredOutput = io.Discard
-			cfg.StructuredLevel = velocity.LevelError
-			cfg.ConsoleOutput = nil
-			return velocity.NewWithConfig(cfg)
+			return velocity.New(
+				velocity.WithStructuredOutput(io.Discard),
+				velocity.WithStructuredLevel(velocity.LevelError),
+			)
 		},
 		InfoDisabled: func(l any) {
 			l.(*velocity.Logger).Debug("suppressed")

@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelDebug),
 		velocity.WithTheme(velocity.ThemeNightOwl),

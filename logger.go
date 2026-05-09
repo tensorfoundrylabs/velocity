@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,7 @@ import (
 type Logger struct {
 	sampler Sampler
 
-	cfg             *Config
+	cfg             *config
 	bufPool         *BufferPool
 	consoleWriter   *ConsoleWriter
 	jsonWriter      *JSONWriter
@@ -30,36 +31,81 @@ type Logger struct {
 	level     atomic.Int32
 }
 
-func New(w io.Writer) *Logger {
-	cfg := DefaultConfig()
-	cfg.ConsoleOutput = w
-	return NewWithConfig(cfg)
+// New constructs a Logger from the given options. Panics if the resolved
+// configuration is invalid (e.g. BufferSize < 256, sampler with both counts
+// zero). Apply preset options first, then override-specific ones:
+//
+//	log := velocity.New(velocity.WithDevelopment(), velocity.WithLevel(velocity.LevelWarn))
+func New(opts ...Option) *Logger {
+	l, err := TryNew(opts...)
+	if err != nil {
+		panic(fmt.Sprintf("velocity: invalid configuration: %v", err))
+	}
+	return l
 }
 
-func NewWithConfig(cfg *Config) *Logger {
-	// Respect the config's intention - nil output means disabled
+// TryNew constructs a Logger from the given options, returning any validation
+// error rather than panicking.
+func TryNew(opts ...Option) (*Logger, error) {
+	cfg := defaultConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(cfg)
+		}
+	}
+
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	l := newFromConfig(cfg)
+
+	// WithTesting registers cleanup on the testing.T after the logger is built
+	// so that Close() flushes the async MultiWriter before the test ends.
+	for _, opt := range opts {
+		if tw, ok := extractTestingOpt(opt); ok {
+			tw.t.Cleanup(func() { _ = l.Close() })
+			break
+		}
+	}
+
+	return l, nil
+}
+
+// extractTestingOpt peeks at an option to see whether it wired a testingWriter.
+// We need the TestingT so we can register t.Cleanup on the logger after build.
+func extractTestingOpt(opt Option) (*testingWriter, bool) {
+	if opt == nil {
+		return nil, false
+	}
+	probe := &config{}
+	opt(probe)
+	if tw, ok := probe.ConsoleOutput.(*testingWriter); ok {
+		return tw, true
+	}
+	return nil, false
+}
+
+func newFromConfig(cfg *config) *Logger {
 	logger := &Logger{
 		cfg:     cfg,
 		bufPool: NewBufferPool(),
 		sampler: cfg.Sampler,
 	}
 
-	// Using the most permissive level ensures logs aren't dropped when outputs have different thresholds
+	// Use the most permissive level so logs aren't dropped when outputs have
+	// different thresholds.
 	effectiveLevel := min(cfg.StructuredLevel, cfg.ConsoleLevel)
 	logger.level.Store(int32(effectiveLevel))
 
-	// Initialise console writer if configured
 	if cfg.ConsoleOutput != nil && cfg.ConsoleOutput != io.Discard {
 		logger.consoleWriter = NewConsoleWriterWithOptions(cfg.ConsoleOutput, cfg.ConsoleTheme, cfg.DisplayTimezone, cfg.FieldDisplayMode)
-		// Apply time format if specified. Recompute cached prefix widths so
-		// Logger.Render's indent matches the actual rendered timestamp width —
-		// otherwise a custom TimeFormat shorter than RFC3339 leaves the indent
-		// stale at the construction-time width.
+		// Recompute cached prefix widths after applying a custom TimeFormat so
+		// Logger.Render's indent matches the actual rendered timestamp width.
 		if cfg.TimeFormat != "" && logger.consoleWriter != nil {
 			logger.consoleWriter.template.timeFormat = cfg.TimeFormat
 			logger.consoleWriter.template.initCache()
 		}
-		// Status formatter respects terminal capability and colours
 		isTTY := logger.consoleWriter != nil && logger.consoleWriter.IsTTY()
 		theme := cfg.ConsoleTheme
 		if cfg.DisableColour {
@@ -68,12 +114,10 @@ func NewWithConfig(cfg *Config) *Logger {
 		logger.statusFormatter = NewStatusFormatter(theme, isTTY)
 	}
 
-	// Initialise JSON writer if configured
 	if cfg.StructuredOutput != nil && cfg.StructuredOutput != io.Discard {
 		logger.jsonWriter = NewJSONWriter(cfg.StructuredOutput)
 	}
 
-	// Ensure status formatter exists even without console writer
 	if logger.statusFormatter == nil {
 		logger.statusFormatter = NewStatusFormatter(nil, false)
 	}
@@ -81,30 +125,30 @@ func NewWithConfig(cfg *Config) *Logger {
 	return logger
 }
 
-func NewWithBuilder(builder *Builder) *Logger {
-	cfg := builder.MustBuild()
-	return NewWithConfig(cfg)
-}
+func validateConfig(cfg *config) error {
+	var errs []error
 
-func NewWithOptions(opts ...Option) *Logger {
-	builder := NewConfig()
-	for _, opt := range opts {
-		opt(builder)
+	if cfg.BufferSize < 256 {
+		errs = append(errs, fmt.Errorf("buffer size must be at least 256 bytes, got %d", cfg.BufferSize))
 	}
-	return NewWithBuilder(builder)
-}
+	if cfg.BufferSize > 1024*1024 {
+		errs = append(errs, fmt.Errorf("buffer size must not exceed 1MB, got %d", cfg.BufferSize))
+	}
+	if cfg.FieldPoolSize < 0 {
+		errs = append(errs, fmt.Errorf("field pool size must not be negative, got %d", cfg.FieldPoolSize))
+	}
+	if cfg.FieldPoolSize > 10000 {
+		errs = append(errs, fmt.Errorf("field pool size must not exceed 10000, got %d", cfg.FieldPoolSize))
+	}
+	if cfg.Sampler != nil {
+		if cs, ok := cfg.Sampler.(*CountSampler); ok {
+			if cs.Initial == 0 && cs.Thereafter == 0 {
+				errs = append(errs, errors.New("sampler initial and thereafter counts must not both be zero"))
+			}
+		}
+	}
 
-// NewDevelopment creates a logger optimised for development with colourful console output.
-func NewDevelopment() *Logger {
-	builder := PresetDevelopment()
-	cfg := builder.MustBuild()
-	return NewWithConfig(cfg)
-}
-
-func NewForTesting(w io.Writer) *Logger {
-	builder := PresetTesting(w)
-	cfg := builder.MustBuild()
-	return NewWithConfig(cfg)
+	return errors.Join(errs...)
 }
 
 func (l *Logger) SetLevel(level Level) {
@@ -307,7 +351,6 @@ func (l *Logger) isEnabled(level Level) bool {
 }
 
 // captureCaller populates entry with caller information if configured.
-// extraSkip allows callers to account for additional frames in the call stack.
 func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	if l.cfg == nil || !l.cfg.AddCaller {
 		return
@@ -322,8 +365,6 @@ func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 		return
 	}
 
-	// Extract just the filename from full path
-	// Use bit shift to find last separator for performance
 	shortFile := file
 	for i := len(file) - 1; i >= 0; i-- {
 		if file[i] == '/' || file[i] == '\\' {
@@ -335,7 +376,6 @@ func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	entry.Caller = shortFile
 	entry.Line = line
 
-	// Get function name if available
 	if fn := runtime.FuncForPC(pc); fn != nil {
 		entry.Function = fn.Name()
 	}
@@ -357,7 +397,6 @@ func (l *Logger) LogEntry(e *Entry) {
 		return
 	}
 	// Prepend base fields from With() so child loggers propagate their fields.
-	// Reuse the existing slice when baseFields fit to avoid a fresh allocation.
 	if len(l.baseFields) > 0 {
 		existing := e.Fields
 		e.Fields = e.Fields[:0]
@@ -383,18 +422,15 @@ func (l *Logger) LogEntry(e *Entry) {
 }
 
 // logInternal is the shared implementation for log and logDetailed.
-// forceTree controls whether the entry's forceTreeDisplay flag is set.
 func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...Field) {
 	if l == nil {
 		return
 	}
 
-	// Early sampling check to avoid allocation when entry will be dropped
 	if l.sampler != nil && !l.sampler.Sample(level, msg) {
 		return
 	}
 
-	// Pool reduces GC pressure in high-throughput scenarios by reusing Entry objects
 	entry := GetEntry()
 	defer entry.Release()
 
@@ -409,11 +445,9 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 		entry.WithFields(fields...)
 	}
 
-	// Capture caller information if enabled (no extra skip needed beyond the 4 already counted)
 	l.captureCaller(entry, 0)
 
 	if l.cfg != nil {
-		// Synchronous writers (console and JSON)
 		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
 			if err := l.consoleWriter.Write(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
 			}
@@ -424,19 +458,17 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 			}
 		}
 
-		// Additional writers (async via MultiWriter - handles Retain internally)
-		// NOTE: Must call entry.Write() BEFORE async writes to avoid race on written field
-		entry.Write() // Marks entry as written (required before Release can return to pool)
+		entry.Write()
 
 		l.writersMu.RLock()
 		if l.additionalWriters != nil {
-			_ = l.additionalWriters.Write(entry) // Non-blocking async write
+			_ = l.additionalWriters.Write(entry)
 		}
 		l.writersMu.RUnlock()
 		return
 	}
 
-	entry.Write() // Marks entry as written (required before Release can return to pool)
+	entry.Write()
 }
 
 // Theme returns the console theme configured for this logger.
@@ -575,15 +607,6 @@ func (l *Logger) WithTemplate(t *Template) *Logger {
 	return newLogger
 }
 
-func NopLogger() *Logger {
-	cfg := DefaultConfig()
-	cfg.ConsoleOutput = io.Discard
-	cfg.StructuredOutput = io.Discard
-	cfg.ConsoleLevel = LevelOff
-	cfg.StructuredLevel = LevelOff
-	return NewWithConfig(cfg)
-}
-
 // Render writes r to the console writer, indented to align with the message column.
 // Each line after the first is prefixed with spaces equal to the template prefix width
 // so the output sits flush with log messages in tree mode.
@@ -602,7 +625,6 @@ func (l *Logger) Render(r Renderable) {
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)
 
-	// Render into the temporary buffer, then indent and write under the lock.
 	if err := r.Render(tmp); err != nil {
 		return
 	}
@@ -647,16 +669,12 @@ func (l *Logger) Newline() {
 	l.consoleWriter.mu.Unlock()
 }
 
-// indentLines prefixes every non-empty line in b with indent. Render writes a
-// self-contained block at the message column, so the first line must also be
-// indented; otherwise multi-line output like table top borders lands flush-left
-// while subsequent lines align to the indent column.
+// indentLines prefixes every non-empty line in b with indent.
 func indentLines(b []byte, indent string) []byte {
 	if len(b) == 0 || indent == "" {
 		return b
 	}
 
-	// Count newlines to size the output buffer without reallocation.
 	nlCount := 0
 	for _, c := range b {
 		if c == '\n' {
@@ -672,14 +690,12 @@ func indentLines(b []byte, indent string) []byte {
 		if c == '\n' {
 			out = append(out, b[start:i+1]...)
 			start = i + 1
-			// Prefix the next line only if it has content.
 			if start < len(b) {
 				out = append(out, indent...)
 			}
 		}
 	}
 
-	// Append any trailing content without a newline.
 	if start < len(b) {
 		out = append(out, b[start:]...)
 	}

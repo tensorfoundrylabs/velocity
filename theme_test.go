@@ -93,12 +93,12 @@ func TestLogger_SetTheme_CachesUncachedTheme(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.StructuredOutput = nil
 	cfg.ConsoleTheme = ThemeNightOwl // start with a known good theme
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	log.SetTheme(customTheme) // must auto-cache the theme internally
 
 	// Log something and confirm ANSI escape codes appear in output.

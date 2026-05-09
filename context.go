@@ -19,7 +19,7 @@ func NewContext(ctx context.Context, l *Logger) context.Context {
 func FromContext(ctx context.Context) *Logger {
 	l, ok := ctx.Value(contextKey{}).(*Logger)
 	if !ok || l == nil {
-		return NopLogger()
+		return New(WithNop())
 	}
 	if fields, ok := ctx.Value(contextFieldsKey{}).([]Field); ok && len(fields) > 0 {
 		return l.With(fields...)

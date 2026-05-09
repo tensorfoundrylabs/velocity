@@ -59,22 +59,24 @@ func TestStringer_TypedNil(t *testing.T) {
 	}
 }
 
-func TestF_TypedNilError(t *testing.T) {
+func TestError_TypedNilError(t *testing.T) {
 	var err *concreteError
 
-	f := F("err", err)
+	// Error() must detect the typed nil and return a String field, not a dangling pointer.
+	f := Error("err", err)
 
 	if f.Type != FieldTypeString {
-		t.Errorf("expected FieldTypeString for typed nil via F(), got %v", f.Type)
+		t.Errorf("expected FieldTypeString for typed nil via Error(), got %v", f.Type)
 	}
 }
 
-func TestF_TypedNilStringer(t *testing.T) {
+func TestStringer_TypedNilStringer(t *testing.T) {
 	var s *concreteStringer
 
-	f := F("s", fmt.Stringer(s))
+	// Stringer() must detect the typed nil and return a String field.
+	f := Stringer("s", fmt.Stringer(s))
 
 	if f.Type != FieldTypeString {
-		t.Errorf("expected FieldTypeString for typed nil stringer via F(), got %v", f.Type)
+		t.Errorf("expected FieldTypeString for typed nil stringer via Stringer(), got %v", f.Type)
 	}
 }

@@ -16,7 +16,7 @@ import (
 
 func main() {
 	// Main logger writes to stdout for human-readable output.
-	log := velocity.New(os.Stdout)
+	log := velocity.New(velocity.WithDevelopment(), velocity.WithConsoleOutput(os.Stdout))
 	log.Info("Logger ready, adding dynamic writers")
 
 	// A JSON buffer lets us inspect what the JSON writer received after logging.

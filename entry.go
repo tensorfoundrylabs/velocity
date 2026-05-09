@@ -140,7 +140,7 @@ func (e *Entry) Release() {
 }
 
 func (e *Entry) WithField(key string, value any) *Entry {
-	e.Fields = append(e.Fields, F(key, value))
+	e.Fields = append(e.Fields, Any(key, value))
 	return e
 }
 

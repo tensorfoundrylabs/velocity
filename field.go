@@ -44,37 +44,6 @@ type Field struct {
 	Type FieldType
 }
 
-// F creates a field with automatic type detection.
-// For performance-critical code, use typed constructors instead.
-func F(key string, value any) Field {
-	switch v := value.(type) {
-	case string:
-		return String(key, v)
-	case int:
-		return Int(key, v)
-	case int64:
-		return Int64(key, v)
-	case float64:
-		return Float64(key, v)
-	case bool:
-		return Bool(key, v)
-	case time.Time:
-		return Time(key, v)
-	case time.Duration:
-		return Duration(key, v)
-	case error:
-		// Typed nils satisfy the error interface but panic on .Error(); delegate to Error which handles them.
-		return Error(key, v)
-	case fmt.Stringer:
-		// Typed nils satisfy fmt.Stringer but panic on .String(); delegate to Stringer which handles them.
-		return Stringer(key, v)
-	case []byte:
-		return Bytes(key, v)
-	default:
-		return Any(key, v)
-	}
-}
-
 func String(key, val string) Field {
 	return Field{
 		Key:   key,
@@ -135,13 +104,6 @@ func Duration(key string, val time.Duration) Field {
 		Type: FieldTypeDuration,
 		num:  int64(val),
 	}
-}
-
-// Milliseconds creates a float field with duration in milliseconds.
-// Useful for showing precise timing for fast operations (e.g., "0.5ms" instead of "0s").
-func Milliseconds(key string, val time.Duration) Field {
-	ms := float64(val) / float64(time.Millisecond)
-	return Float64(key, ms)
 }
 
 func Error(key string, val error) Field {
@@ -223,34 +185,6 @@ func (f Field) Value() any {
 		return nil
 	}
 	return nil
-}
-
-type Fields struct {
-	fields []Field
-}
-
-func NewFields(capacity int) *Fields {
-	return &Fields{
-		fields: make([]Field, 0, capacity),
-	}
-}
-
-func (fs *Fields) Add(key string, value any) *Fields {
-	fs.fields = append(fs.fields, F(key, value))
-	return fs
-}
-
-func (fs *Fields) AddField(f Field) *Fields {
-	fs.fields = append(fs.fields, f)
-	return fs
-}
-
-func (fs *Fields) Reset() {
-	fs.fields = fs.fields[:0]
-}
-
-func (fs *Fields) Slice() []Field {
-	return fs.fields
 }
 
 func (f Field) writeFormatted(buf interface {

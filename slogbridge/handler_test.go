@@ -13,9 +13,13 @@ import (
 	slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
 )
 
-// newTestLogger creates a logger writing JSON to buf for easy assertion.
+// newTestLogger creates a logger writing to buf with colour disabled for easy assertion.
 func newTestLogger(buf *bytes.Buffer) *velocity.Logger {
-	return velocity.NewForTesting(buf)
+	return velocity.New(
+		velocity.WithConsoleOutput(buf),
+		velocity.WithColour(false),
+		velocity.WithLevel(velocity.LevelDebug),
+	)
 }
 
 func TestSlogHandler_NilLogger(t *testing.T) {
@@ -132,7 +136,7 @@ func TestSlogHandler_FieldTypes(t *testing.T) {
 
 func TestSlogHandler_Enabled(t *testing.T) {
 	t.Parallel()
-	l := velocity.New(nil)
+	l := velocity.New(velocity.WithNop())
 	l.SetLevel(velocity.LevelWarn)
 	h := slogbridge.NewHandler(l)
 

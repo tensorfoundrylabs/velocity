@@ -11,9 +11,12 @@ import (
 )
 
 func main() {
-	// The simplest way to get a logger. It writes coloured output to stdout
-	// using the default Night Owl theme and debug level.
-	log := velocity.New(os.Stdout)
+	// The simplest way to get a logger. WithDevelopment resets to sensible
+	// development defaults: debug level, coloured output, local timezone.
+	log := velocity.New(
+		velocity.WithDevelopment(),
+		velocity.WithConsoleOutput(os.Stdout),
+	)
 
 	log.Info("velocity logging library - basic example")
 
@@ -25,8 +28,7 @@ func main() {
 	log.Error("failed to connect to cache", velocity.String("host", "redis:6379"))
 
 	// Typed field constructors keep allocations off the heap on hot paths.
-	// Use the specific constructor when you know the type; F() is fine for
-	// less critical code where convenience matters more.
+	// Use the specific constructor when you know the type.
 	log.Info("request processed",
 		velocity.String("method", "GET"),
 		velocity.String("path", "/api/users"),
@@ -35,14 +37,6 @@ func main() {
 		velocity.Bool("cached", true),
 		velocity.Duration("elapsed", 12*time.Millisecond),
 		velocity.Error("err", nil),
-	)
-
-	// F() detects the type automatically. Handy for quick instrumentation
-	// but the typed constructors are faster in tight loops.
-	log.Info("generic field constructor",
-		velocity.F("user_id", 42),
-		velocity.F("role", "admin"),
-		velocity.F("active", true),
 	)
 
 	// With() returns a child logger that stamps every subsequent entry with
@@ -83,10 +77,11 @@ func main() {
 		velocity.Bool("health_checks_passed", true),
 	)
 
-	// NewDevelopment() is a convenience preset with sensible defaults for
-	// local development: debug level, local timezone, coloured output.
-	devLog := velocity.NewDevelopment()
+	// WithDevelopment() as the only option keeps it simple.
+	devLog := velocity.New(velocity.WithDevelopment())
 	devLog.Info("development preset logger is ready",
 		velocity.String("preset", "development"),
 	)
+
+	_ = os.Stdout
 }

@@ -188,12 +188,10 @@ func TestNewPrettyFromLogger_Concurrent(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	cfg := velocity.DefaultConfig()
-	cfg.ConsoleOutput = &buf
-	cfg.ConsoleTheme = velocity.ThemeNightOwl
-	cfg.StructuredOutput = nil
-
-	log := velocity.NewWithConfig(cfg)
+	log := velocity.New(
+		velocity.WithConsoleOutput(&buf),
+		velocity.WithTheme(velocity.ThemeNightOwl),
+	)
 	p := velocity.NewPrettyFromLogger(log)
 
 	const goroutines = 20

@@ -22,13 +22,13 @@ func TestLogger_Render_IndentMatchesCustomTimeFormat(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 	cfg.TimeFormat = "2006-01-02 15:04:05" // 19 chars, shorter than RFC3339
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	indent := log.consoleWriter.template.CachedMessageIndentStr()
 
 	// Expected width: 19 (time) + 1 (space) + 6 (badge "[INFO]") + 1 (space) = 27.
@@ -48,12 +48,12 @@ func TestLogger_Render_WritesIndentedOutput(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	indent := log.consoleWriter.template.CachedMessageIndentStr()
 	if indent == "" {
 		t.Fatal("expected non-empty cached message indent string")
@@ -83,12 +83,12 @@ func TestLogger_RenderRaw_WritesFlushLeft(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	r := &testRenderable{content: "rawline\n"}
 	log.RenderRaw(r)
@@ -103,12 +103,12 @@ func TestLogger_Newline_WritesNewline(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	log.Newline()
 
 	if buf.String() != "\n" {
@@ -127,10 +127,10 @@ func TestLogger_Render_NilSafety(t *testing.T) {
 
 	// nil renderable must not panic on a real logger
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.StructuredOutput = nil
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	log.Render(nil)
 }
 
@@ -141,12 +141,12 @@ func TestLogger_Render_JSONWriterIgnores(t *testing.T) {
 
 	var jsonBuf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = nil // no console writer
 	cfg.StructuredOutput = &jsonBuf
 	cfg.StructuredLevel = LevelDebug
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	r := &testRenderable{content: "should-not-appear\n"}
 	log.Render(r)
@@ -164,11 +164,11 @@ func TestLogger_Render_JSONWriterIgnores(t *testing.T) {
 func TestLogger_Render_NoConsoleWriter(t *testing.T) {
 	t.Parallel()
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = nil
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	// Must not panic.
 	log.Render(&testRenderable{content: "noop\n"})
@@ -181,12 +181,12 @@ func TestLogger_Render_ConcurrentWithInfo(t *testing.T) {
 
 	var buf safeBuffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	var wg sync.WaitGroup
 

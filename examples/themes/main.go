@@ -27,7 +27,7 @@ func main() {
 func showTheme(theme *velocity.Theme) {
 	fmt.Printf("\n--- Theme: %s ---\n\n", theme.Name)
 
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelDebug),
 		velocity.WithTheme(theme),

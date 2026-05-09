@@ -11,7 +11,7 @@ func TestWith_FieldAppearsInOutput(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	parent := NewForTesting(&buf)
+	parent := newForTesting(&buf)
 	child := parent.With(String("svc", "gateway"))
 
 	child.Info("hello")
@@ -26,7 +26,7 @@ func TestWith_ChainedFieldsBothAppear(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	parent := NewForTesting(&buf)
+	parent := newForTesting(&buf)
 	child := parent.With(String("a", "alpha")).With(String("b", "beta"))
 
 	child.Info("chained")
@@ -44,7 +44,7 @@ func TestWith_ParentUnaffected(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	parent := NewForTesting(&buf)
+	parent := newForTesting(&buf)
 	_ = parent.With(String("child_field", "x"))
 
 	buf.Reset()
@@ -70,7 +70,7 @@ func TestWith_EmptyFields_ReturnsSelf(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	parent := NewForTesting(&buf)
+	parent := newForTesting(&buf)
 	child := parent.With()
 	if child != parent {
 		t.Error("expected same logger when no fields passed to With()")
@@ -81,7 +81,7 @@ func TestWithTemplate_PreservesParentState(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	parent := NewForTesting(&buf)
+	parent := newForTesting(&buf)
 
 	// Give the parent a sampler and a base field.
 	sampler := NewCountSampler(10, 5)

@@ -13,12 +13,11 @@ func TestNewPrettyFromLogger_RoutesToLogger(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	cfg := velocity.DefaultConfig()
-	cfg.ConsoleOutput = &buf
-	cfg.ConsoleTheme = velocity.ThemeNightOwl
-	cfg.StructuredOutput = nil
-
-	log := velocity.NewWithConfig(cfg)
+	log := velocity.New(
+		velocity.WithConsoleOutput(&buf),
+		velocity.WithTheme(velocity.ThemeNightOwl),
+		velocity.WithLevel(velocity.LevelDebug),
+	)
 	p := velocity.NewPrettyFromLogger(log)
 
 	if p == nil {

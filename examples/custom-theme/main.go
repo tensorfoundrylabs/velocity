@@ -53,7 +53,7 @@ func cyberpunkTheme() *velocity.Theme {
 func main() {
 	// Wire up the theme through the logger. Every writer and formatter
 	// inherits it automatically.
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithTheme(ThemeCyberpunk),
 		velocity.WithLevel(velocity.LevelDebug),

@@ -14,7 +14,7 @@ import (
 
 func main() {
 	// Start with a standard velocity logger that writes to stdout.
-	vlog := velocity.New(os.Stdout)
+	vlog := velocity.New(velocity.WithDevelopment(), velocity.WithConsoleOutput(os.Stdout))
 	vlog.Info("Velocity logger initialised")
 
 	// Wrap it so existing slog callers don't need any changes.

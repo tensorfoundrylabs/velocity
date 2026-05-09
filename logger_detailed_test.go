@@ -16,9 +16,9 @@ func TestDetailedLogging(t *testing.T) {
 		{
 			name: "InfoDetailed always uses tree display even with inline config",
 			setupLogger: func() *Logger {
-				cfg := DefaultConfig()
+				cfg := defaultConfig()
 				cfg.FieldDisplayMode = FieldDisplayInline
-				return NewWithConfig(cfg)
+				return newFromConfig(cfg)
 			},
 			logFunc: func(l *Logger) {
 				l.InfoDetailed("Test message",
@@ -31,9 +31,9 @@ func TestDetailedLogging(t *testing.T) {
 		{
 			name: "ErrorDetailed always uses tree display",
 			setupLogger: func() *Logger {
-				cfg := DefaultConfig()
+				cfg := defaultConfig()
 				cfg.FieldDisplayMode = FieldDisplayInline
-				return NewWithConfig(cfg)
+				return newFromConfig(cfg)
 			},
 			logFunc: func(l *Logger) {
 				l.ErrorDetailed("Error occurred",
@@ -45,9 +45,9 @@ func TestDetailedLogging(t *testing.T) {
 		{
 			name: "WarnDetailed always uses tree display",
 			setupLogger: func() *Logger {
-				cfg := DefaultConfig()
+				cfg := defaultConfig()
 				cfg.FieldDisplayMode = FieldDisplayInline
-				return NewWithConfig(cfg)
+				return newFromConfig(cfg)
 			},
 			logFunc: func(l *Logger) {
 				l.WarnDetailed("Warning message",
@@ -59,10 +59,10 @@ func TestDetailedLogging(t *testing.T) {
 		{
 			name: "DebugDetailed always uses tree display",
 			setupLogger: func() *Logger {
-				cfg := DefaultConfig()
+				cfg := defaultConfig()
 				cfg.FieldDisplayMode = FieldDisplayInline
 				cfg.ConsoleLevel = LevelDebug
-				return NewWithConfig(cfg)
+				return newFromConfig(cfg)
 			},
 			logFunc: func(l *Logger) {
 				l.DebugDetailed("Debug info",
@@ -74,9 +74,9 @@ func TestDetailedLogging(t *testing.T) {
 		{
 			name: "Regular Info uses inline when configured",
 			setupLogger: func() *Logger {
-				cfg := DefaultConfig()
+				cfg := defaultConfig()
 				cfg.FieldDisplayMode = FieldDisplayInline
-				return NewWithConfig(cfg)
+				return newFromConfig(cfg)
 			},
 			logFunc: func(l *Logger) {
 				l.Info("Regular message",
@@ -108,9 +108,9 @@ func TestDetailedLogging(t *testing.T) {
 }
 
 func TestDetailedLoggingThreadSafety(_ *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.FieldDisplayMode = FieldDisplayInline
-	logger := NewWithConfig(cfg)
+	logger := newFromConfig(cfg)
 
 	// Run concurrent detailed and normal logs
 	done := make(chan bool)
@@ -155,9 +155,9 @@ func TestDetailedMethodsWithNilLogger(_ *testing.T) {
 }
 
 func TestDetailedMethodsRespectLogLevel(_ *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleLevel = LevelWarn // Only warn and above
-	logger := NewWithConfig(cfg)
+	logger := newFromConfig(cfg)
 
 	// These should be filtered out
 	logger.DebugDetailed("Debug", String("key", "value"))
@@ -170,7 +170,7 @@ func TestDetailedMethodsRespectLogLevel(_ *testing.T) {
 
 func TestRaw_ConcurrentWithWrite(_ *testing.T) {
 	buf := &bytes.Buffer{}
-	log := New(buf)
+	log := New(WithConsoleOutput(buf))
 
 	var wg sync.WaitGroup
 	const iters = 200

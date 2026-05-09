@@ -11,7 +11,7 @@ import (
 // TestLogger_AddWriter verifies that a writer receives log entries.
 func TestLogger_AddWriter(t *testing.T) {
 	var buf bytes.Buffer
-	logger := New(&buf)
+	logger := New(WithConsoleOutput(&buf))
 
 	var callCount atomic.Int64
 
@@ -34,7 +34,7 @@ func TestLogger_AddWriter(t *testing.T) {
 // TestLogger_AddWriter_Concurrent verifies thread-safety of AddWriter.
 func TestLogger_AddWriter_Concurrent(t *testing.T) {
 	var buf bytes.Buffer
-	logger := New(&buf)
+	logger := New(WithConsoleOutput(&buf))
 
 	var wg sync.WaitGroup
 
@@ -65,7 +65,7 @@ func TestLogger_AddWriter_Concurrent(t *testing.T) {
 // TestLogger_RemoveWriter verifies that a removed writer no longer receives entries.
 func TestLogger_RemoveWriter(t *testing.T) {
 	var buf bytes.Buffer
-	logger := New(&buf)
+	logger := New(WithConsoleOutput(&buf))
 
 	var count1 atomic.Int64
 	var count2 atomic.Int64
@@ -125,7 +125,7 @@ func TestLogger_AddWriter_NilSafety(t *testing.T) {
 	nilLogger.AddWriter("test", &NoOpWriter{})
 	nilLogger.RemoveWriter("test")
 
-	logger := NewForTesting(nil)
+	logger := newForTesting(nil)
 
 	logger.AddWriter("noop", &NoOpWriter{})
 	logger.Info("test message")
@@ -140,7 +140,7 @@ func TestLogger_AddWriter_NilSafety(t *testing.T) {
 // TestLogger_AddWriter_MultipleWriters verifies multiple writers receive entries.
 func TestLogger_AddWriter_MultipleWriters(t *testing.T) {
 	var buf bytes.Buffer
-	logger := New(&buf)
+	logger := New(WithConsoleOutput(&buf))
 
 	var count1 atomic.Int64
 	var count2 atomic.Int64
@@ -195,18 +195,11 @@ func TestLogger_AddWriter_MultipleWriters(t *testing.T) {
 
 // TestLogger_AddWriter_LevelFiltering verifies writers respect level filtering.
 func TestLogger_AddWriter_LevelFiltering(t *testing.T) {
-	builder := NewConfig()
-	builder.WithLevel(LevelInfo)
-
 	var buf bytes.Buffer
-	builder.WithOutput(&buf)
-
-	cfg, err := builder.Build()
-	if err != nil {
-		t.Fatalf("Build() failed: %v", err)
-	}
-
-	logger := NewWithConfig(cfg)
+	logger := New(
+		WithConsoleOutput(&buf),
+		WithLevel(LevelInfo),
+	)
 
 	var debugCount atomic.Int64
 	var infoCount atomic.Int64
@@ -247,7 +240,7 @@ func TestLogger_AddWriter_LevelFiltering(t *testing.T) {
 // TestLogger_AddWriter_EntryIntegrity verifies entry fields are preserved.
 func TestLogger_AddWriter_EntryIntegrity(t *testing.T) {
 	var buf bytes.Buffer
-	logger := New(&buf)
+	logger := New(WithConsoleOutput(&buf))
 
 	// Use a channel to receive the entry data safely
 	type entryData struct {

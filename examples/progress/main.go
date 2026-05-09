@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	log := velocity.New(os.Stdout)
+	log := velocity.New(velocity.WithDevelopment(), velocity.WithConsoleOutput(os.Stdout))
 	log.Info("Starting deployment pipeline")
 
 	// Show a progress bar simulating a dependency download.

@@ -9,13 +9,13 @@ import (
 // newDiscardLogger builds a real logger that formats output but discards it,
 // so we measure formatting cost rather than I/O cost.
 func newDiscardLogger() *Logger {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = io.Discard
 	cfg.StructuredOutput = io.Discard
 	// Force both writers active so we measure full formatting overhead.
 	cfg.ConsoleLevel = LevelDebug
 	cfg.StructuredLevel = LevelDebug
-	return NewWithConfig(cfg)
+	return newFromConfig(cfg)
 }
 
 // fiveFields returns a representative slice of mixed-type fields.
@@ -139,23 +139,23 @@ func BenchmarkFloat64Field(b *testing.B) {
 	_ = f
 }
 
-// BenchmarkF_String measures the type-switch overhead in the generic constructor.
-func BenchmarkF_String(b *testing.B) {
+// BenchmarkAny_String measures the Any() generic constructor overhead.
+func BenchmarkAny_String(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var f Field
 	for b.Loop() {
-		f = F("key", "value")
+		f = Any("key", "value")
 	}
 	_ = f
 }
 
-func BenchmarkF_Int(b *testing.B) {
+func BenchmarkAny_Int(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var f Field
 	for b.Loop() {
-		f = F("port", 8080)
+		f = Any("port", 8080)
 	}
 	_ = f
 }
@@ -280,12 +280,12 @@ func BenchmarkJSONWriter_Parallel(b *testing.B) {
 // BenchmarkInfo_TreeMode measures the badge-style tree-mode path where the
 // cachedIndentStr is used in place of strings.Repeat on every field.
 func BenchmarkInfo_TreeMode(b *testing.B) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = io.Discard
 	cfg.StructuredOutput = nil
 	cfg.ConsoleLevel = LevelDebug
 	cfg.FieldDisplayMode = FieldDisplayTree
-	l := NewWithConfig(cfg)
+	l := newFromConfig(cfg)
 	fields := fiveFields()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -296,12 +296,12 @@ func BenchmarkInfo_TreeMode(b *testing.B) {
 
 // BenchmarkInfo_TreeMode_Parallel measures concurrent tree-mode throughput.
 func BenchmarkInfo_TreeMode_Parallel(b *testing.B) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = io.Discard
 	cfg.StructuredOutput = nil
 	cfg.ConsoleLevel = LevelDebug
 	cfg.FieldDisplayMode = FieldDisplayTree
-	l := NewWithConfig(cfg)
+	l := newFromConfig(cfg)
 	fields := fiveFields()
 	b.ReportAllocs()
 	b.ResetTimer()

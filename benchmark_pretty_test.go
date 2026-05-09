@@ -17,12 +17,12 @@ var (
 )
 
 func newBenchLogger() *velocity.Logger {
-	cfg := velocity.DefaultConfig()
-	cfg.ConsoleOutput = io.Discard
-	cfg.StructuredOutput = io.Discard
-	cfg.ConsoleLevel = velocity.LevelDebug
-	cfg.StructuredLevel = velocity.LevelDebug
-	return velocity.NewWithConfig(cfg)
+	return velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(io.Discard),
+		velocity.WithLevel(velocity.LevelDebug),
+		velocity.WithStructuredLevel(velocity.LevelDebug),
+	)
 }
 
 // BenchmarkPretty_NewFromLogger_Table measures the full render path via NewPrettyFromLogger.

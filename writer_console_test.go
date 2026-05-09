@@ -22,14 +22,14 @@ func TestConsoleWriter_InvalidLevel(_ *testing.T) {
 func TestConsoleWriter_AddCaller(t *testing.T) {
 	var buf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleLevel = LevelDebug
 	cfg.StructuredOutput = nil
 	cfg.ConsoleTheme = nil
 	cfg.AddCaller = true
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	log.Info("caller console test")
 
 	if !strings.Contains(buf.String(), "_test.go:") {

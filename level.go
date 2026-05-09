@@ -1,8 +1,8 @@
 package velocity
 
 import (
+	"fmt"
 	"strings"
-	"sync/atomic"
 )
 
 type Level int32
@@ -102,31 +102,25 @@ func (l Level) ConciseLabel() string {
 	}
 }
 
-// AtomicLevel provides thread-safe level management with zero-cost reads.
-type AtomicLevel struct {
-	level int32
-}
-
-func NewAtomicLevel(l Level) *AtomicLevel {
-	return &AtomicLevel{level: int32(l)}
-}
-
-func (al *AtomicLevel) Level() Level {
-	return Level(atomic.LoadInt32(&al.level))
-}
-
-func (al *AtomicLevel) SetLevel(l Level) {
-	atomic.StoreInt32(&al.level, int32(l))
-}
-
-// Enabled checks if the given level is enabled.
-// This is the critical path - called on every log attempt.
-func (al *AtomicLevel) Enabled(l Level) bool {
-	return l >= Level(atomic.LoadInt32(&al.level))
-}
-
-func (al *AtomicLevel) CompareAndSwap(old, newLevel Level) bool {
-	return atomic.CompareAndSwapInt32(&al.level, int32(old), int32(newLevel))
+// ParseLevel converts a string level name to a Level constant.
+// Valid levels (case-insensitive): debug, info, warn, warning, error, fatal, off.
+func ParseLevel(level string) (Level, error) {
+	switch strings.ToLower(level) {
+	case "debug":
+		return LevelDebug, nil
+	case "info":
+		return LevelInfo, nil
+	case "warn", "warning":
+		return LevelWarn, nil
+	case "error":
+		return LevelError, nil
+	case "fatal":
+		return LevelFatal, nil
+	case "off":
+		return LevelOff, nil
+	default:
+		return LevelOff, fmt.Errorf("velocity: invalid log level: %q", level)
+	}
 }
 
 // MustParseLevel converts a string level to Level constant.

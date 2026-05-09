@@ -13,10 +13,10 @@ func TestLogger_SetTheme(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	log.Info("before theme change")
 	before := buf.String()
@@ -43,7 +43,7 @@ func TestLogger_SetTheme_Nil(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	log := New(&buf)
+	log := New(WithConsoleOutput(&buf))
 	// Must not panic.
 	log.SetTheme(nil)
 }
@@ -62,10 +62,10 @@ func TestLogger_Theme_Returns(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	if got := log.Theme(); got != ThemeNightOwl {
 		t.Errorf("Theme() returned unexpected theme: %v", got)
@@ -90,12 +90,12 @@ func TestLogger_SetTheme_PropagatestoAdditionalWriter(t *testing.T) {
 	var primaryBuf safeBuffer
 	var extraBuf safeBuffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &primaryBuf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	// Add a console writer as an additional writer — it implements SetTheme.
 	extra := NewConsoleWriter(&extraBuf, ThemeNightOwl)
@@ -130,12 +130,12 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	log.SetTheme(ThemeSolarized)
 
@@ -157,11 +157,11 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 
 	buf.Reset()
 	// Build a NightOwl logger for comparison.
-	cfg2 := DefaultConfig()
+	cfg2 := defaultConfig()
 	cfg2.ConsoleOutput = &buf
 	cfg2.ConsoleTheme = ThemeNightOwl
 	cfg2.StructuredOutput = nil
-	owlLog := NewWithConfig(cfg2)
+	owlLog := newFromConfig(cfg2)
 	owlLog.With(String("child", "true")).Info("from child")
 	owlOut := buf.String()
 
