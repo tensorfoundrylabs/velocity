@@ -3,6 +3,7 @@ PKG := github.com/tensorfoundrylabs/velocity
 # Tool versions (pinned)
 GOLANGCI_LINT_VERSION := v2.11.4
 BETTERALIGN_VERSION := latest
+BENCHSTAT_VERSION   := v0.0.0-20250106010028-fc9b84ea4b35
 
 GOBIN := $(shell go env GOBIN)
 ifeq ($(GOBIN),)
@@ -11,6 +12,7 @@ endif
 
 .PHONY: all clean test test-race test-short test-cover lint fmt vet align tidy \
         install-tools check-tools ready ready-tools ci help \
+        bench bench-baseline bench-perf-gate \
         bench-compare bench-compare-short
 
 # ── Test ─────────────────────────────────────────────────────────────────────
@@ -88,7 +90,7 @@ tidy:
 ready-tools: fmt align lint vet
 	@printf "\033[32mCode quality checks passed.\033[0m\n"
 
-ready: tidy fmt align lint vet test-race
+ready: tidy fmt align lint vet test-race bench-perf-gate
 	@printf "\033[32mReady for commit.\033[0m\n"
 
 # ── CI ───────────────────────────────────────────────────────────────────────
@@ -104,6 +106,7 @@ install-tools:
 	@go install mvdan.cc/gofumpt@latest
 	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	@go install github.com/dkorunic/betteralign/cmd/betteralign@$(BETTERALIGN_VERSION)
+	@go install golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION)
 	@echo "Tools installed."
 
 check-tools:
@@ -129,6 +132,53 @@ check-tools:
 	else \
 		printf "  goimports:      \033[31mnot installed\033[0m\n"; \
 	fi
+	@if command -v benchstat >/dev/null 2>&1; then \
+		printf "  benchstat:      installed\n"; \
+	else \
+		printf "  benchstat:      \033[33mnot installed (optional, needed for bench-perf-gate)\033[0m\n"; \
+	fi
+
+# ── Benchmarks ───────────────────────────────────────────────────────────────
+
+# bench: quick single-run with allocs — use for spot-checking during development.
+bench:
+	@echo "Running benchmarks..."
+	@go test -bench=. -benchmem -count=3 ./...
+
+# bench-baseline: captures count=10 run to docs/bench-baseline.txt.
+# Run this after any intentional perf improvement so the gate tracks the new normal.
+bench-baseline:
+	@echo "Capturing baseline..."
+	@mkdir -p docs
+	@go test -bench=. -benchmem -count=10 ./... > docs/bench-baseline.txt 2>&1
+	@echo "Baseline written to docs/bench-baseline.txt"
+
+# bench-perf-gate: gates on allocation counts vs docs/bench-baseline.txt.
+# Allocation counts are deterministic (unlike timing on Windows with short runs),
+# so any increase in allocs/op is a definitive regression regardless of count.
+# Timing regressions are logged informatively but do not fail the gate here —
+# use "make bench-baseline" + manual benchstat for timing verification at release.
+bench-perf-gate:
+	@if [ ! -f docs/bench-baseline.txt ]; then \
+		printf "\033[33m  no baseline found at docs/bench-baseline.txt -- skipping perf gate\033[0m\n"; \
+		exit 0; \
+	fi
+	@echo "Running perf gate (allocation counts)..."
+	@go test -bench=. -benchmem -count=5 ./... > /tmp/bench-current.txt 2>&1
+	@if command -v benchstat >/dev/null 2>&1; then \
+		benchstat -col /pkg docs/bench-baseline.txt /tmp/bench-current.txt > /tmp/bench-delta.txt 2>&1 || \
+		benchstat docs/bench-baseline.txt /tmp/bench-current.txt > /tmp/bench-delta.txt 2>&1; \
+		if awk '/allocs\/op/ && !/~/ && /\+[0-9]/ { print "ALLOC REGRESSION:", $$0; found=1 } END { exit found+0 }' /tmp/bench-delta.txt; then \
+			printf "\033[32m  perf gate passed (zero-alloc paths unchanged)\033[0m\n"; \
+		else \
+			printf "\033[31m  perf gate FAILED -- allocation count regression detected\033[0m\n"; \
+			grep "allocs/op" /tmp/bench-delta.txt; \
+			exit 1; \
+		fi; \
+	else \
+		printf "\033[33m  benchstat not installed -- skipping alloc comparison\033[0m\n"; \
+		printf "\033[33m  run: go install golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION)\033[0m\n"; \
+	fi
 
 # ── Comparative benchmarks ───────────────────────────────────────────────────
 
@@ -139,8 +189,6 @@ bench-compare:
 ## bench-compare-short: Quick comparative benchmark (1 iteration)
 bench-compare-short:
 	cd benchmarks && go test -bench=. -benchmem -count=1 ./...
-
-.PHONY: bench-compare bench-compare-short
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
@@ -156,29 +204,32 @@ help:
 	@echo "				tensorfoundry.io"
 	@echo ""
 	@echo "Test:"
-	@echo "  make test           Run tests"
-	@echo "  make test-race      Run tests with race detector"
-	@echo "  make test-short     Run short tests only"
-	@echo "  make test-cover     Run tests with coverage report"
+	@echo "  make test                Run tests"
+	@echo "  make test-race           Run tests with race detector"
+	@echo "  make test-short          Run short tests only"
+	@echo "  make test-cover          Run tests with coverage report"
 	@echo ""
 	@echo "Quality:"
-	@echo "  make fmt            Format code (goimports + gofumpt)"
-	@echo "  make lint           Run golangci-lint (v2, --fix)"
-	@echo "  make vet            Run go vet"
-	@echo "  make align          Run betteralign (struct field alignment)"
-	@echo "  make tidy           Run go mod tidy"
+	@echo "  make fmt                 Format code (goimports + gofumpt)"
+	@echo "  make lint                Run golangci-lint (v2, --fix)"
+	@echo "  make vet                 Run go vet"
+	@echo "  make align               Run betteralign (struct field alignment)"
+	@echo "  make tidy                Run go mod tidy"
 	@echo ""
 	@echo "Ready (pre-commit):"
-	@echo "  make ready          Full quality gate: tidy, fmt, align, lint, vet, test-race"
-	@echo "  make ready-tools    Quick check: fmt, align, lint, vet (no tests)"
+	@echo "  make ready               Full quality gate: tidy, fmt, align, lint, vet, test-race, perf gate"
+	@echo "  make ready-tools         Quick check: fmt, align, lint, vet (no tests)"
 	@echo ""
 	@echo "CI:"
-	@echo "  make ci             Full CI pipeline: quality + tests + coverage"
+	@echo "  make ci                  Full CI pipeline: quality + tests + coverage"
 	@echo ""
 	@echo "Benchmarks:"
+	@echo "  make bench               Quick bench run (count=3) with allocs"
+	@echo "  make bench-baseline      Capture count=10 run to docs/bench-baseline.txt"
+	@echo "  make bench-perf-gate     Compare allocs vs baseline; fail on any alloc/op regression"
 	@echo "  make bench-compare       Compare against zap, zerolog, slog, charmbracelet, pterm"
 	@echo "  make bench-compare-short Quick single-run comparison"
 	@echo ""
 	@echo "Tools:"
-	@echo "  make install-tools  Install golangci-lint, betteralign, goimports, gofumpt"
-	@echo "  make check-tools    Show installed tool versions"
+	@echo "  make install-tools       Install golangci-lint, betteralign, goimports, gofumpt, benchstat"
+	@echo "  make check-tools         Show installed tool versions"

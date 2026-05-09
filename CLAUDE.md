@@ -5,14 +5,17 @@ Standalone Go logging library with zero-allocation fields and rich terminal outp
 ## Commands
 
 ```bash
-make ready          # Pre-commit gate: tidy, fmt, align, lint, vet, test-race
-make test           # Run all tests
-make test-race      # Tests with race detector
-make test-cover     # Tests with coverage report
-make lint           # golangci-lint (strict, all linters)
-make fmt            # goimports + gofumpt
-make install-tools  # Install golangci-lint, betteralign, goimports, gofumpt
-make help           # Show all targets
+make ready              # Pre-commit gate: tidy, fmt, align, lint, vet, test-race, perf gate
+make test               # Run all tests
+make test-race          # Tests with race detector
+make test-cover         # Tests with coverage report
+make lint               # golangci-lint (strict, all linters)
+make fmt                # goimports + gofumpt
+make install-tools      # Install golangci-lint, betteralign, goimports, gofumpt, benchstat
+make help               # Show all targets
+make bench              # Quick bench run (count=3) with allocs
+make bench-baseline     # Capture count=10 run to docs/bench-baseline.txt
+make bench-perf-gate    # Compare current vs baseline; fail on >5% regression
 ```
 
 Benchmarks: `go test -bench=. -benchmem -count=3 ./...`

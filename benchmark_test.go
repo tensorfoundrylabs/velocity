@@ -389,3 +389,35 @@ func (r *bytesRenderable) Render(w io.Writer) error {
 	_, err := w.Write(r.data)
 	return err
 }
+
+// ---- v2 budget stubs --------------------------------------------------------
+// These benchmarks establish the v1 baselines against which v2 targets are measured.
+// See docs/bench-v1.1.3.txt for the captured numbers.
+
+// BenchmarkWithComponent_Equivalent measures the v1 cost of producing a child
+// logger with a component field via With(). v2 replaces this with WithComponent().
+func BenchmarkWithComponent_Equivalent(b *testing.B) {
+	l := newDiscardLogger()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		child := l.With(String("component", "auth-service"))
+		_ = child
+	}
+}
+
+// BenchmarkSecureScan_NoMatch is the v1 baseline for the v2 <secure>-tag scan path.
+// In v2 an IndexByte scan runs before field formatting when untrusted writers are
+// present; this bench establishes the pre-scan cost for a message containing no '<'.
+func BenchmarkSecureScan_NoMatch(b *testing.B) {
+	l := newDiscardLogger()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("request completed successfully with no sensitive data in message", fields...)
+	}
+}
+
+// BenchmarkSecureField_UntrustedWriter — added in v2 phase 4.
+// No v1 equivalent: the Secure field constructor and per-writer trust model do not exist yet.
