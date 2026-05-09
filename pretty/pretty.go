@@ -257,50 +257,6 @@ func (p *Pretty) NewTable(headers []string, rows [][]string) *TableResult {
 	return NewTableResult(headers, rows, p.theme)
 }
 
-// visibleLen returns the number of visible runes in s, ignoring ANSI escape sequences.
-func visibleLen(s string) int {
-	n := 0
-	inEscape := false
-	for _, r := range s {
-		if inEscape {
-			if r == 'm' {
-				inEscape = false
-			}
-			continue
-		}
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		n++
-	}
-	return n
-}
-
-// padRightVisible pads s to width based on visible rune count, accounting for ANSI codes.
-func padRightVisible(s string, width int) string {
-	visible := visibleLen(s)
-	if visible >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-visible)
-}
-
-func padRight(s string, length int) string {
-	if len(s) >= length {
-		return s
-	}
-	return s + strings.Repeat(" ", length-len(s))
-}
-
-func padRightRunes(s string, length int) string {
-	runeLen := len([]rune(s))
-	if runeLen >= length {
-		return s
-	}
-	return s + strings.Repeat(" ", length-runeLen)
-}
-
 // Tree prints a hierarchy of TreeItem nodes with nil-safe fallback to stdout.
 func (p *Pretty) Tree(nodes []TreeItem) {
 	if p == nil {
@@ -319,9 +275,7 @@ func (p *Pretty) Tree(nodes []TreeItem) {
 		// Nil writer is a fallback path — collect and print.
 		buf := velocity.GetBuffer(512)
 		defer velocity.PutBuffer(buf)
-		for i, node := range nodes {
-			writePrettyTreeItemInto(buf, p.theme, node, "", i == len(nodes)-1)
-		}
+		_ = NewTreeResult(nodes, p.theme).Render(buf)
 		fmt.Print(buf.String())
 		return
 	}
