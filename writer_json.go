@@ -24,11 +24,20 @@ func NewJSONWriter(out io.Writer) *JSONWriter {
 }
 
 func (w *JSONWriter) Write(e *Entry) error {
+	// JSON writer is never trusted — always redact.
+	return w.WriteSecure(e, false, "[REDACTED]")
+}
+
+// WriteSecure implements SecureWriter. trusted controls whether Secure field
+// values are emitted as plaintext or as redactionMark. JSON writers are typically
+// called with trusted=false; a trusted JSON sink (e.g. an internal audit log)
+// can be registered via AddWriter with WriterTrusted().
+func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) error {
 	rawBuf := w.bufPool.Get(HintStructuredLog)
 	buf := NewBytesBuffer(rawBuf)
 
 	// Format entirely outside the lock; entry is immutable at this point.
-	w.formatJSON(buf, e)
+	w.formatJSONSecure(buf, e, trusted, redactionMark)
 
 	w.mu.Lock()
 	if w.closed {
@@ -49,7 +58,7 @@ func (w *JSONWriter) Write(e *Entry) error {
 	return nil
 }
 
-func (w *JSONWriter) formatJSON(buf *BytesBuffer, e *Entry) {
+func (w *JSONWriter) formatJSONSecure(buf *BytesBuffer, e *Entry, trusted bool, redactionMark string) {
 	_ = buf.WriteByte('{')
 
 	w.writeJSONString(buf, "timestamp")
@@ -64,7 +73,16 @@ func (w *JSONWriter) formatJSON(buf *BytesBuffer, e *Entry) {
 	_ = buf.WriteByte(',')
 	w.writeJSONString(buf, "message")
 	_ = buf.WriteByte(':')
-	w.writeJSONString(buf, e.Message)
+	// Redact <secure> tags in message when untrusted; strip markers when trusted.
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	w.writeJSONString(buf, msg)
 
 	if e.Caller != "" {
 		_ = buf.WriteByte(',')
@@ -81,7 +99,7 @@ func (w *JSONWriter) formatJSON(buf *BytesBuffer, e *Entry) {
 		_ = buf.WriteByte(',')
 		w.writeJSONString(buf, f.Key)
 		_ = buf.WriteByte(':')
-		w.writeJSONFieldValue(buf, f)
+		w.writeJSONFieldValueSecure(buf, f, trusted, redactionMark)
 	}
 
 	_ = buf.WriteByte('}')
@@ -140,7 +158,38 @@ func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 	_ = buf.WriteByte('"')
 }
 
-func (w *JSONWriter) writeJSONFieldValue(buf *BytesBuffer, f Field) {
+func (w *JSONWriter) writeJSONFieldValueSecure(buf *BytesBuffer, f Field, trusted bool, redactionMark string) {
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if trusted && f.value != nil {
+			w.writeJSONString(buf, (*secureValue)(f.value).plain)
+		} else {
+			// Emit the field-level redacted form (not the writer-level mark) so that
+			// the URL form still shows e.g. "redis://user:[REDACTED]@host/db".
+			if f.value != nil {
+				w.writeJSONString(buf, (*secureValue)(f.value).redacted)
+			} else {
+				w.writeJSONString(buf, redactionMark)
+			}
+		}
+		return
+	case FieldTypeRedacted:
+		// Unconditionally redacted — trust has no effect.
+		w.writeJSONString(buf, redactionMark)
+		return
+	case FieldTypeTruncated:
+		if f.value != nil {
+			w.writeJSONString(buf, *(*string)(f.value))
+		} else {
+			w.writeJSONString(buf, "")
+		}
+		return
+	default:
+		w.writeJSONFieldValueCore(buf, f)
+	}
+}
+
+func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 	switch f.Type {
 	case FieldTypeString:
 		v := *(*string)(f.value)
@@ -243,6 +292,9 @@ func (w *JSONWriter) writeJSONFieldValue(buf *BytesBuffer, f Field) {
 		// Fallback uses reflection but covers all cases
 		v := *(*any)(f.value)
 		w.writeJSONString(buf, fmt.Sprintf("%v", v))
+
+	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
+		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.
 
 	case FieldTypeUnknown:
 		// Null prevents JSON parsing errors when field type cannot be determined

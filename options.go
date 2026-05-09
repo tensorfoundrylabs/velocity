@@ -276,6 +276,17 @@ func WithFieldDisplayMode(mode FieldDisplayMode) Option {
 	}
 }
 
+// WithSecureTags controls the per-call <secure>...</secure> message scanner.
+// Defaults to true (scan when warranted by the writer mix).
+// Set to false only for extreme-perf consumers that never embed sensitive data
+// in message strings. The field constructors Secure/SecureURL/Redacted are
+// unaffected — they rely on field type, not message scanning.
+func WithSecureTags(enabled bool) Option {
+	return func(c *config) {
+		c.DisableSecureTags = !enabled
+	}
+}
+
 // MustLocation parses an IANA timezone name and panics on failure.
 // Intended for package-level variable initialisation.
 func MustLocation(name string) *time.Location {

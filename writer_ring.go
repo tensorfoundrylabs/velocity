@@ -152,12 +152,20 @@ func (r *RingBufferWriter) SetTrusted(v bool) {
 // Write converts the live entry to a value snapshot and appends it to the ring.
 // When the ring is full the oldest entry is overwritten (drop-oldest semantics).
 // Entries written after Close are silently discarded.
+// Secure fields are redacted unless the writer was registered with WriterTrusted().
 func (r *RingBufferWriter) Write(e *Entry) error {
+	return r.WriteSecure(e, r.isTrusted, r.redactionMark)
+}
+
+// WriteSecure implements SecureWriter. trusted controls whether Secure field
+// plaintext is stored in the snapshot. Call via MultiWriter which passes the
+// per-worker trust state; direct Write() uses the writer's own isTrusted flag.
+func (r *RingBufferWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) error {
 	if e == nil {
 		return nil
 	}
 
-	snap := toSnapshot(e)
+	snap := toSnapshotSecure(e, trusted, redactionMark)
 
 	r.mu.Lock()
 
@@ -311,10 +319,10 @@ func (r *RingBufferWriter) Close() error {
 	return nil
 }
 
-// toSnapshot deep-copies the live entry into a value type safe to retain
-// after the entry is released. The field slice comes from the pool to reduce
-// allocation pressure on the write path.
-func toSnapshot(e *Entry) EntrySnapshot {
+// toSnapshotSecure deep-copies the entry, applying trust-aware field serialisation.
+// When trusted is false, Secure/SecureURL fields emit their redacted form and
+// Redacted fields emit redactionMark.
+func toSnapshotSecure(e *Entry, trusted bool, redactionMark string) EntrySnapshot {
 	var fields []FieldSnapshot
 
 	if len(e.Fields) > 0 {
@@ -330,20 +338,51 @@ func toSnapshot(e *Entry) EntrySnapshot {
 		}
 
 		for _, f := range e.Fields {
-			fs = append(fs, FieldSnapshot{
-				Key:   f.Key,
-				Value: FieldValueToString(f),
-			})
+			val := fieldSnapshotValue(f, trusted, redactionMark)
+			fs = append(fs, FieldSnapshot{Key: f.Key, Value: val})
 		}
 		fields = fs
+	}
+
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
 	}
 
 	return EntrySnapshot{
 		Time:    e.Time,
 		Level:   e.Level,
-		Message: e.Message,
+		Message: msg,
 		Fields:  fields,
 		Caller:  e.Caller,
+	}
+}
+
+// fieldSnapshotValue converts a field to its snapshot string form,
+// respecting trust state for Secure/SecureURL/Redacted types.
+func fieldSnapshotValue(f Field, trusted bool, redactionMark string) string {
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if trusted && f.value != nil {
+			return (*secureValue)(f.value).plain
+		}
+		if f.value != nil {
+			return (*secureValue)(f.value).redacted
+		}
+		return redactionMark
+	case FieldTypeRedacted:
+		return redactionMark
+	case FieldTypeTruncated:
+		if f.value != nil {
+			return *(*string)(f.value)
+		}
+		return ""
+	default:
+		return FieldValueToString(f)
 	}
 }
 

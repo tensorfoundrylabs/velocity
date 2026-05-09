@@ -50,17 +50,19 @@ type FatalHandler func()
 // config holds all logger configuration. Unexported — callers configure via Options.
 type config struct {
 	ConsoleOutput io.Writer
-	FatalHandler  FatalHandler
 
 	StructuredOutput io.Writer
-	ConsoleTheme     *Theme
 	Sampler          Sampler
-	DisplayTimezone  *time.Location
 
 	// NotifyOutput is the destination for Notify/NotifyLines/NotifyBox calls.
 	// Defaults to os.Stderr. Override via WithNotifyOutput — useful in tests
 	// where stderr is not captured by the test runner.
 	NotifyOutput io.Writer
+
+	FatalHandler FatalHandler
+
+	ConsoleTheme    *Theme
+	DisplayTimezone *time.Location
 
 	TimeFormat       string
 	StructuredFormat Format
@@ -69,13 +71,20 @@ type config struct {
 	FieldPoolSize int
 
 	FieldDisplayMode FieldDisplayMode
-	ConsoleLevel     Level
-	StructuredLevel  Level
+	// CallerSkip is extra frames to skip beyond the standard 4; use for wrapper functions.
+	CallerSkip int
+
+	ConsoleLevel    Level
+	StructuredLevel Level
 
 	DisableColour bool
 	AddCaller     bool
-	// CallerSkip is extra frames to skip beyond the standard 4; use for wrapper functions.
-	CallerSkip int
+
+	// DisableSecureTags permanently disables the <secure>...</secure> message scanner.
+	// Set via WithSecureTags(false). When true, no IndexByte scan runs on any log call
+	// regardless of which writers are attached. Use for extreme-perf consumers that
+	// never embed sensitive data in message strings.
+	DisableSecureTags bool
 }
 
 func defaultConfig() *config {

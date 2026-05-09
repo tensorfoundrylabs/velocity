@@ -102,6 +102,15 @@ func (w *ConsoleWriter) SetTemplate(t *Template) {
 }
 
 func (w *ConsoleWriter) Write(e *Entry) error {
+	// TTY console writers are trusted by context — they render to a human-facing
+	// terminal session, not a file or pipeline. Non-TTY consoles are untrusted.
+	return w.WriteSecure(e, w.isTTY, "[REDACTED]")
+}
+
+// WriteSecure implements SecureWriter. When trusted is true, Secure field
+// plaintext is shown and <secure> markers are stripped. When false, both are
+// replaced with redactionMark.
+func (w *ConsoleWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) error {
 	// Snapshot mutable state under a brief lock so formatting runs unlocked.
 	w.mu.Lock()
 	if w.closed {
@@ -112,12 +121,11 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 	theme := w.theme
 	tz := w.displayTimezone
 	lvlColours := w.levelColours
-	isTTY := w.isTTY
 	w.mu.Unlock()
 
 	if tmpl != nil {
 		tempBuf := GetTemplateBuffer()
-		tmpl.buildWithTimezone(tempBuf, e, theme, tz)
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
 
 		w.mu.Lock()
 		_, err := w.out.Write(tempBuf.Bytes())
@@ -129,7 +137,7 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 
 	rawBuf := w.bufPool.Get(HintConsoleLog)
 	buf := NewBytesBuffer(rawBuf)
-	w.formatEntryWithSnap(buf, e, theme, tz, lvlColours, isTTY)
+	w.formatEntrySecure(buf, e, theme, tz, lvlColours, trusted, redactionMark) //nolint:staticcheck // intentional: lvlColours unused when not TTY
 
 	w.mu.Lock()
 	_, err := w.out.Write(buf.Bytes())
@@ -145,25 +153,35 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 	return nil
 }
 
-// formatEntryWithSnap formats using snapshotted state, safe to call without the mutex.
-func (w *ConsoleWriter) formatEntryWithSnap(buf *BytesBuffer, e *Entry, theme *Theme, tz *time.Location, lvlColours [6]string, isTTY bool) {
+// formatEntrySecure formats an entry using snapshotted state, applying redaction
+// when trusted is false. Safe to call without the mutex.
+func (w *ConsoleWriter) formatEntrySecure(buf *BytesBuffer, e *Entry, theme *Theme, tz *time.Location, lvlColours [6]string, trusted bool, redactionMark string) {
 	buf.WriteString("[")
 	displayTime := e.Time.In(tz)
 	buf.AppendTime(displayTime, time.RFC3339)
 	buf.WriteString("] ")
 
 	_ = buf.WriteByte('[')
-	if isTTY && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
+	if trusted && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
 		buf.WriteString(lvlColours[e.Level])
 	}
 	buf.WriteString(e.Level.ConciseLabel())
-	if isTTY && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
+	if trusted && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
 		buf.WriteString(Reset)
 	}
 	_ = buf.WriteByte(']')
 
 	buf.WriteString(" ")
-	buf.WriteString(e.Message)
+
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	buf.WriteString(msg)
 
 	if e.Caller != "" {
 		buf.WriteString(" (")
@@ -174,7 +192,7 @@ func (w *ConsoleWriter) formatEntryWithSnap(buf *BytesBuffer, e *Entry, theme *T
 	}
 
 	if len(e.Fields) > 0 {
-		w.formatFields(buf, e.Fields)
+		w.formatFieldsSecure(buf, e.Fields, trusted, redactionMark)
 	}
 }
 
@@ -194,16 +212,50 @@ func (w *ConsoleWriter) formatLevel(buf *BytesBuffer, level Level) {
 	_ = buf.WriteByte(']')
 }
 
-func (w *ConsoleWriter) formatFields(buf *BytesBuffer, fields []Field) {
+func (w *ConsoleWriter) formatFieldsSecure(buf *BytesBuffer, fields []Field, trusted bool, redactionMark string) {
 	for _, f := range fields {
 		_ = buf.WriteByte(' ')
 		buf.WriteString(f.Key)
 		buf.WriteString(": ")
-		w.formatValue(buf, f)
+		w.formatValueSecure(buf, f, trusted, redactionMark)
 	}
 }
 
-func (*ConsoleWriter) formatValue(buf *BytesBuffer, f Field) {
+func (*ConsoleWriter) formatValueSecure(buf *BytesBuffer, f Field, trusted bool, redactionMark string) {
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if trusted && f.value != nil {
+			_ = buf.WriteByte('"')
+			buf.WriteString((*secureValue)(f.value).plain)
+			_ = buf.WriteByte('"')
+		} else {
+			// Emit field-level redacted form (e.g. URL with password replaced)
+			// rather than the generic writer mark, so structured context is preserved.
+			if f.value != nil {
+				_ = buf.WriteByte('"')
+				buf.WriteString((*secureValue)(f.value).redacted)
+				_ = buf.WriteByte('"')
+			} else {
+				buf.WriteString(redactionMark)
+			}
+		}
+		return
+	case FieldTypeRedacted:
+		buf.WriteString(redactionMark)
+		return
+	case FieldTypeTruncated:
+		if f.value != nil {
+			_ = buf.WriteByte('"')
+			buf.WriteString(*(*string)(f.value))
+			_ = buf.WriteByte('"')
+		}
+		return
+	default:
+		consoleFormatValueCore(buf, f)
+	}
+}
+
+func consoleFormatValueCore(buf *BytesBuffer, f Field) {
 	switch f.Type {
 	case FieldTypeString:
 		v := *(*string)(f.value)
@@ -282,6 +334,9 @@ func (*ConsoleWriter) formatValue(buf *BytesBuffer, f Field) {
 		// Fprintf writes directly into the buffer, avoiding the intermediate string alloc
 		// that fmt.Sprintf("%v", v) would produce.
 		_, _ = fmt.Fprintf(buf, "%v", v)
+
+	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
+		// Handled upstream by formatValueSecure before consoleFormatValueCore is called.
 
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing

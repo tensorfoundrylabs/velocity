@@ -131,6 +131,10 @@ linters:
     - noinlineerr
 
   settings:
+    exhaustive:
+      # A default case that handles remaining types is semantically exhaustive.
+      default-signifies-exhaustive: true
+
     gocyclo:
       min-complexity: 30
 

@@ -419,5 +419,17 @@ func BenchmarkSecureScan_NoMatch(b *testing.B) {
 	}
 }
 
-// BenchmarkSecureField_UntrustedWriter — added in v2 phase 4.
-// No v1 equivalent: the Secure field constructor and per-writer trust model do not exist yet.
+// BenchmarkSecureField_UntrustedWriter documents the cost of a Secure field
+// hitting an untrusted JSON writer. Documents one redacted string alloc per
+// affected (entry × untrusted writer) pair. The Secure() call itself is one
+// alloc at construction; the alloc here is for string allocation on format path.
+func BenchmarkSecureField_UntrustedWriter(b *testing.B) {
+	l := newDiscardLogger()
+	// Attach an untrusted JSON writer so scanSecure=true and redaction fires.
+	l.AddWriter("json", NewJSONWriter(io.Discard))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("request completed", Secure("session", "abc123def456"))
+	}
+}

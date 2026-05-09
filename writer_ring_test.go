@@ -55,8 +55,8 @@ func TestRingBufferWriter_RedactionMark(t *testing.T) {
 
 	// Default
 	r2 := NewRingBufferWriter(4)
-	if r2.redactionMark != "[REDACTED]" {
-		t.Errorf("got %q, want %q", r2.redactionMark, "[REDACTED]")
+	if r2.redactionMark != redactedMark {
+		t.Errorf("got %q, want %q", r2.redactionMark, redactedMark)
 	}
 }
 

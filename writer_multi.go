@@ -6,11 +6,13 @@ import (
 )
 
 // workerState holds per-writer state cached at AddWriter time.
-// isTrusted is stored here rather than checked via type assertion on every write,
-// keeping the per-entry cost to a single bool read in the fan-out loop.
+// isTrusted and redactionMark are stored here rather than re-derived on every
+// write, keeping the per-entry cost to a simple bool read in the fan-out loop.
 type workerState struct {
-	w         Writer
-	isTrusted bool
+	w             Writer
+	sw            SecureWriter // non-nil when w implements SecureWriter; cached to avoid type assertion per write
+	redactionMark string
+	isTrusted     bool
 }
 
 type MultiWriter struct {
@@ -56,14 +58,24 @@ func (mw *MultiWriter) AddWriter(name string, w Writer, opts ...WriterOption) {
 		close(ch)
 	}
 
-	mw.workers[name] = workerState{w: w, isTrusted: o.isTrusted}
+	ws := workerState{
+		w:             w,
+		isTrusted:     o.isTrusted,
+		redactionMark: o.effectiveRedactionMark(),
+	}
+	// Cache the SecureWriter assertion at registration time so the hot path
+	// pays only a bool comparison, not a type assertion per entry.
+	if sw, ok := w.(SecureWriter); ok {
+		ws.sw = sw
+	}
+	mw.workers[name] = ws
 
 	// Buffer size trades latency vs blocking: smaller = less latency, larger = less blocking
 	ch := make(chan *Entry, 256)
 	mw.writeChans[name] = ch
 
 	mw.wg.Add(1)
-	go mw.writerWorker(w, ch)
+	go mw.writerWorker(ws, ch)
 }
 
 // RemoveWriter removes the named writer and returns it so the caller can close it
@@ -132,11 +144,19 @@ func (mw *MultiWriter) Write(e *Entry) error {
 	return nil
 }
 
-func (mw *MultiWriter) writerWorker(w Writer, ch chan *Entry) {
+func (mw *MultiWriter) writerWorker(ws workerState, ch chan *Entry) {
 	defer mw.wg.Done()
 	// Worker owns the writer lifecycle. Closing here ensures no concurrent
 	// Write() calls happen after the worker exits, regardless of why it stopped.
-	defer func() { _ = w.Close() }()
+	defer func() { _ = ws.w.Close() }()
+
+	write := func(e *Entry) {
+		if ws.sw != nil {
+			_ = ws.sw.WriteSecure(e, ws.isTrusted, ws.redactionMark)
+		} else {
+			_ = ws.w.Write(e)
+		}
+	}
 
 	for {
 		select {
@@ -144,18 +164,15 @@ func (mw *MultiWriter) writerWorker(w Writer, ch chan *Entry) {
 			if !ok {
 				return
 			}
-
-			// Errors silently dropped to prevent panics
-			_ = w.Write(e)
+			write(e)
 			// CRITICAL: Balance the Retain() from Write()
-			// Safe to call Release() here even if Write() failed
 			e.Release()
 
 		case <-mw.shutdownChan:
 			// Drain all remaining entries. Close() guarantees ch will be closed
 			// after shutdownChan, so range terminates once the channel is empty and closed.
 			for e := range ch {
-				_ = w.Write(e)
+				write(e)
 				e.Release()
 			}
 			return

@@ -55,11 +55,25 @@ type TrustedWriter interface {
 	IsTrusted() bool
 }
 
+// SecureWriter is an optional capability interface for writers that handle
+// field-level redaction and <secure> tag processing themselves.
+// When a MultiWriter worker's underlying writer implements SecureWriter,
+// WriteSecure is called instead of Write, passing the per-worker trust state
+// and redaction mark without mutating the shared Entry.
+//
+// Built-in writers (ConsoleWriter, JSONWriter, RingBufferWriter) implement this.
+// Third-party writers that don't implement it receive the entry unmodified —
+// they are treated as if they are trusted (they see plaintext).
+type SecureWriter interface {
+	WriteSecure(e *Entry, trusted bool, redactionMark string) error
+}
+
 // WriterOption configures per-writer behaviour at AddWriter time.
 type WriterOption func(*writerOptions)
 
 type writerOptions struct {
-	isTrusted bool
+	redactionMark string // overrides "[REDACTED]" when non-empty
+	isTrusted     bool
 }
 
 // WriterTrusted marks a writer as trusted.
@@ -72,6 +86,15 @@ func WriterTrusted() WriterOption {
 	}
 }
 
+// WriterRedactionMark sets the string used to replace redacted values for this
+// writer. Default: "[REDACTED]". Applies to Secure/SecureURL fields and
+// <secure>...</secure> message content when the writer is untrusted.
+func WriterRedactionMark(mark string) WriterOption {
+	return func(o *writerOptions) {
+		o.redactionMark = mark
+	}
+}
+
 // applyWriterOptions applies opts and returns the resulting options struct.
 func applyWriterOptions(opts []WriterOption) writerOptions {
 	var o writerOptions
@@ -81,6 +104,14 @@ func applyWriterOptions(opts []WriterOption) writerOptions {
 		}
 	}
 	return o
+}
+
+// effectiveRedactionMark returns the custom mark or the default "[REDACTED]".
+func (o writerOptions) effectiveRedactionMark() string {
+	if o.redactionMark != "" {
+		return o.redactionMark
+	}
+	return "[REDACTED]"
 }
 
 type NoOpWriter struct{}

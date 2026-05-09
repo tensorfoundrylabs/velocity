@@ -31,6 +31,16 @@ type Logger struct {
 	// regardless of FieldDisplayMode. Set via Detailed().
 	forceTreeDisplay bool
 
+	// scanSecure is true when at least one output path would redact secure data,
+	// i.e. any untrusted additional writer or a non-TTY console writer.
+	// Recomputed on AddWriter/RemoveWriter. When false, the IndexByte('<') scan
+	// is skipped entirely — dev sessions with only a TTY console pay zero scan cost.
+	scanSecure atomic.Bool
+
+	// secureScanEnabled is the user-facing gate. False when WithSecureTags(false) was
+	// applied; in that case scanSecure stays false regardless of the writer mix.
+	secureScanEnabled atomic.Bool
+
 	writersMu sync.RWMutex
 	level     atomic.Int32
 	closed    atomic.Bool
@@ -97,6 +107,8 @@ func newFromConfig(cfg *config) *Logger {
 		bufPool: NewBufferPool(),
 		sampler: cfg.Sampler,
 	}
+	// Default: secure tag scanning is enabled unless explicitly disabled.
+	logger.secureScanEnabled.Store(!cfg.DisableSecureTags)
 
 	// Use the most permissive level so logs aren't dropped when outputs have
 	// different thresholds.
@@ -116,6 +128,9 @@ func newFromConfig(cfg *config) *Logger {
 	if cfg.StructuredOutput != nil && cfg.StructuredOutput != io.Discard {
 		logger.jsonWriter = NewJSONWriter(cfg.StructuredOutput)
 	}
+
+	// Compute initial scan flag based on writer mix at construction time.
+	logger.recomputeScanSecure()
 
 	return logger
 }
@@ -180,11 +195,61 @@ func (l *Logger) With(fields ...Field) *Logger {
 		forceTreeDisplay:  l.forceTreeDisplay,
 	}
 	child.level.Store(l.level.Load())
+	child.secureScanEnabled.Store(l.secureScanEnabled.Load())
+	child.scanSecure.Store(l.scanSecure.Load())
 	newBase := make([]Field, len(l.baseFields)+len(fields))
 	copy(newBase, l.baseFields)
 	copy(newBase[len(l.baseFields):], fields)
 	child.baseFields = newBase
 	return child
+}
+
+// recomputeScanSecure recalculates whether the <secure> tag scan must run on
+// every log call. Called at AddWriter/RemoveWriter time. The scan fires when:
+//   - scan is globally enabled (secureScanEnabled), AND
+//   - at least one output path is untrusted:
+//     a) the JSON writer is always untrusted, OR
+//     b) the console writer is on a non-TTY (pipe/file), OR
+//     c) any additional writer registered without WriterTrusted()
+//
+// Must be called with writersMu held (write lock) or before the logger is shared.
+func (l *Logger) recomputeScanSecure() {
+	if !l.secureScanEnabled.Load() {
+		l.scanSecure.Store(false)
+		return
+	}
+
+	// JSON writer is always untrusted.
+	if l.jsonWriter != nil {
+		l.scanSecure.Store(true)
+		return
+	}
+
+	// Non-TTY console writer is untrusted (writing to a pipe or file).
+	if l.consoleWriter != nil && !l.consoleWriter.isTTY {
+		l.scanSecure.Store(true)
+		return
+	}
+
+	// Any untrusted additional writer flips the flag.
+	// We hold l.writersMu (write lock) here; mw.mu is separate, so take it briefly.
+	if l.additionalWriters != nil {
+		l.additionalWriters.mu.Lock()
+		hasUntrusted := false
+		for _, ws := range l.additionalWriters.workers {
+			if !ws.isTrusted {
+				hasUntrusted = true
+				break
+			}
+		}
+		l.additionalWriters.mu.Unlock()
+		if hasUntrusted {
+			l.scanSecure.Store(true)
+			return
+		}
+	}
+
+	l.scanSecure.Store(false)
 }
 
 // AddWriter registers a named writer to receive log entries.
@@ -202,6 +267,7 @@ func (l *Logger) AddWriter(name string, w Writer, opts ...WriterOption) {
 		l.additionalWriters = NewMultiWriter()
 	}
 	l.additionalWriters.AddWriter(name, w, opts...)
+	l.recomputeScanSecure()
 }
 
 // RemoveWriter removes the named writer and returns it so the caller can
@@ -218,7 +284,9 @@ func (l *Logger) RemoveWriter(name string) Writer {
 	if l.additionalWriters == nil {
 		return nil
 	}
-	return l.additionalWriters.RemoveWriter(name)
+	w := l.additionalWriters.RemoveWriter(name)
+	l.recomputeScanSecure()
+	return w
 }
 
 // Writer returns the writer registered under name, or nil.
@@ -433,6 +501,16 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 	entry.SetMessage(msg)
 	entry.SetTime(time.Now())
 	entry.forceTreeDisplay = forceTree
+
+	// When any output path is untrusted, check whether the message contains a
+	// <secure> tag. strings.IndexByte is SIMD-accelerated in the Go runtime (~3-5ns),
+	// zero-alloc on string input. The flag is read without a lock — worst case a
+	// concurrent AddWriter races and we miss one log line; acceptable for a
+	// best-effort security feature.
+	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		entry.maybeSecure = true
+	}
+
 	if len(l.baseFields) > 0 {
 		entry.WithFields(l.baseFields...)
 	}
@@ -572,6 +650,8 @@ func (l *Logger) Detailed() *Logger {
 		forceTreeDisplay:  true,
 	}
 	child.level.Store(l.level.Load())
+	child.secureScanEnabled.Store(l.secureScanEnabled.Load())
+	child.scanSecure.Store(l.scanSecure.Load())
 	if len(l.baseFields) > 0 {
 		newBase := make([]Field, len(l.baseFields))
 		copy(newBase, l.baseFields)
