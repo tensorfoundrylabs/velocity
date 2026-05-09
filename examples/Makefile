@@ -1,4 +1,4 @@
-.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-all build-all clean help
+.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-notify run-secure run-ring-buffer run-status-items run-groups run-continuation run-hyperlinks run-all build-all clean help
 
 SEPARATOR = @echo "" && echo "============================================================" && echo ""
 
@@ -45,6 +45,34 @@ run-sampling:
 ## run-terminal-velocity: Run the hero GPU cluster deploy simulator
 run-terminal-velocity:
 	go run ./terminal-velocity
+
+## run-notify: Run the Notify channel example
+run-notify:
+	go run ./notify
+
+## run-secure: Run the field-level redaction and <secure> tag example
+run-secure:
+	go run ./secure
+
+## run-ring-buffer: Run the in-process log capture example
+run-ring-buffer:
+	go run ./ring-buffer
+
+## run-status-items: Run the StatusItem and Logger.Status example
+run-status-items:
+	go run ./status-items
+
+## run-groups: Run the Group count-headed block example
+run-groups:
+	go run ./groups
+
+## run-continuation: Run the ContinuationBlock example
+run-continuation:
+	go run ./continuation
+
+## run-hyperlinks: Run the OSC 8 hyperlink example
+run-hyperlinks:
+	go run ./hyperlinks
 
 ## run-all: Run all examples sequentially with a separator between each
 run-all:
@@ -104,6 +132,41 @@ run-all:
 	@echo "  EXAMPLE 11: terminal-velocity (interactive)"
 	@echo "============================================================"
 	go run ./terminal-velocity
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 12: notify"
+	@echo "============================================================"
+	go run ./notify
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 13: secure"
+	@echo "============================================================"
+	go run ./secure
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 14: ring-buffer"
+	@echo "============================================================"
+	go run ./ring-buffer
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 15: status-items"
+	@echo "============================================================"
+	go run ./status-items
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 16: groups"
+	@echo "============================================================"
+	go run ./groups
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 17: continuation"
+	@echo "============================================================"
+	go run ./continuation
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 18: hyperlinks"
+	@echo "============================================================"
+	go run ./hyperlinks
 
 ## build-all: Compile all examples to binaries in examples/bin/
 build-all:
@@ -118,12 +181,20 @@ build-all:
 	go build -o bin/multi-writer       ./multi-writer
 	go build -o bin/sampling           ./sampling
 	go build -o bin/terminal-velocity  ./terminal-velocity
+	go build -o bin/notify             ./notify
+	go build -o bin/secure             ./secure
+	go build -o bin/ring-buffer        ./ring-buffer
+	go build -o bin/status-items       ./status-items
+	go build -o bin/groups             ./groups
+	go build -o bin/continuation       ./continuation
+	go build -o bin/hyperlinks         ./hyperlinks
 
 ## clean: Remove compiled example binaries
 clean:
 	go clean ./basic ./json-logging ./themes ./custom-theme ./pretty-output \
 		./tables ./progress ./slog-bridge ./multi-writer ./sampling \
-		./terminal-velocity
+		./terminal-velocity ./notify ./secure ./ring-buffer ./status-items \
+		./groups ./continuation ./hyperlinks
 	-rm -rf bin
 
 ## help: Show this help message

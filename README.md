@@ -13,50 +13,47 @@ Fast, allocation-optimised structured logging for Go with rich terminal output. 
 ## Install
 
 ```bash
-go get github.com/tensorfoundrylabs/velocity
+go get github.com/tensorfoundrylabs/velocity@v2
 ```
 
 ## Quick Start
 
 ```go
-log := velocity.New(os.Stdout)
+log := velocity.New(velocity.WithDevelopment())
 log.Info("server started", velocity.String("addr", ":8080"), velocity.Int("workers", 4))
-```
-
-Or use a preset:
-
-```go
-log := velocity.NewDevelopment()                                // coloured console, debug level
-log := velocity.NewWithBuilder(velocity.PresetProduction())     // structured JSON, info level
 ```
 
 ## Packages
 
 ```go
 import (
-    "github.com/tensorfoundrylabs/velocity"              // core logging, writers, config, themes
-    "github.com/tensorfoundrylabs/velocity/pretty"       // boxes, panels, banners, tables, trees, progress
-    slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"  // log/slog bridge
+    "github.com/tensorfoundrylabs/velocity"                          // core logging, writers, renderables, themes
+    "github.com/tensorfoundrylabs/velocity/live"                     // spinners and progress bars
+    slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"    // log/slog bridge
 )
 ```
 
 | Package | Description |
 |---------|-------------|
-| `velocity` | Core logger with typed fields, console/JSON/multi/ring-buffer writers, themes, templates |
-| `velocity/pretty` | Rich CLI display: `Box`, `Panel`, `Banner`, `Table`, `Tree`, `ProgressBar`, `Spinner` |
+| `velocity` | Core logger, typed fields, console/JSON/multi/ring-buffer writers, themes, renderables (Box, Table, Tree, Banner, …), secure-field redaction, Hyperlink helper |
+| `velocity/live` | Stateful animated types: `ProgressBar`, `Spinner`, `MultiProgress` |
 | `velocity/slogbridge` | `Handler` implementing `log/slog.Handler` (package name: `slogbridge`) |
 
 ## Features
 
-- **Zero-alloc on the hot path** — typed fields (`String`, `Int`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer` storage with no `interface{}` boxing; 5 and 10 pre-built fields log at 34-39 ns with 0 allocs
-- **Sub-100 ns logging** — 27 ns with no fields, 2.1 ns for disabled levels, 5.5 ns through a sampler
+- **Zero-alloc on the hot path** — typed fields (`String`, `Int`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer` storage; 5 pre-built fields log at ~34 ns with 0 allocs
+- **Sub-100 ns logging** — ~27 ns with no fields, ~2 ns for disabled levels, ~5 ns through a sampler
+- **Options-only construction** — single `New(opts ...Option)` with preset options: `WithDevelopment()`, `WithProduction()`, `WithContainer()`, `WithTesting(t)`, `WithNop()`
+- **Immutable themes** — `NewTheme` with `ThemeOption`, semantic `StyleSlot` enum, `Theme.Format(slot, s)` for coloured output without raw ANSI, five built-in themes
+- **Renderables in root** — `Box`, `Table`, `Tree`, `Banner`, `KeyValue`, `SystemInfo` all live in the root package; `log.Table(...)`, `log.Box(...)` etc. are convenience methods
+- **Field-level redaction** — `Secure`, `SecureURL`, `Redacted`, `Truncated` constructors; `<secure>...</secure>` tag scanning; per-writer trust model via `WriterTrusted()`
+- **StatusItem / Group / ContinuationBlock** — structured visual primitives for check-lists, count-headed route lists, and multi-line server startup output
+- **OSC 8 hyperlinks** — `Hyperlink(uri, text)` with TTY detection, three fallback modes, composes with `Theme.Format`
+- **Notify channel** — `Logger.Notify/NotifyLines/NotifyBox` for ephemeral operator output that bypasses the structured pipeline
+- **Ring buffer writer** — `RingBufferWriter` with `Snapshot(n)` and `Subscribe(ctx, bufSize)` for in-process log capture
 - **slog bridge** — `slogbridge.NewHandler` implements `log/slog.Handler` for incremental adoption
-- **Rich terminal output** — boxes, panels, banners, tables, trees, progress bars and spinners in `velocity/pretty`
-- **4 colour themes** — Night Owl (RGB), Solarized, Dracula, Nord; ANSI codes pre-cached at init
 - **Log sampling** — `CountSampler` checked before pool acquisition; no allocs on the skip path
-- **5 presets** — Development, Production, Container, Testing, HighPerformance
-- **Nil-safe and testable** — every public method handles nil receivers; overridable `FatalHandler`; `NewForTesting()`
-- **Dynamic writers** — add/remove writers at runtime; `Render`/`RenderRaw`/`Newline` serialised under the console writer mutex
+- **Nil-safe and testable** — every public method handles nil receivers; overridable `FatalHandler`; `WithTesting(t)` preset
 
 ## Performance
 
@@ -75,27 +72,14 @@ Here's how Velocity stacks up against popular Go logging libraries (AMD Ryzen 9 
 
 Velocity is ~3x faster than zerolog and ~8x faster than zap on the hot logging path. charmbracelet/log's near-zero numbers are from short-circuiting format work when writing to non-TTY output; its `With` cost (2618 ns) shows the real overhead. pterm is a display library first, and its allocation profile reflects that.
 
-### Realistic workload benchmarks
-
-| Scenario | velocity | [zerolog](https://github.com/rs/zerolog) | [zap](https://github.com/uber-go/zap) | [slog](https://pkg.go.dev/log/slog) |
-|----------|----------|---------|-----|------|
-| Accumulated context (10 fields) | **45 ns** / 0 alloc | 99 ns / 0 alloc | 344 ns / 0 alloc | 672 ns / 0 alloc |
-| Mixed field types (8 types) | **153 ns** / 4 alloc | 799 ns / 2 alloc | 1307 ns / 1 alloc | 2481 ns / 8 alloc |
-| Error field | **96 ns** / 1 alloc | 136 ns / 0 alloc | 510 ns / 1 alloc | 912 ns / 1 alloc |
-| Large message (1 KB) | **43 ns** / 0 alloc | 419 ns / 0 alloc | 1509 ns / 0 alloc | 2255 ns / 1 alloc |
-| 10 inline fields | **117 ns** / 3 alloc | 383 ns / 0 alloc | 1159 ns / 1 alloc | 3170 ns / 10 alloc |
-| Parallel (16 goroutines) | 53 ns / 1 alloc | **22 ns** / 0 alloc | 150 ns / 1 alloc | 279 ns / 0 alloc |
-
-zerolog wins the parallel benchmark thanks to its lock-free event chaining design. Velocity wins everything else.
-
-### Internal benchmarks (v1.1, AMD Ryzen 9 5950X, Go 1.24)
+### Internal benchmarks (v1.1 baseline, AMD Ryzen 9 5950X, Go 1.24)
 
 | Operation | ns/op | B/op | allocs/op |
 |-----------|------:|-----:|----------:|
 | Info, no fields | 27 | 0 | 0 |
 | Info, 5 pre-built fields | 34 | 0 | 0 |
 | Info, 10 pre-built fields | 39 | 0 | 0 |
-| Info, tree mode (v1.1) | 36 | 0 | 0 |
+| Info, tree mode | 36 | 0 | 0 |
 | Level check (disabled) | 2.1 | 0 | 0 |
 | Sampler check | 5.5 | 0 | 0 |
 | Entry pool round-trip | 14 | 0 | 0 |
@@ -103,71 +87,123 @@ zerolog wins the parallel benchmark thanks to its lock-free event chaining desig
 | ConsoleWriter, 5 fields | 431 | 32 | 3 |
 | JSONWriter, 5 fields | 582 | 0 | 0 |
 | JSONWriter, parallel | 170 | 0 | 0 |
-| Render / RenderRaw (v1.1) | 1.8 | 0 | 0 |
+| Render / RenderRaw | 1.8 | 0 | 0 |
 | slog handler, 3 attrs | 445 | 192 | 6 |
 
-v1.1 highlights: JSON writer dropped from 949 ns/1 alloc to 582 ns/0 alloc (inline hex escape); tree-mode field rendering is now zero-alloc (cached indent string); `Render`/`RenderRaw`/`Newline` are essentially free at ~2 ns.
+Run benchmarks: `go test -bench=. -benchmem -count=3 ./...`
 
-Run internal benchmarks: `go test -bench=. -benchmem -count=3 ./...`
+## Usage
 
-The comparative benchmark suite lives in `benchmarks/` as a separate Go module.
+### Presets
 
-## Presets
+```go
+log := velocity.New(velocity.WithDevelopment())   // coloured console, debug level
+log := velocity.New(velocity.WithProduction())    // JSON to stderr, info level
+log := velocity.New(velocity.WithContainer())     // JSON to stdout, info level
+log := velocity.New(velocity.WithTesting(t))      // writes via t.Log, cleaned up on test exit
+log := velocity.New(velocity.WithNop())           // discards all output
+```
 
-| Preset | Output | Level | Use Case |
-|--------|--------|-------|----------|
-| `PresetDevelopment` | Coloured console | Debug | Local dev |
-| `PresetProduction` | JSON | Info | Structured log aggregation |
-| `PresetContainer` | JSON to stdout | Info | Docker/K8s |
-| `PresetTesting` | Provided writer | Debug | Test harnesses |
-| `PresetHighPerformance` | JSON to stderr | Info | High-volume with sampling |
+### Typed fields
 
-## Integration
+```go
+log.Info("request handled",
+    velocity.String("method", "GET"),
+    velocity.Int("status", 200),
+    velocity.Float64("duration_ms", 12.4),
+    velocity.Bool("cached", true),
+    velocity.Duration("elapsed", 42*time.Millisecond),
+    velocity.Error("err", err),
+)
+```
+
+### Child loggers
+
+```go
+reqLog := log.With(velocity.String("request_id", "req-abc123"))
+reqLog.Info("handling request")
+
+compLog := log.WithComponent("scheduler")
+compLog.Debug("job queued", velocity.Int("job_id", 7))
+```
+
+### Secure fields and redaction
+
+```go
+// Plaintext on TTY console, [REDACTED] in JSON and non-TTY output.
+log.Info("user authenticated", velocity.Secure("token", "tok_abc123"))
+
+// <secure> tag scanning works in message strings too.
+log.Info("connecting to <secure>redis://admin:hunter2@cache.internal</secure>")
+```
+
+### Themes
+
+```go
+// Built-in themes.
+log := velocity.New(velocity.WithTheme(velocity.ThemeNightOwl))
+
+// Custom theme with semantic slots.
+theme := velocity.NewTheme("Custom",
+    velocity.WithLevelColours(debug, info, warn, err, fatal),
+    velocity.WithStyleSlot(velocity.SlotGood, velocity.RGB(0x00, 0xFF, 0xAA)),
+)
+styled := theme.Format(velocity.SlotGood, "all systems go")
+```
+
+### Renderables
+
+```go
+// Convenience methods route through the console writer mutex.
+log.Table([]string{"Service", "Status"}, [][]string{{"api", "running"}})
+log.Box("Deploy Complete", "3/4 nodes healthy")
+
+// Standalone construction for embedding or capture.
+t := velocity.NewTable(headers, rows, velocity.ThemeNightOwl)
+fmt.Print(t.String())
+```
+
+### Visual primitives
+
+```go
+// StatusItem: themed badge with level-aware routing.
+log.Status(velocity.LevelInfo, velocity.StatusOK, "postgres connected",
+    velocity.Duration("latency", 4*time.Millisecond))
+
+// Group: count-headed indented list.
+log.Group(velocity.LevelInfo, "Registered routes",
+    velocity.GroupItem{Text: "GET  /api/users"},
+    velocity.GroupItem{Text: "POST /api/orders"},
+)
+
+// ContinuationBlock: multi-line output anchored to one structured entry.
+log.Continue(velocity.LevelInfo, "Server listening",
+    "API:     "+velocity.Hyperlink("http://localhost:8080", "http://localhost:8080"),
+    "Metrics: "+velocity.Hyperlink("http://localhost:9090/metrics", "http://localhost:9090/metrics"),
+)
+```
 
 ### log/slog bridge
 
 ```go
 import slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
 
-logger := velocity.NewDevelopment()
-slog.SetDefault(slogbridge.NewLogger(logger))
+vlog := velocity.New(velocity.WithDevelopment())
+slog.SetDefault(slogbridge.NewLogger(vlog))
 
-slog.Info("request handled", "method", "GET", "status", 200, "duration", 42*time.Millisecond)
+slog.Info("request handled", "method", "GET", "status", 200)
 ```
 
-Groups produce dotted keys: `slog.WithGroup("server").With("host", "localhost")` renders as `server.host`.
-
-### Pretty printing
-
-```go
-import "github.com/tensorfoundrylabs/velocity/pretty"
-
-p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
-p.Box("Deploy Complete", "All services running")
-p.Banner("v2.1.0 - Production release")
-```
-
-When a logger exists, prefer `NewFromLogger` — output routes through the logger's console writer and aligns with the message column:
-
-```go
-log := velocity.NewDevelopment()
-p := pretty.NewFromLogger(log)
-
-log.Info("deploying services")
-log.Newline()
-log.Render(p.NewTable([]string{"Service", "Status"}, [][]string{
-    {"api", "running"},
-    {"worker", "running"},
-}))
-```
+## Integration
 
 ### Log rotation with lumberjack
 
 ```go
 rotator := &lumberjack.Logger{Filename: "/var/log/app.log", MaxSize: 500, Compress: true}
-cfg := velocity.DefaultProductionConfig()
-cfg.StructuredOutput = rotator
-log := velocity.NewWithConfig(cfg)
+log := velocity.New(
+    velocity.WithConsoleOutput(os.Stdout),
+    velocity.WithStructuredOutput(rotator),
+)
 ```
 
 ## Dependencies
@@ -176,7 +212,7 @@ One: [`golang.org/x/term`](https://pkg.go.dev/golang.org/x/term) for TTY detecti
 
 ## Similar Libraries
 
-- [pTerm](https://github.com/pterm/pterm) — visually rich terminal output library that Velocity's styles are modelled on; Velocity trades some visual features for speed and lower allocations
+- [pTerm](https://github.com/pterm/pterm) — visually rich terminal output library; Velocity trades some visual features for speed and lower allocations
 - [logrus](https://github.com/sirupsen/logrus) — popular structured logger; Velocity targets significantly lower latency for high-volume CLI workloads
 
 ## Licence

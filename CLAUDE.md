@@ -32,24 +32,30 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slogbridge`.
 | `entry.go` | Pooled `Entry` with atomic ref counting |
 | `field.go` | Zero-alloc typed fields via `unsafe.Pointer`, typed nil guards via `reflect` |
 | `field_convert.go` | Field value extraction and string conversion |
-| `config.go` | `Config` struct, `Builder`, presets, default config values, TTY detection |
-| `options.go` | Functional options (`WithLevel`, `WithTheme`, etc.) |
-| `level.go` | Log levels, `AtomicLevel`, `MustParseLevel` |
-| `writer.go` | `Writer` interface, `WriterFunc`, `NoOpWriter` |
+| `config.go` | `Config` struct, preset options, TTY detection |
+| `options.go` | Functional options (`WithLevel`, `WithTheme`, `WithDevelopment`, `WithProduction`, etc.) |
+| `level.go` | Log levels, `MustParseLevel`, `ParseLevel` |
+| `writer.go` | `Writer` interface, `WriterFunc`, `NoOpWriter`, `FilteredWriter`, capability interfaces (`ThemedWriter`, `LeveledWriter`, `FlushableWriter`, `TrustedWriter`), `WriterTrusted()` |
 | `writer_console.go` | Themed ANSI console output with caller rendering |
 | `writer_console_rb.go` | Lock-free ring buffer console writer with timezone support |
 | `writer_json.go` | Hand-rolled JSON output (no `encoding/json`) with caller rendering |
 | `writer_multi.go` | Async fan-out to named writers, workers close own writer on shutdown |
+| `writer_ring.go` | `RingBufferWriter`, `EntrySnapshot`, `Snapshot`, `Subscribe`, `Stats`, `RingStats` |
 | `ringbuffer.go` | CAS-based ring buffer, bounded spins, min size 2, batched flushing |
 | `template.go` | Log line templates with level styles and caller output |
-| `theme.go` | Colour themes with pre-cached ANSI codes via `Theme.Cache()` |
+| `theme.go` | Immutable colour themes built via `NewTheme` + `ThemeOption`; semantic `StyleSlot` enum; `Theme.Format`, `Theme.Wrap`, `Theme.Stylish` |
 | `sampler.go` | `CountSampler` for high-volume log reduction |
 | `context.go` | `context.Context` integration |
 | `buffer.go` | Tiered `BufferPool`, zero-copy `BytesBuffer`, `AppendTime`, `UnsafeString` |
 | `pool.go` | `sync.Pool` instances for entries, fields, buffers |
 | `errors.go` | Sentinel errors |
-| `renderable.go` | `Renderable` interface; all renderable types (`Box`, `Table`, `Banner`, `Tree`, `KeyValue`, `SystemInfo`) |
-| `pretty.go` | `Pretty` facade, `CreateBanner` helper |
+| `renderable.go` | `Renderable` interface; all renderable types (`Box`, `Table`, `Banner`, `Tree`, `KeyValue`, `SystemInfo`, `StatusItem`, `Group`, `ContinuationBlock`) |
+| `pretty.go` | `Pretty` facade, `NewPrettyFromLogger`, `CreateBanner` helper |
+| `secure.go` | `Secure`, `SecureURL`, `Redacted`, `Truncated` field constructors; `<secure>` tag scanner |
+| `status.go` | `StatusItem`, `StatusKind` enum (`StatusOK/Fail/Warn/Info/Pending/Skipped`), `Logger.Status` |
+| `group.go` | `Group`, `GroupItem`, `Logger.Group` |
+| `continuation.go` | `ContinuationBlock`, `Logger.Continue` |
+| `hyperlink.go` | `Hyperlink` OSC 8 helper, `HyperlinksSupported`, `HyperlinkFallback`, `WithHyperlinkFallback` |
 | `doc.go` | Package documentation |
 
 ### `velocity/live` (`package live`)
@@ -77,18 +83,22 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slogbridge`.
 | `writer_console_test.go` | Invalid level bounds, caller output |
 | `writer_console_rb_test.go` | Timezone in fallback path |
 | `writer_multi_test.go` | Multi-writer fan-out, shutdown drain |
+| `writer_ring_test.go` | `RingBufferWriter`: snapshot, subscribe, stats, concurrent writes, redaction |
+| `writer_capability_test.go` | `WriterTrusted`, capability interfaces, `FilteredWriter` |
 | `ringbuffer_test.go` | Concurrent writes, overflow, bounded spin, zero-length, min size |
 | `benchmark_test.go` | Benchmarks covering hot paths, fields, writers, pooling, tree-mode, Render API |
 | `benchmark_pretty_test.go` | Pretty facade benchmarks: NewFromLogger and standalone paths |
 | `entry_test.go` | Entry pool, ref counting, concurrent access |
-| `with_test.go` | `With()`, `WithTemplate`, nil/empty |
+| `with_test.go` | `With()`, nil/empty |
 | `fatal_test.go` | Fatal handler, nil logger subprocess test |
 | `testutil_test.go` | Shared helpers: `waitFor`, `safeBuffer` |
 | `buffer_test.go` | Buffer pool, `UnsafeString` |
 | `context_test.go` | Context integration |
 | `level_test.go` | Level parsing, atomic level |
 | `logger_addwriter_test.go` | Dynamic writer add/remove |
+| `logger_close_test.go` | `Logger.Close` idempotence and flush semantics |
 | `logger_detailed_test.go` | Detailed logger behaviour |
+| `logger_notify_test.go` | `Notify`, `NotifyLines`, `NotifyBox` routing |
 | `logger_render_test.go` | `Logger.Render`, `RenderRaw`, `Newline`; JSON writer ignore; no-console no-op |
 | `logger_settheme_test.go` | `Logger.Theme()`, `SetTheme` propagation, `With()` clone inheritance |
 | `integration_test.go` | End-to-end integration |
@@ -96,6 +106,12 @@ Three packages: root `velocity`, `velocity/live`, and `velocity/slogbridge`.
 | `renderable_box_test.go` | Long title, border alignment, empty content, Unicode |
 | `renderable_parity_test.go` | Compile-time Renderable compliance; render parity for all types |
 | `pretty_test.go` | `NewPretty`, `NewPrettyFromLogger`, nil receiver, method coverage |
+| `theme_test.go` | `NewTheme`, `StyleSlot`, `Theme.Format`, `Theme.Wrap`, `Theme.Stylish` |
+| `secure_test.go` | `Secure`/`SecureURL`/`Redacted`/`Truncated` constructors; `<secure>` tag scanning; trust model |
+| `status_test.go` | `StatusItem`, `StatusKind`, `Logger.Status`; JSON form; badge width alignment |
+| `group_test.go` | `Group`, `GroupItem`, `Logger.Group`; empty group; explicit markers |
+| `continuation_test.go` | `ContinuationBlock`, `Logger.Continue`; single line; zero lines |
+| `hyperlink_test.go` | `HyperlinksSupported`, `Hyperlink`, all three fallback modes; OSC 8 sequence |
 
 ### `velocity/live`
 
