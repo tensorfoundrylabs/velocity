@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -634,6 +635,103 @@ func (l *Logger) Newline() {
 
 	l.consoleWriter.mu.Lock()
 	_, _ = l.consoleWriter.out.Write(newlineByte)
+	l.consoleWriter.mu.Unlock()
+}
+
+// Box renders a bordered box with an optional title to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer.
+func (l *Logger) Box(title, body string) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	l.Render(NewBox(title, body, l.Style()))
+}
+
+// Table renders an aligned table with auto-sized columns to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer.
+func (l *Logger) Table(headers []string, rows [][]string) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	l.Render(NewTable(headers, rows, l.Style()))
+}
+
+// Tree renders a hierarchical tree of TreeItem nodes to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer.
+func (l *Logger) Tree(items []TreeItem) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	l.Render(NewTree(items, l.Style()))
+}
+
+// KeyValues renders a sequence of key-value pairs to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer or pairs is empty.
+func (l *Logger) KeyValues(pairs []KeyValuePair) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil || len(pairs) == 0 {
+		return
+	}
+	// Render each pair under the same indent; they read as a continuation block.
+	theme := l.Style()
+	indent := l.consoleWriter.template.CachedMessageIndentStr()
+	tmp := GetTemplateBuffer()
+	defer PutTemplateBuffer(tmp)
+	for _, p := range pairs {
+		kv := NewKeyValue(p.Key, p.Value, theme)
+		if err := kv.Render(tmp); err != nil {
+			return
+		}
+	}
+	out := indentLines(tmp.Bytes(), indent)
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(out)
+	l.consoleWriter.mu.Unlock()
+}
+
+// SystemInfo renders a titled block of key-value system metadata to the console
+// writer, indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer or info is nil.
+func (l *Logger) SystemInfo(info *SystemInfoData) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil || info == nil {
+		return
+	}
+	l.Render(NewSystemInfo(info, l.Style()))
+}
+
+// Bullet renders an indented bullet point at the given nesting level to the
+// console writer, aligned with the message column. Uses the logger's active theme.
+// Bullets cycle through •, ◦, ▪, ▫ with depth. Nil-safe; no-op without a console writer.
+func (l *Logger) Bullet(level int, text string) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	theme := l.Style()
+	indent := strings.Repeat("  ", level)
+	bullets := []string{"•", "◦", "▪", "▫"}
+	bullet := bullets[level%len(bullets)]
+
+	tmp := GetTemplateBuffer()
+	defer PutTemplateBuffer(tmp)
+
+	tmp.WriteString(indent)
+	tmp.WriteString(theme.CachedFieldKeyFg())
+	tmp.WriteString(bullet)
+	tmp.WriteString(Reset)
+	tmp.WriteString(" ")
+	tmp.WriteString(theme.CachedMessageFg())
+	tmp.WriteString(text)
+	tmp.WriteString(Reset)
+	tmp.WriteString("\n")
+
+	msgIndent := l.consoleWriter.template.CachedMessageIndentStr()
+	out := indentLines(tmp.Bytes(), msgIndent)
+
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(out)
 	l.consoleWriter.mu.Unlock()
 }
 

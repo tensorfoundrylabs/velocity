@@ -86,19 +86,18 @@ func main() {
 	))
 	log.Newline()
 
-	// Use log.Render to nest a small table under a related log line. The table
-	// indents to the message column, visually grouping with the entry above.
-	// Best for narrow tables; wide tables still want RenderRaw to avoid wrapping.
-	fmt.Println("=== Indented Table (under a log line via log.Render) ===")
+	// log.Table is the convenience form: it calls log.Style() for the theme and
+	// routes through Logger.Render, so the table indents to the message column.
+	// Equivalent to log.Render(velocity.NewTable(..., log.Style())) but shorter.
+	fmt.Println("=== Indented Table (under a log line via log.Table) ===")
 	fmt.Println()
 	log.Info("migrations applied", velocity.Int("count", 3))
-	log.Render(velocity.NewTable(
+	log.Table(
 		[]string{"Migration", "Duration", "Status"},
 		[][]string{
 			{"001_initial_schema.sql", "5ms", ok("OK")},
 			{"002_webhooks.sql", "2ms", ok("OK")},
 			{"003_model_access.sql", "3ms", ok("OK")},
 		},
-		theme,
-	))
+	)
 }

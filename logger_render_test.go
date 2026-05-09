@@ -176,6 +176,198 @@ func TestLogger_Render_NoConsoleWriter(t *testing.T) {
 	log.Newline()
 }
 
+// TestLogger_Box verifies Box routes through Render and produces bordered output.
+func TestLogger_Box(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	log.Box("Title", "line one\nline two")
+
+	out := buf.String()
+	if !strings.Contains(out, "Title") {
+		t.Errorf("expected title in box output, got: %s", out)
+	}
+	if !strings.Contains(out, "line one") {
+		t.Errorf("expected content in box output, got: %s", out)
+	}
+}
+
+// TestLogger_Table verifies Table routes through Render and produces column output.
+func TestLogger_Table(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	log.Table(
+		[]string{"Name", "Status"},
+		[][]string{{"auth", "ok"}, {"payments", "ok"}},
+	)
+
+	out := buf.String()
+	if !strings.Contains(out, "Name") || !strings.Contains(out, "auth") {
+		t.Errorf("expected table content in output, got: %s", out)
+	}
+}
+
+// TestLogger_Tree verifies Tree routes through Render and produces hierarchy output.
+func TestLogger_Tree(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	log.Tree([]TreeItem{
+		{Key: "root", Children: []TreeItem{{Key: "child", Value: "val"}}},
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "root") || !strings.Contains(out, "child") {
+		t.Errorf("expected tree nodes in output, got: %s", out)
+	}
+}
+
+// TestLogger_KeyValues verifies KeyValues renders each pair to the console writer.
+func TestLogger_KeyValues(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	log.KeyValues([]KeyValuePair{
+		{Key: "version", Value: "2.0.0"},
+		{Key: "env", Value: "prod"},
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "version") || !strings.Contains(out, "2.0.0") {
+		t.Errorf("expected key-value content in output, got: %s", out)
+	}
+}
+
+// TestLogger_SystemInfo verifies SystemInfo renders the titled metadata block.
+func TestLogger_SystemInfo(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	log.SystemInfo(&SystemInfoData{
+		Title:   "TensorFoundry",
+		Version: "2.0.0",
+		Fields:  []KeyValuePair{{Key: "env", Value: "production"}},
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "TensorFoundry") {
+		t.Errorf("expected title in system info output, got: %s", out)
+	}
+}
+
+// TestLogger_Bullet verifies Bullet renders the indented bullet to the console writer.
+func TestLogger_Bullet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	log.Bullet(0, "top-level item")
+	log.Bullet(1, "nested item")
+
+	out := buf.String()
+	if !strings.Contains(out, "top-level item") || !strings.Contains(out, "nested item") {
+		t.Errorf("expected bullet text in output, got: %s", out)
+	}
+	// Level 0 uses •, level 1 uses ◦.
+	if !strings.Contains(out, "•") || !strings.Contains(out, "◦") {
+		t.Errorf("expected bullet glyphs in output, got: %s", out)
+	}
+}
+
+// TestLogger_Convenience_NilSafety verifies all convenience methods tolerate a nil receiver.
+func TestLogger_Convenience_NilSafety(t *testing.T) {
+	t.Parallel()
+
+	var l *Logger
+	l.Box("t", "b")
+	l.Table([]string{"h"}, [][]string{{"v"}})
+	l.Tree([]TreeItem{{Key: "k"}})
+	l.KeyValues([]KeyValuePair{{Key: "k", Value: "v"}})
+	l.SystemInfo(&SystemInfoData{Title: "T"})
+	l.Bullet(0, "text")
+}
+
+// TestLogger_Convenience_ClosedLogger verifies methods are no-ops after Close.
+func TestLogger_Convenience_ClosedLogger(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleTheme = ThemeNightOwl
+	cfg.StructuredOutput = nil
+
+	log := newFromConfig(cfg)
+	_ = log.Close()
+
+	log.Box("title", "body")
+	log.Table([]string{"h"}, [][]string{{"v"}})
+	log.Bullet(0, "text")
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output after Close, got: %s", buf.String())
+	}
+}
+
+// TestLogger_Convenience_JSONOnlyIgnores verifies methods are no-ops without a console writer.
+func TestLogger_Convenience_JSONOnlyIgnores(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &jsonBuf
+	cfg.StructuredLevel = LevelDebug
+
+	log := newFromConfig(cfg)
+	log.Box("title", "body")
+	log.Table([]string{"h"}, [][]string{{"v"}})
+	log.Tree([]TreeItem{{Key: "k"}})
+	log.KeyValues([]KeyValuePair{{Key: "k", Value: "v"}})
+	log.SystemInfo(&SystemInfoData{Title: "T"})
+	log.Bullet(0, "text")
+
+	if jsonBuf.Len() != 0 {
+		t.Errorf("expected no JSON output from convenience methods, got: %s", jsonBuf.String())
+	}
+}
+
 func TestLogger_Render_ConcurrentWithInfo(t *testing.T) {
 	t.Parallel()
 
