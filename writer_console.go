@@ -739,8 +739,9 @@ func (w *ConsoleWriter) Close() error {
 	}
 
 	w.closed = true
+	// Sync is best-effort: pipes and redirected streams reject it on Windows.
 	if s, ok := w.out.(interface{ Sync() error }); ok {
-		return s.Sync()
+		_ = s.Sync()
 	}
 	return nil
 }
