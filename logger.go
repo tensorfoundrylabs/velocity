@@ -654,6 +654,89 @@ func (l *Logger) Newline() {
 	l.consoleWriter.mu.Unlock()
 }
 
+// notifyMu is the fallback mutex for Notify calls on loggers that have no console
+// writer. It prevents interleaving across loggers that share os.Stderr as their
+// notify destination but have no common mutex.
+var notifyMu sync.Mutex
+
+// notifyDest returns the writer and mutex to use for Notify output.
+// When a console writer is present it shares that writer's mutex so Notify and
+// log lines on a shared terminal cannot interleave. Otherwise the package-level
+// fallback is used with os.Stderr (or the configured override).
+func (l *Logger) notifyDest() (io.Writer, *sync.Mutex) {
+	if l.consoleWriter != nil {
+		// Share the console writer's mutex regardless of the notify output
+		// destination — this is the primary non-interleave guarantee.
+		out := l.cfg.NotifyOutput
+		if out == nil {
+			out = os.Stderr
+		}
+		return out, &l.consoleWriter.mu
+	}
+	out := l.cfg.NotifyOutput
+	if out == nil {
+		out = os.Stderr
+	}
+	return out, &notifyMu
+}
+
+// Notify writes a formatted message directly to the notify destination (default
+// os.Stderr), bypassing all writers, the level filter, the sampler, and the
+// structured pipeline. Intended for ephemeral operator-visible output such as
+// setup URLs and one-time bootstrap messages that must appear regardless of log
+// level or writer configuration.
+//
+// Uses the console writer mutex when present to prevent interleaving with
+// concurrent log output on shared terminals. Nil-safe.
+//
+//nolint:goprintffuncname // Notify is an intentional API name, not a generic printf wrapper.
+func (l *Logger) Notify(format string, args ...any) {
+	if l == nil || l.closed.Load() {
+		return
+	}
+	out, mu := l.notifyDest()
+	msg := fmt.Sprintf(format, args...)
+	mu.Lock()
+	_, _ = io.WriteString(out, msg)
+	mu.Unlock()
+}
+
+// NotifyLines writes each line to the notify destination separated by newlines.
+// Behaves identically to Notify with respect to writer bypass and mutex sharing.
+// Nil-safe.
+func (l *Logger) NotifyLines(lines ...string) {
+	if l == nil || l.closed.Load() || len(lines) == 0 {
+		return
+	}
+	out, mu := l.notifyDest()
+	mu.Lock()
+	for _, line := range lines {
+		_, _ = io.WriteString(out, line)
+		_, _ = io.WriteString(out, "\n")
+	}
+	mu.Unlock()
+}
+
+// NotifyBox renders a Box to the notify destination. Useful for visually-prominent
+// operator messages — the canonical use case is an onboarding URL that must stand
+// out regardless of whether structured logging is active.
+// Nil-safe; a nil Box is a no-op.
+func (l *Logger) NotifyBox(b *Box) {
+	if l == nil || l.closed.Load() || b == nil {
+		return
+	}
+	out, mu := l.notifyDest()
+	tmp := GetTemplateBuffer()
+	if err := b.Render(tmp); err != nil {
+		PutTemplateBuffer(tmp)
+		return
+	}
+	mu.Lock()
+	_, _ = out.Write(tmp.Bytes())
+	mu.Unlock()
+	PutTemplateBuffer(tmp)
+}
+
 // Box renders a bordered box with an optional title to the console writer,
 // indented to align with the message column. Uses the logger's active theme.
 // Nil-safe; no-op when there is no console writer.

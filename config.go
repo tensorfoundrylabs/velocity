@@ -57,6 +57,11 @@ type config struct {
 	Sampler          Sampler
 	DisplayTimezone  *time.Location
 
+	// NotifyOutput is the destination for Notify/NotifyLines/NotifyBox calls.
+	// Defaults to os.Stderr. Override via WithNotifyOutput — useful in tests
+	// where stderr is not captured by the test runner.
+	NotifyOutput io.Writer
+
 	TimeFormat       string
 	StructuredFormat Format
 

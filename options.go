@@ -87,11 +87,15 @@ type TestingT interface {
 
 // WithTesting configures a logger for use in tests. Writes via t.Log, disables
 // colour, sets level to Debug, and registers t.Cleanup(logger.Close).
+// Notify output is also captured via the same testingWriter so tests can assert
+// on ephemeral output without stderr pollution.
 // The cleanup registration happens at construction time.
 func WithTesting(t TestingT) Option {
+	tw := &testingWriter{t: t}
 	return func(c *config) {
 		*c = config{
-			ConsoleOutput:    &testingWriter{t: t},
+			ConsoleOutput:    tw,
+			NotifyOutput:     tw,
 			ConsoleTheme:     nil,
 			ConsoleLevel:     LevelDebug,
 			StructuredOutput: nil,
@@ -154,6 +158,15 @@ func WithLevel(level Level) Option {
 func WithConsoleOutput(w io.Writer) Option {
 	return func(c *config) {
 		c.ConsoleOutput = w
+	}
+}
+
+// WithNotifyOutput redirects Notify/NotifyLines/NotifyBox output to w instead of
+// os.Stderr. Useful in tests where stderr is not captured by the test runner, or
+// when the operator channel should go to a specific file descriptor.
+func WithNotifyOutput(w io.Writer) Option {
+	return func(c *config) {
+		c.NotifyOutput = w
 	}
 }
 
