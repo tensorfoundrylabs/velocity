@@ -1,4 +1,4 @@
-package pretty
+package pretty_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 
 func TestBanner_SingleLine(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := New(buf, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(buf, velocity.ThemeNightOwl)
 
 	p.Banner("Hello World")
 
@@ -39,7 +39,7 @@ func TestBanner_SingleLine(t *testing.T) {
 
 func TestBanner_MultiLine(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := New(buf, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(buf, velocity.ThemeNightOwl)
 
 	p.Banner("First line\nSecond line\nThird line")
 
@@ -54,8 +54,9 @@ func TestBanner_MultiLine(t *testing.T) {
 	}
 }
 
+// removeANSI strips terminal control codes from s. State machine parsing preserves
+// UTF-8 while stripping escape sequences — used across banner and box tests.
 func removeANSI(s string) string {
-	// State machine parsing preserves UTF-8 while stripping terminal control codes
 	var result strings.Builder
 	i := 0
 	bs := []byte(s)
@@ -78,7 +79,7 @@ func removeANSI(s string) string {
 
 func TestBanner_EmptyLine(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := New(buf, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(buf, velocity.ThemeNightOwl)
 
 	p.Banner("")
 
@@ -94,7 +95,7 @@ func TestBanner_EmptyLine(t *testing.T) {
 
 func TestBanner_VaryingLineLengths(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := New(buf, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(buf, velocity.ThemeNightOwl)
 
 	p.Banner("Short\nThis is a much longer line\nMid")
 
@@ -123,7 +124,7 @@ func TestBanner_VaryingLineLengths(t *testing.T) {
 
 func TestBanner_TrailingWhitespace(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := New(buf, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(buf, velocity.ThemeNightOwl)
 
 	// Test with trailing spaces (simulating ASCII art logo issue)
 	// The trailing spaces should be stripped, making the box tight
@@ -164,7 +165,7 @@ func TestBanner_TrailingWhitespace(t *testing.T) {
 
 func TestBanner_Unicode(t *testing.T) {
 	buf := &bytes.Buffer{}
-	p := New(buf, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(buf, velocity.ThemeNightOwl)
 
 	// Test with Unicode characters (like the ASCII art logo)
 	banner := "███████╗ ██████╗\n██╔════╝██╔════╝"

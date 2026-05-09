@@ -26,7 +26,7 @@ func TestBoxResult_ParityWithPrettyBox(t *testing.T) {
 
 	var direct, viaResult bytes.Buffer
 
-	p := pretty.New(&direct, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(&direct, velocity.ThemeNightOwl)
 	p.Box("Title", "some content\nsecond line")
 
 	result := pretty.NewBoxResult("Title", "some content\nsecond line", velocity.ThemeNightOwl)
@@ -48,7 +48,7 @@ func TestTableResult_ParityWithPrettyTable(t *testing.T) {
 
 	var direct, viaResult bytes.Buffer
 
-	p := pretty.New(&direct, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(&direct, velocity.ThemeNightOwl)
 	p.Table(headers, rows)
 
 	result := pretty.NewTableResult(headers, rows, velocity.ThemeNightOwl)
@@ -69,7 +69,7 @@ func TestBannerResult_ParityWithPrettyBanner(t *testing.T) {
 
 	var direct, viaResult bytes.Buffer
 
-	p := pretty.New(&direct, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(&direct, velocity.ThemeNightOwl)
 	p.Banner(text)
 
 	result := pretty.NewBannerResult(text, velocity.ThemeNightOwl)
@@ -86,6 +86,8 @@ func TestBannerResult_ParityWithPrettyBanner(t *testing.T) {
 func TestTreeResult_ParityWithPrettyTree(t *testing.T) {
 	t.Parallel()
 
+	// pretty.TreeItem is the local shim type; velocity.TreeItem is canonical.
+	// Both convert through renderable.go's convertTreeItems so output must match.
 	nodes := []pretty.TreeItem{
 		{Key: "root", Children: []pretty.TreeItem{
 			{Key: "child1", Value: "v1"},
@@ -95,8 +97,13 @@ func TestTreeResult_ParityWithPrettyTree(t *testing.T) {
 
 	var direct, viaResult bytes.Buffer
 
-	p := pretty.New(&direct, velocity.ThemeNightOwl)
-	p.Tree(nodes)
+	p := velocity.NewPretty(&direct, velocity.ThemeNightOwl)
+	p.Tree([]velocity.TreeItem{
+		{Key: "root", Children: []velocity.TreeItem{
+			{Key: "child1", Value: "v1"},
+			{Key: "child2", Value: "v2"},
+		}},
+	})
 
 	result := pretty.NewTreeResult(nodes, velocity.ThemeNightOwl)
 	if err := result.Render(&viaResult); err != nil {
@@ -114,7 +121,7 @@ func TestKeyValueResult_ParityWithPrettyKeyValue(t *testing.T) {
 
 	var direct, viaResult bytes.Buffer
 
-	p := pretty.New(&direct, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(&direct, velocity.ThemeNightOwl)
 	p.KeyValue("version", "1.2.3")
 
 	result := pretty.NewKeyValueResult("version", "1.2.3", velocity.ThemeNightOwl)
@@ -142,8 +149,17 @@ func TestSystemInfoResult_ParityWithPrettySystemInfo(t *testing.T) {
 
 	var direct, viaResult bytes.Buffer
 
-	p := pretty.New(&direct, velocity.ThemeNightOwl)
-	p.SystemInfo(info)
+	// Construct the equivalent root type for parity comparison.
+	rootInfo := &velocity.SystemInfoData{
+		Title:   info.Title,
+		Version: info.Version,
+		Fields: []velocity.KeyValuePair{
+			{Key: "env", Value: "test"},
+			{Key: "region", Value: "ap-southeast-2"},
+		},
+	}
+	p := velocity.NewPretty(&direct, velocity.ThemeNightOwl)
+	p.SystemInfo(rootInfo)
 
 	result := pretty.NewSystemInfoResult(info, velocity.ThemeNightOwl)
 	if err := result.Render(&viaResult); err != nil {
@@ -183,9 +199,9 @@ func TestSystemInfoResult_NilInfo(t *testing.T) {
 	}
 }
 
-// TestNewFromLogger_Concurrent verifies that concurrent pretty and logger calls don't interleave
-// or race (run with -race to validate).
-func TestNewFromLogger_Concurrent(t *testing.T) {
+// TestNewPrettyFromLogger_Concurrent verifies that concurrent pretty and logger calls don't
+// interleave or race (run with -race to validate).
+func TestNewPrettyFromLogger_Concurrent(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -196,7 +212,7 @@ func TestNewFromLogger_Concurrent(t *testing.T) {
 	cfg.StructuredOutput = nil
 
 	log := velocity.NewWithConfig(cfg)
-	p := pretty.NewFromLogger(log)
+	p := velocity.NewPrettyFromLogger(log)
 
 	const goroutines = 20
 	done := make(chan struct{})

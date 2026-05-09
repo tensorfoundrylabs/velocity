@@ -18,7 +18,7 @@ func main() {
 		velocity.WithTheme(velocity.ThemeNightOwl),
 	)
 
-	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
+	p := velocity.NewPretty(os.Stdout, velocity.ThemeNightOwl)
 
 	// Banner shows the tool name using the double-border box built into the logger.
 	// Great for the splash screen at startup.
@@ -49,10 +49,10 @@ func main() {
 
 	// SystemInfo is a compact block for key-value pairs under a title.
 	// Perfect for printing build metadata or runtime configuration at startup.
-	p.SystemInfo(&pretty.SystemInfo{
+	p.SystemInfo(&velocity.SystemInfoData{
 		Title:   "Deploy Tool",
 		Version: "4.2.0",
-		Fields: []pretty.KeyValuePair{
+		Fields: []velocity.KeyValuePair{
 			{Key: "Target cluster", Value: "k8s-staging-au-east-1"},
 			{Key: "Namespace", Value: "app-staging"},
 			{Key: "Image", Value: "registry.example.com/app:v4.2.0"},
@@ -112,27 +112,27 @@ func main() {
 
 	// Tree shows hierarchical relationships. Each TreeItem can have children,
 	// and velocity draws the connecting lines automatically.
-	p.Tree([]pretty.TreeItem{
+	p.Tree([]velocity.TreeItem{
 		{
 			Key: "app (v4.2.0)",
-			Children: []pretty.TreeItem{
+			Children: []velocity.TreeItem{
 				{
 					Key: "postgres (primary)",
-					Children: []pretty.TreeItem{
+					Children: []velocity.TreeItem{
 						{Key: "max_connections", Value: 200},
 						{Key: "pool_size", Value: 20},
 					},
 				},
 				{
 					Key: "redis (cache)",
-					Children: []pretty.TreeItem{
+					Children: []velocity.TreeItem{
 						{Key: "eviction_policy", Value: "allkeys-lru"},
 						{Key: "max_memory", Value: "256mb"},
 					},
 				},
 				{
 					Key: "payments-api (external)",
-					Children: []pretty.TreeItem{
+					Children: []velocity.TreeItem{
 						{Key: "timeout", Value: "5s"},
 						{Key: "retries", Value: 3},
 					},

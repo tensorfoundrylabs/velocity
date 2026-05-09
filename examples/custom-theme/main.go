@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
 )
 
 // ThemeCyberpunk is a neon-on-dark palette inspired by Night City.
@@ -84,7 +83,7 @@ func main() {
 
 	// Pretty output routes through the logger so it serialises under the same mutex
 	// and inherits the theme automatically.
-	p := pretty.NewFromLogger(log)
+	p := velocity.NewPrettyFromLogger(log)
 
 	p.Section("Mission Briefing")
 
@@ -114,13 +113,14 @@ func main() {
 
 	log.Newline()
 
-	// Tree display with the theme.
-	p.Tree([]pretty.TreeItem{
+	// Tree display with the theme. velocity.NewTree is the canonical constructor;
+	// p.Tree is sugar that calls Render immediately.
+	p.Tree([]velocity.TreeItem{
 		{
 			Key: "netrunner-loadout",
-			Children: []pretty.TreeItem{
+			Children: []velocity.TreeItem{
 				{Key: "deck", Value: "Tetratronic Rippler Mk.4"},
-				{Key: "quickhacks", Children: []pretty.TreeItem{
+				{Key: "quickhacks", Children: []velocity.TreeItem{
 					{Key: "contagion", Value: "legendary"},
 					{Key: "short circuit", Value: "epic"},
 					{Key: "system reset", Value: "rare"},

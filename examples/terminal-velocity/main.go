@@ -30,7 +30,7 @@ func main() {
 	)
 	defer func() { _ = log.Close() }()
 
-	p := pretty.NewFromLogger(log)
+	p := velocity.NewPrettyFromLogger(log)
 
 	stageBanner(log)
 	stageClusterDiscovery(log, p)
@@ -65,17 +65,17 @@ func stageBanner(log *velocity.Logger) {
 }
 
 // stageClusterDiscovery scans for available GPU nodes and reports what it finds.
-func stageClusterDiscovery(log *velocity.Logger, p *pretty.Pretty) {
+func stageClusterDiscovery(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Cluster Discovery")
 
 	spinner := pretty.NewSpinner(os.Stdout, "Scanning network for GPU nodes...")
 	time.Sleep(1200 * time.Millisecond)
 	spinner.StopWithSuccess("Found 4 nodes with 16 GPUs total")
 
-	p.SystemInfo(&pretty.SystemInfo{
+	p.SystemInfo(&velocity.SystemInfoData{
 		Title:   "GPU Cluster",
 		Version: "CUDA 13.0",
-		Fields: []pretty.KeyValuePair{
+		Fields: []velocity.KeyValuePair{
 			{Key: "Nodes", Value: "4"},
 			{Key: "GPUs Total", Value: "8 x NVIDIA RTX Pro 6000 96GB"},
 			{Key: "CUDA Version", Value: "13.0"},
@@ -94,26 +94,26 @@ func stageClusterDiscovery(log *velocity.Logger, p *pretty.Pretty) {
 }
 
 // stageDeploymentConfig displays the model deployment configuration as a tree.
-func stageDeploymentConfig(log *velocity.Logger, p *pretty.Pretty) {
+func stageDeploymentConfig(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Deployment Configuration")
 
-	// Render the tree indented under the log line — this is the explicit "nest under
-	// message column" path, using log.Render with a Renderable result type.
+	// Render the tree indented under the log line — the explicit "nest under
+	// message column" path, using log.Render with a velocity.Tree Renderable.
 	log.Info("Llama-3.1-70B Deployment Plan")
-	log.Render(p.NewTree([]pretty.TreeItem{
+	log.Render(velocity.NewTree([]velocity.TreeItem{
 		{Key: "Model", Value: "meta-llama/Llama-3.1-70B-Instruct"},
 		{Key: "Replicas", Value: 4},
 		{Key: "GPU Type", Value: "NVIDIA RTX Pro 6000 96GB"},
 		{
 			Key: "Parallelism",
-			Children: []pretty.TreeItem{
+			Children: []velocity.TreeItem{
 				{Key: "Tensor Parallelism", Value: 2},
 				{Key: "Pipeline Parallelism", Value: 1},
 			},
 		},
 		{
 			Key: "Quantisation",
-			Children: []pretty.TreeItem{
+			Children: []velocity.TreeItem{
 				{Key: "Method", Value: "AWQ"},
 				{Key: "Bits", Value: "4-bit"},
 				{Key: "Group Size", Value: 128},
@@ -121,14 +121,14 @@ func stageDeploymentConfig(log *velocity.Logger, p *pretty.Pretty) {
 		},
 		{Key: "Max Batch Size", Value: 32},
 		{Key: "Max Sequence Length", Value: 8192},
-	}))
+	}, velocity.ThemeNightOwl))
 
 	log.Newline()
 }
 
 // stagePreflightChecks runs pre-flight validation across all nodes and reports results.
 // Node-3 fails the disk space check, which foreshadows the deployment failure.
-func stagePreflightChecks(log *velocity.Logger, p *pretty.Pretty) {
+func stagePreflightChecks(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Pre-flight Checks")
 
 	sf := log.Status()
@@ -169,7 +169,7 @@ func stagePreflightChecks(log *velocity.Logger, p *pretty.Pretty) {
 
 // stageModelDistribution downloads model weights and builds inference containers.
 // This is the longest stage because it moves the most data.
-func stageModelDistribution(log *velocity.Logger, p *pretty.Pretty) {
+func stageModelDistribution(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Model Distribution")
 
 	// Child logger carries the stage context on every structured entry without
@@ -246,7 +246,7 @@ func stageModelDistribution(log *velocity.Logger, p *pretty.Pretty) {
 
 // stageNodeDeployment pushes the model to each node in turn.
 // Returns the name of any node that failed, or an empty string for full success.
-func stageNodeDeployment(log *velocity.Logger, p *pretty.Pretty) string {
+func stageNodeDeployment(log *velocity.Logger, p *velocity.Pretty) string {
 	p.Section("Deploying to Nodes")
 
 	nodes := []struct {
@@ -299,7 +299,7 @@ func stageNodeDeployment(log *velocity.Logger, p *pretty.Pretty) string {
 // stageRecovery handles the node-3 failure by redistributing its load to node-0.
 // In a real system you would update the load balancer config; here we just
 // log what would happen.
-func stageRecovery(log *velocity.Logger, p *pretty.Pretty, failedNode string) {
+func stageRecovery(log *velocity.Logger, p *velocity.Pretty, failedNode string) {
 	if failedNode == "" {
 		return
 	}
@@ -330,7 +330,7 @@ func stageRecovery(log *velocity.Logger, p *pretty.Pretty, failedNode string) {
 }
 
 // stageHealthVerification pings every endpoint and shows a summary table.
-func stageHealthVerification(log *velocity.Logger, p *pretty.Pretty) {
+func stageHealthVerification(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Health Verification")
 
 	sf := log.Status()
@@ -352,7 +352,7 @@ func stageHealthVerification(log *velocity.Logger, p *pretty.Pretty) {
 }
 
 // stageSummary prints the final deployment summary box and the completion log line.
-func stageSummary(log *velocity.Logger, p *pretty.Pretty, started time.Time) {
+func stageSummary(log *velocity.Logger, p *velocity.Pretty, started time.Time) {
 	elapsed := time.Since(started).Round(time.Second)
 
 	content := fmt.Sprintf(

@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
 )
 
 func main() {
@@ -19,12 +18,12 @@ func main() {
 	)
 
 	sf := log.Status()
-	p := pretty.NewFromLogger(log)
+	theme := velocity.ThemeNightOwl
 
 	fmt.Println("=== Pretty Table ===")
 	fmt.Println()
 	log.Info("service health check results")
-	log.RenderRaw(p.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
 			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
@@ -33,12 +32,13 @@ func main() {
 			{"notifications", sf.Fail("DOWN"), "-", "ap-southeast-2"},
 			{"analytics", sf.Okay("HEALTHY"), "28ms", "us-west-2"},
 		},
+		theme,
 	))
 	log.Newline()
 
 	fmt.Println("=== GPU Node Table ===")
 	fmt.Println()
-	log.RenderRaw(p.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
 			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
@@ -46,15 +46,15 @@ func main() {
 			{"node-2", "A100 80GB", "78.9 / 80.0 GB", sf.Warn("98%"), "82C"},
 			{"node-3", "A100 80GB", "0.0 / 80.0 GB", sf.Fail("0%"), "34C"},
 		},
+		theme,
 	))
 	log.Newline()
 
-	// Tables work without colour too. pretty.New(os.Stdout, nil) demonstrates
-	// the standalone constructor without a logger or theme.
+	// Tables work without colour too. velocity.NewPretty(os.Stdout, nil) demonstrates
+	// the standalone constructor without a logger.
 	fmt.Println("=== Plain Table (no theme, no colour) ===")
 	fmt.Println()
-	plain := pretty.New(os.Stdout, nil)
-	log.RenderRaw(plain.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"Endpoint", "Method", "Calls/sec", "P99"},
 		[][]string{
 			{"/v1/chat/completions", "POST", "1,240", "89ms"},
@@ -62,13 +62,14 @@ func main() {
 			{"/v1/models", "GET", "450", "3ms"},
 			{"/health", "GET", "10,000", "1ms"},
 		},
+		nil,
 	))
 	log.Newline()
 
 	// Wide table with many columns. Columns auto-size to content.
 	fmt.Println("=== Wide Table (auto-sized columns) ===")
 	fmt.Println()
-	log.RenderRaw(p.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"PID", "User", "CPU%", "Mem%", "VSZ", "RSS", "TTY", "Stat", "Command"},
 		[][]string{
 			{"1", "root", "0.0", "0.1", "168k", "12k", "?", "Ss", "/sbin/init"},
@@ -76,6 +77,7 @@ func main() {
 			{"1204", "nginx", "0.3", "0.2", "32M", "8M", "?", "S", "nginx: worker process"},
 			{"1891", "prometheus", "1.2", "0.8", "256M", "64M", "?", "Sl", "/usr/bin/prometheus"},
 		},
+		theme,
 	))
 	log.Newline()
 
@@ -85,12 +87,13 @@ func main() {
 	fmt.Println("=== Indented Table (under a log line via log.Render) ===")
 	fmt.Println()
 	log.Info("migrations applied", velocity.Int("count", 3))
-	log.Render(p.NewTable(
+	log.Render(velocity.NewTable(
 		[]string{"Migration", "Duration", "Status"},
 		[][]string{
 			{"001_initial_schema.sql", "5ms", sf.Okay("OK")},
 			{"002_webhooks.sql", "2ms", sf.Okay("OK")},
 			{"003_model_access.sql", "3ms", sf.Okay("OK")},
 		},
+		theme,
 	))
 }
