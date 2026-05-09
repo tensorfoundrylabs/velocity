@@ -111,7 +111,7 @@ func WithTesting(t TestingT) Option {
 	}
 }
 
-// WithNop configures a logger that discards everything. Replaces the old NopLogger().
+// WithNop configures a logger that discards all output. Use for tests or when a no-op logger is needed.
 func WithNop() Option {
 	return func(c *config) {
 		*c = config{

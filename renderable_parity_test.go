@@ -17,8 +17,8 @@ var (
 	_ velocity.Renderable = (*velocity.SystemInfo)(nil)
 )
 
-// TestBoxResult_ParityWithPrettyBox verifies that Box.Render produces the
-// same bytes as p.Box so callers can freely choose either form.
+// TestBoxResult_ParityWithPrettyBox verifies that Box.Render and Pretty.Box
+// produce identical output so callers can freely choose either form.
 func TestBoxResult_ParityWithPrettyBox(t *testing.T) {
 	t.Parallel()
 
@@ -37,7 +37,7 @@ func TestBoxResult_ParityWithPrettyBox(t *testing.T) {
 	}
 }
 
-// TestTableResult_ParityWithPrettyTable verifies that Table.Render matches p.Table.
+// TestTableResult_ParityWithPrettyTable verifies that Table.Render and Pretty.Table produce identical output.
 func TestTableResult_ParityWithPrettyTable(t *testing.T) {
 	t.Parallel()
 
@@ -59,7 +59,7 @@ func TestTableResult_ParityWithPrettyTable(t *testing.T) {
 	}
 }
 
-// TestBannerResult_ParityWithPrettyBanner verifies that Banner.Render matches p.Banner.
+// TestBannerResult_ParityWithPrettyBanner verifies that Banner.Render and Pretty.Banner produce identical output.
 func TestBannerResult_ParityWithPrettyBanner(t *testing.T) {
 	t.Parallel()
 
@@ -80,7 +80,7 @@ func TestBannerResult_ParityWithPrettyBanner(t *testing.T) {
 	}
 }
 
-// TestTreeResult_ParityWithPrettyTree verifies that Tree.Render matches p.Tree.
+// TestTreeResult_ParityWithPrettyTree verifies that Tree.Render and Pretty.Tree produce identical output.
 func TestTreeResult_ParityWithPrettyTree(t *testing.T) {
 	t.Parallel()
 
@@ -106,7 +106,7 @@ func TestTreeResult_ParityWithPrettyTree(t *testing.T) {
 	}
 }
 
-// TestKeyValueResult_ParityWithPrettyKeyValue verifies output parity.
+// TestKeyValueResult_ParityWithPrettyKeyValue verifies that KeyValue.Render and Pretty.KeyValue produce identical output.
 func TestKeyValueResult_ParityWithPrettyKeyValue(t *testing.T) {
 	t.Parallel()
 
@@ -125,7 +125,7 @@ func TestKeyValueResult_ParityWithPrettyKeyValue(t *testing.T) {
 	}
 }
 
-// TestSystemInfoResult_ParityWithPrettySystemInfo verifies output parity.
+// TestSystemInfoResult_ParityWithPrettySystemInfo verifies that SystemInfo.Render and Pretty.SystemInfo produce identical output.
 func TestSystemInfoResult_ParityWithPrettySystemInfo(t *testing.T) {
 	t.Parallel()
 
@@ -153,7 +153,7 @@ func TestSystemInfoResult_ParityWithPrettySystemInfo(t *testing.T) {
 	}
 }
 
-// TestTableResult_EmptyHeaders confirms the early-return path produces no output.
+// TestTableResult_EmptyHeaders confirms that nil headers produce no output.
 func TestTableResult_EmptyHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -167,7 +167,7 @@ func TestTableResult_EmptyHeaders(t *testing.T) {
 	}
 }
 
-// TestSystemInfoResult_NilInfo confirms the nil-info guard produces no output.
+// TestSystemInfoResult_NilInfo confirms that nil SystemInfoData produces no output.
 func TestSystemInfoResult_NilInfo(t *testing.T) {
 	t.Parallel()
 

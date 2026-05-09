@@ -50,7 +50,11 @@ var libraries = []Library{
 	{
 		Name: "velocity",
 		Setup: func() any {
+			// JSON-only to io.Discard: console level set to Off so only the
+			// JSON serialisation path runs. Makes the comparison fair against
+			// pure structured loggers (zap, zerolog, slog).
 			return velocity.New(
+				velocity.WithLevel(velocity.LevelOff),
 				velocity.WithStructuredOutput(io.Discard),
 				velocity.WithStructuredLevel(velocity.LevelDebug),
 			)
@@ -76,6 +80,7 @@ var libraries = []Library{
 		},
 		AccumulatedCtx: func() any {
 			l := velocity.New(
+				velocity.WithLevel(velocity.LevelOff),
 				velocity.WithStructuredOutput(io.Discard),
 				velocity.WithStructuredLevel(velocity.LevelDebug),
 			)
@@ -496,6 +501,7 @@ var disabledLibraries = []Library{
 		Name: "velocity",
 		Setup: func() any {
 			return velocity.New(
+				velocity.WithLevel(velocity.LevelOff),
 				velocity.WithStructuredOutput(io.Discard),
 				velocity.WithStructuredLevel(velocity.LevelError),
 			)

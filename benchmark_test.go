@@ -340,7 +340,7 @@ func BenchmarkBufferPool_GetPut(b *testing.B) {
 // ---- Render API benchmarks --------------------------------------------------
 
 // BenchmarkLogger_Render measures the cost of one Logger.Render call with a
-// small pre-built TableResult (3 rows, 2 columns). Construction is excluded
+// small pre-built Table (3 rows, 2 columns). Construction is excluded
 // from the timer so we isolate the indentation + write path.
 func BenchmarkLogger_Render(b *testing.B) {
 	l := newDiscardLogger()

@@ -59,18 +59,19 @@ import (
 
 ### Comparative benchmarks
 
-Here's how Velocity stacks up against popular Go logging libraries (AMD Ryzen 9 5950X, Go 1.24, writing to `io.Discard`):
+AMD Ryzen 9 5950X, Go 1.24, all libraries writing structured output to `io.Discard`.
+Velocity runs JSON-only (console writer disabled via `WithLevel(LevelOff)`), same as every other library here.
 
-| Library | Info (no fields) | Info (3 fields) | With + Info | Disabled level |
-|---------|-----------------|-----------------|-------------|---------------|
-| **velocity** | **31 ns** / 0 alloc | **67 ns** / 1 alloc | **186 ns** / 4 alloc | 41 ns / 0 alloc |
-| [zerolog](https://github.com/rs/zerolog) | 89 ns / 0 alloc | 204 ns / 0 alloc | 422 ns / 2 alloc | 10 ns / 0 alloc |
-| [zap](https://github.com/uber-go/zap) | 240 ns / 0 alloc | 525 ns / 1 alloc | 1319 ns / 6 alloc | 9 ns / 0 alloc |
-| [slog](https://pkg.go.dev/log/slog) | 663 ns / 0 alloc | 1666 ns / 4 alloc | 1684 ns / 11 alloc | 10 ns / 0 alloc |
-| [charmbracelet/log](https://github.com/charmbracelet/log) | 4 ns / 0 alloc | 6 ns / 0 alloc | 2618 ns / 5 alloc | 4 ns / 0 alloc |
-| [pterm](https://github.com/pterm/pterm) | 12926 ns / 65 alloc | 25334 ns / 144 alloc | 13125 ns / 65 alloc | 19 ns / 0 alloc |
+| Library | Info (no fields) | Info (3 fields) | With + Info (per call) | Disabled level |
+|---------|-----------------|-----------------|------------------------|---------------|
+| **velocity** | **30 ns** / 0 alloc | **63 ns** / 1 alloc | **155 ns** / 4 alloc | **3.3 ns** / 0 alloc |
+| [zerolog](https://github.com/rs/zerolog) | 66 ns / 0 alloc | 162 ns / 0 alloc | 459 ns / 2 alloc | 7.3 ns / 0 alloc |
+| [zap](https://github.com/uber-go/zap) | 233 ns / 0 alloc | 475 ns / 1 alloc | 3045 ns / 6 alloc | 6.5 ns / 0 alloc |
+| [slog](https://pkg.go.dev/log/slog) | 417 ns / 0 alloc | 992 ns / 4 alloc | 1177 ns / 11 alloc | 6.8 ns / 0 alloc |
+| [charmbracelet/log](https://github.com/charmbracelet/log) | 3.2 ns / 0 alloc | 3.9 ns / 0 alloc | 2815 ns / 5 alloc | 3.2 ns / 0 alloc |
+| [pterm](https://github.com/pterm/pterm) | 8376 ns / 65 alloc | 16637 ns / 144 alloc | 8213 ns / 65 alloc | 17 ns / 0 alloc |
 
-Velocity is ~3x faster than zerolog and ~8x faster than zap on the hot logging path. charmbracelet/log's near-zero numbers are from short-circuiting format work when writing to non-TTY output; its `With` cost (2618 ns) shows the real overhead. pterm is a display library first, and its allocation profile reflects that.
+Velocity leads zerolog by ~2x on Info throughput and zap by ~8x. The disabled-level check (~3 ns) is the fastest among the structured loggers. charmbracelet/log's sub-5 ns per-call numbers come from skipping format work when the output is not a TTY; its `With` cost (2815 ns) reflects the real allocation overhead. pterm is a display library, not a structured logger — its numbers are expected.
 
 ### Internal benchmarks (v2.0.0, AMD Ryzen 9 5950X, Go 1.24)
 
