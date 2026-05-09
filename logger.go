@@ -187,10 +187,10 @@ func (l *Logger) With(fields ...Field) *Logger {
 	return child
 }
 
-// AddWriter adds a named writer to receive log entries.
-// Thread-safe for concurrent calls.
-// Writers process entries asynchronously via MultiWriter.
-func (l *Logger) AddWriter(name string, w Writer) {
+// AddWriter registers a named writer to receive log entries.
+// Options control per-writer behaviour; see WriterTrusted.
+// Thread-safe; writers process entries asynchronously via MultiWriter.
+func (l *Logger) AddWriter(name string, w Writer, opts ...WriterOption) {
 	if l == nil {
 		return
 	}
@@ -201,22 +201,41 @@ func (l *Logger) AddWriter(name string, w Writer) {
 	if l.additionalWriters == nil {
 		l.additionalWriters = NewMultiWriter()
 	}
-	l.additionalWriters.AddWriter(name, w)
+	l.additionalWriters.AddWriter(name, w, opts...)
 }
 
-// RemoveWriter removes a named writer.
-// Thread-safe for concurrent calls.
-func (l *Logger) RemoveWriter(name string) {
+// RemoveWriter removes the named writer and returns it so the caller can
+// flush or close it as appropriate. Returns nil if no writer with that name exists.
+// Thread-safe.
+func (l *Logger) RemoveWriter(name string) Writer {
 	if l == nil {
-		return
+		return nil
 	}
 
 	l.writersMu.Lock()
 	defer l.writersMu.Unlock()
 
-	if l.additionalWriters != nil {
-		l.additionalWriters.RemoveWriter(name)
+	if l.additionalWriters == nil {
+		return nil
 	}
+	return l.additionalWriters.RemoveWriter(name)
+}
+
+// Writer returns the writer registered under name, or nil.
+// Useful for inspecting writer capabilities without removing it.
+// Thread-safe.
+func (l *Logger) Writer(name string) Writer {
+	if l == nil {
+		return nil
+	}
+
+	l.writersMu.RLock()
+	defer l.writersMu.RUnlock()
+
+	if l.additionalWriters == nil {
+		return nil
+	}
+	return l.additionalWriters.WriterByName(name)
 }
 
 // Close flushes and shuts down all writers owned by the logger.
@@ -472,9 +491,7 @@ func (l *Logger) SetTheme(theme *Theme) {
 		l.cfg.ConsoleTheme = theme
 	}
 
-	type themeSetter interface{ SetTheme(*Theme) }
-
-	if s, ok := any(l.consoleWriter).(themeSetter); ok && l.consoleWriter != nil {
+	if s, ok := any(l.consoleWriter).(ThemedWriter); ok && l.consoleWriter != nil {
 		s.SetTheme(theme)
 	}
 
@@ -488,8 +505,8 @@ func (l *Logger) SetTheme(theme *Theme) {
 	l.additionalWriters.mu.Lock()
 	defer l.additionalWriters.mu.Unlock()
 
-	for _, w := range l.additionalWriters.writers {
-		if s, ok := w.(themeSetter); ok {
+	for _, ws := range l.additionalWriters.workers {
+		if s, ok := ws.w.(ThemedWriter); ok {
 			s.SetTheme(theme)
 		}
 	}

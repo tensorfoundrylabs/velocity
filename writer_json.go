@@ -250,6 +250,18 @@ func (w *JSONWriter) writeJSONFieldValue(buf *BytesBuffer, f Field) {
 	}
 }
 
+// Flush drains any buffered output without closing the writer.
+// Only has effect when the underlying io.Writer implements Flush.
+func (w *JSONWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if f, ok := w.out.(interface{ Flush() error }); ok {
+		return f.Flush()
+	}
+	return nil
+}
+
 func (w *JSONWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

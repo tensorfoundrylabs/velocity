@@ -5,8 +5,17 @@ import (
 	"sync"
 )
 
+// workerState holds per-writer state cached at AddWriter time.
+// isTrusted is stored here rather than checked via type assertion on every write,
+// keeping the per-entry cost to a single bool read in the fan-out loop.
+type workerState struct {
+	w         Writer
+	isTrusted bool
+}
+
 type MultiWriter struct {
-	writers map[string]Writer
+	// workers carries both the writer and its cached trust flag, keyed by name.
+	workers map[string]workerState
 
 	// Buffered channels prevent one slow writer from blocking others
 	writeChans map[string]chan *Entry
@@ -23,13 +32,18 @@ type MultiWriter struct {
 
 func NewMultiWriter() *MultiWriter {
 	return &MultiWriter{
-		writers:      make(map[string]Writer),
+		workers:      make(map[string]workerState),
 		writeChans:   make(map[string]chan *Entry),
 		shutdownChan: make(chan struct{}),
 	}
 }
 
-func (mw *MultiWriter) AddWriter(name string, w Writer) {
+// AddWriter registers a named writer with the given options.
+// Replaces any existing writer with the same name.
+// Thread-safe; no-op after Close.
+func (mw *MultiWriter) AddWriter(name string, w Writer, opts ...WriterOption) {
+	o := applyWriterOptions(opts)
+
 	mw.mu.Lock()
 	defer mw.mu.Unlock()
 
@@ -42,19 +56,27 @@ func (mw *MultiWriter) AddWriter(name string, w Writer) {
 		close(ch)
 	}
 
-	mw.writers[name] = w
+	mw.workers[name] = workerState{w: w, isTrusted: o.isTrusted}
 
 	// Buffer size trades latency vs blocking: smaller = less latency, larger = less blocking
 	ch := make(chan *Entry, 256)
 	mw.writeChans[name] = ch
 
 	mw.wg.Add(1)
-	go mw.writerWorker(name, w, ch)
+	go mw.writerWorker(w, ch)
 }
 
-func (mw *MultiWriter) RemoveWriter(name string) {
+// RemoveWriter removes the named writer and returns it so the caller can close it
+// if needed. Returns nil if the name is not registered.
+// Thread-safe; no-op after Close.
+func (mw *MultiWriter) RemoveWriter(name string) Writer {
 	mw.mu.Lock()
 	defer mw.mu.Unlock()
+
+	state, exists := mw.workers[name]
+	if !exists {
+		return nil
+	}
 
 	if ch, ok := mw.writeChans[name]; ok {
 		// If Close() has already set closed=true, it holds a snapshot of this
@@ -66,7 +88,26 @@ func (mw *MultiWriter) RemoveWriter(name string) {
 		delete(mw.writeChans, name)
 	}
 
-	delete(mw.writers, name)
+	delete(mw.workers, name)
+	return state.w
+}
+
+// WriterByName returns the writer registered under name, or nil.
+// Useful for inspecting capabilities without removing the writer.
+func (mw *MultiWriter) WriterByName(name string) Writer {
+	mw.mu.Lock()
+	defer mw.mu.Unlock()
+
+	return mw.workers[name].w
+}
+
+// IsTrusted reports whether the writer registered under name was added with WriterTrusted().
+// Returns false for unknown names.
+func (mw *MultiWriter) IsTrusted(name string) bool {
+	mw.mu.Lock()
+	defer mw.mu.Unlock()
+
+	return mw.workers[name].isTrusted
 }
 
 func (mw *MultiWriter) Write(e *Entry) error {
@@ -77,16 +118,13 @@ func (mw *MultiWriter) Write(e *Entry) error {
 		return ErrWriterClosed
 	}
 
-	// Non-blocking send prevents backpressure from slow writers
-	// CRITICAL: Call Retain() before send, Release() on failure
-	// This is more defensive and idiomatic
+	// Non-blocking send prevents backpressure from slow writers.
+	// Retain() before send; Release() on channel-full drop.
 	for _, ch := range mw.writeChans {
-		e.Retain() // Prevent pool reclamation during async processing
+		e.Retain()
 		select {
 		case ch <- e:
-			// Successfully sent, Retain() will be balanced by Release() in worker
 		default:
-			// Channel full - release and skip write to prevent blocking
 			e.Release()
 		}
 	}
@@ -94,7 +132,7 @@ func (mw *MultiWriter) Write(e *Entry) error {
 	return nil
 }
 
-func (mw *MultiWriter) writerWorker(_ string, w Writer, ch chan *Entry) {
+func (mw *MultiWriter) writerWorker(w Writer, ch chan *Entry) {
 	defer mw.wg.Done()
 	// Worker owns the writer lifecycle. Closing here ensures no concurrent
 	// Write() calls happen after the worker exits, regardless of why it stopped.
