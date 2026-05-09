@@ -214,7 +214,8 @@ func TestSlogHandler_ConcurrentHandle(t *testing.T) {
 }
 
 func BenchmarkSlogHandler_Info(b *testing.B) {
-	l := velocity.New(nil) // nil discards console output
+	// WithNop discards all output so I/O cost doesn't dominate the measurement.
+	l := velocity.New(velocity.WithNop())
 	sl := slogbridge.NewLogger(l)
 
 	b.ReportAllocs()

@@ -1,0 +1,269 @@
+goos: windows
+goarch: amd64
+pkg: github.com/tensorfoundrylabs/velocity
+cpu: AMD Ryzen 9 5950X 16-Core Processor            
+k: 
+                                 │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                                 │                           sec/op                           │
+Info_NoFields-32                                                                25.66n ±   2%
+Info_OneString-32                                                               52.54n ±   3%
+Info_FiveFields-32                                                              35.42n ±  28%
+Info_TenFields-32                                                               34.68n ±  53%
+Info_Disabled-32                                                                2.046n ±   2%
+Info_WithSampler-32                                                             5.320n ±   1%
+String-32                                                                       19.50n ±   4%
+IntField-32                                                                     1.332n ±   1%
+Float64Field-32                                                                 1.308n ±   2%
+F_String-32                                                                     22.45n ±   1%
+F_Int-32                                                                        8.640n ±   2%
+JSONWriter_FiveFields-32                                                        594.0n ±   2%
+ConsoleWriter_FiveFields-32                                                     433.0n ±   1%
+ConsoleWriter_NoTemplate-32                                                     407.2n ±   3%
+GetEntry_Release-32                                                             13.89n ±   1%
+Entry_WithFields-32                                                             18.74n ±  31%
+Info_Parallel-32                                                                52.72n ±   2%
+JSONWriter_Parallel-32                                                          170.3n ±   5%
+Info_TreeMode-32                                                                36.20n ±   7%
+Info_TreeMode_Parallel-32                                                       53.48n ±   2%
+InfoDetailed_TreeMode-32                                                        36.35n ±  25%
+BufferPool_GetPut-32                                                            24.67n ±  13%
+Logger_Render-32                                                                2.597n ±  24%
+Logger_RenderRaw-32                                                             3.762n ±  32%
+Logger_Newline-32                                                               2.591n ±  57%
+WithComponent_Equivalent-32                                                     189.8n ± 139%
+SecureScan_NoMatch-32                                                           66.65n ±  42%
+Entry_GetRelease-32                                                             20.84n ±   6%
+Entry_GetReleaseWithRetain-32                                                   17.34n ±  26%
+Entry_ConcurrentRetainRelease-32                                                145.0n ±   1%
+geomean                                                                         24.98n
+
+                                 │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                                 │                            B/op                            │
+Info_NoFields-32                                                                 0.000 ± 0%
+Info_OneString-32                                                                16.00 ± 0%
+Info_FiveFields-32                                                               0.000 ± 0%
+Info_TenFields-32                                                                0.000 ± 0%
+Info_Disabled-32                                                                 0.000 ± 0%
+Info_WithSampler-32                                                              0.000 ± 0%
+String-32                                                                        16.00 ± 0%
+IntField-32                                                                      0.000 ± 0%
+Float64Field-32                                                                  0.000 ± 0%
+F_String-32                                                                      16.00 ± 0%
+F_Int-32                                                                         0.000 ± 0%
+JSONWriter_FiveFields-32                                                         0.000 ± 0%
+ConsoleWriter_FiveFields-32                                                      32.00 ± 0%
+ConsoleWriter_NoTemplate-32                                                      32.00 ± 0%
+GetEntry_Release-32                                                              0.000 ± 0%
+Entry_WithFields-32                                                              0.000 ± 0%
+Info_Parallel-32                                                                 0.000 ± 0%
+JSONWriter_Parallel-32                                                           0.000 ± 0%
+Info_TreeMode-32                                                                 0.000 ± 0%
+Info_TreeMode_Parallel-32                                                        0.000 ± 0%
+InfoDetailed_TreeMode-32                                                         0.000 ± 0%
+BufferPool_GetPut-32                                                             0.000 ± 0%
+Logger_Render-32                                                                 0.000 ± 0%
+Logger_RenderRaw-32                                                              0.000 ± 0%
+Logger_Newline-32                                                                0.000 ± 0%
+WithComponent_Equivalent-32                                                      192.0 ± 0%
+SecureScan_NoMatch-32                                                            0.000 ± 0%
+Entry_GetRelease-32                                                              0.000 ± 0%
+Entry_GetReleaseWithRetain-32                                                    0.000 ± 0%
+Entry_ConcurrentRetainRelease-32                                                 88.00 ± 0%
+geomean                                                                                     ¹
+¹ summaries must be >0 to compute geomean
+
+                                 │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                                 │                         allocs/op                          │
+Info_NoFields-32                                                                 0.000 ± 0%
+Info_OneString-32                                                                1.000 ± 0%
+Info_FiveFields-32                                                               0.000 ± 0%
+Info_TenFields-32                                                                0.000 ± 0%
+Info_Disabled-32                                                                 0.000 ± 0%
+Info_WithSampler-32                                                              0.000 ± 0%
+String-32                                                                        1.000 ± 0%
+IntField-32                                                                      0.000 ± 0%
+Float64Field-32                                                                  0.000 ± 0%
+F_String-32                                                                      1.000 ± 0%
+F_Int-32                                                                         0.000 ± 0%
+JSONWriter_FiveFields-32                                                         0.000 ± 0%
+ConsoleWriter_FiveFields-32                                                      3.000 ± 0%
+ConsoleWriter_NoTemplate-32                                                      3.000 ± 0%
+GetEntry_Release-32                                                              0.000 ± 0%
+Entry_WithFields-32                                                              0.000 ± 0%
+Info_Parallel-32                                                                 0.000 ± 0%
+JSONWriter_Parallel-32                                                           0.000 ± 0%
+Info_TreeMode-32                                                                 0.000 ± 0%
+Info_TreeMode_Parallel-32                                                        0.000 ± 0%
+InfoDetailed_TreeMode-32                                                         0.000 ± 0%
+BufferPool_GetPut-32                                                             0.000 ± 0%
+Logger_Render-32                                                                 0.000 ± 0%
+Logger_RenderRaw-32                                                              0.000 ± 0%
+Logger_Newline-32                                                                0.000 ± 0%
+WithComponent_Equivalent-32                                                      3.000 ± 0%
+SecureScan_NoMatch-32                                                            0.000 ± 0%
+Entry_GetRelease-32                                                              0.000 ± 0%
+Entry_GetReleaseWithRetain-32                                                    0.000 ± 0%
+Entry_ConcurrentRetainRelease-32                                                 4.000 ± 0%
+geomean                                                                                     ¹
+¹ summaries must be >0 to compute geomean
+
+k: v
+                                 │ D:/projects/tensorfoundry/velocity/docs/bench-v2.0.0.txt │
+                                 │                          sec/op                          │
+Info_NoFields-32                                                                27.76n ± 1%
+Info_OneString-32                                                               55.45n ± 3%
+Info_FiveFields-32                                                              33.37n ± 3%
+Info_TenFields-32                                                               34.55n ± 5%
+Info_Disabled-32                                                                2.162n ± 1%
+Info_WithSampler-32                                                             5.787n ± 0%
+String-32                                                                       21.03n ± 1%
+IntField-32                                                                     1.380n ± 1%
+Float64Field-32                                                                 1.379n ± 0%
+JSONWriter_FiveFields-32                                                        641.9n ± 2%
+ConsoleWriter_FiveFields-32                                                     482.6n ± 1%
+ConsoleWriter_NoTemplate-32                                                     460.6n ± 0%
+GetEntry_Release-32                                                             14.37n ± 2%
+Entry_WithFields-32                                                             19.98n ± 4%
+Info_Parallel-32                                                                53.15n ± 3%
+JSONWriter_Parallel-32                                                          192.2n ± 2%
+Info_TreeMode-32                                                                33.34n ± 1%
+Info_TreeMode_Parallel-32                                                       52.39n ± 1%
+BufferPool_GetPut-32                                                            16.48n ± 4%
+Logger_Render-32                                                                1.923n ± 1%
+Logger_RenderRaw-32                                                             1.969n ± 1%
+Logger_Newline-32                                                               1.418n ± 0%
+WithComponent_Equivalent-32                                                     158.8n ± 7%
+SecureScan_NoMatch-32                                                           34.64n ± 4%
+Entry_GetRelease-32                                                             14.43n ± 2%
+Entry_GetReleaseWithRetain-32                                                   17.11n ± 1%
+Entry_ConcurrentRetainRelease-32                                                155.0n ± 0%
+Pretty_NewFromLogger_Table-32                                                   956.1n ± 1%
+Pretty_New_Table-32                                                             906.6n ± 2%
+Any_String-32                                                                   21.20n ± 2%
+Any_Int-32                                                                      21.30n ± 3%
+Detailed_TreeMode-32                                                            33.29n ± 1%
+SecureField_UntrustedWriter-32                                                  253.2n ± 3%
+geomean                                                                         31.85n
+
+                                 │ D:/projects/tensorfoundry/velocity/docs/bench-v2.0.0.txt │
+                                 │                           B/op                           │
+Info_NoFields-32                                                               0.000 ± 0%
+Info_OneString-32                                                              16.00 ± 0%
+Info_FiveFields-32                                                             0.000 ± 0%
+Info_TenFields-32                                                              0.000 ± 0%
+Info_Disabled-32                                                               0.000 ± 0%
+Info_WithSampler-32                                                            0.000 ± 0%
+String-32                                                                      16.00 ± 0%
+IntField-32                                                                    0.000 ± 0%
+Float64Field-32                                                                0.000 ± 0%
+JSONWriter_FiveFields-32                                                       0.000 ± 0%
+ConsoleWriter_FiveFields-32                                                    32.00 ± 0%
+ConsoleWriter_NoTemplate-32                                                    32.00 ± 0%
+GetEntry_Release-32                                                            0.000 ± 0%
+Entry_WithFields-32                                                            0.000 ± 0%
+Info_Parallel-32                                                               0.000 ± 0%
+JSONWriter_Parallel-32                                                         0.000 ± 0%
+Info_TreeMode-32                                                               0.000 ± 0%
+Info_TreeMode_Parallel-32                                                      0.000 ± 0%
+BufferPool_GetPut-32                                                           0.000 ± 0%
+Logger_Render-32                                                               0.000 ± 0%
+Logger_RenderRaw-32                                                            0.000 ± 0%
+Logger_Newline-32                                                              0.000 ± 0%
+WithComponent_Equivalent-32                                                    192.0 ± 0%
+SecureScan_NoMatch-32                                                          0.000 ± 0%
+Entry_GetRelease-32                                                            0.000 ± 0%
+Entry_GetReleaseWithRetain-32                                                  0.000 ± 0%
+Entry_ConcurrentRetainRelease-32                                               88.00 ± 0%
+Pretty_NewFromLogger_Table-32                                                  312.0 ± 0%
+Pretty_New_Table-32                                                            288.0 ± 0%
+Any_String-32                                                                  16.00 ± 0%
+Any_Int-32                                                                     16.00 ± 0%
+Detailed_TreeMode-32                                                           0.000 ± 0%
+SecureField_UntrustedWriter-32                                                 32.00 ± 0%
+geomean                                                                                   ¹
+¹ summaries must be >0 to compute geomean
+
+                                 │ D:/projects/tensorfoundry/velocity/docs/bench-v2.0.0.txt │
+                                 │                        allocs/op                         │
+Info_NoFields-32                                                               0.000 ± 0%
+Info_OneString-32                                                              1.000 ± 0%
+Info_FiveFields-32                                                             0.000 ± 0%
+Info_TenFields-32                                                              0.000 ± 0%
+Info_Disabled-32                                                               0.000 ± 0%
+Info_WithSampler-32                                                            0.000 ± 0%
+String-32                                                                      1.000 ± 0%
+IntField-32                                                                    0.000 ± 0%
+Float64Field-32                                                                0.000 ± 0%
+JSONWriter_FiveFields-32                                                       0.000 ± 0%
+ConsoleWriter_FiveFields-32                                                    3.000 ± 0%
+ConsoleWriter_NoTemplate-32                                                    3.000 ± 0%
+GetEntry_Release-32                                                            0.000 ± 0%
+Entry_WithFields-32                                                            0.000 ± 0%
+Info_Parallel-32                                                               0.000 ± 0%
+JSONWriter_Parallel-32                                                         0.000 ± 0%
+Info_TreeMode-32                                                               0.000 ± 0%
+Info_TreeMode_Parallel-32                                                      0.000 ± 0%
+BufferPool_GetPut-32                                                           0.000 ± 0%
+Logger_Render-32                                                               0.000 ± 0%
+Logger_RenderRaw-32                                                            0.000 ± 0%
+Logger_Newline-32                                                              0.000 ± 0%
+WithComponent_Equivalent-32                                                    3.000 ± 0%
+SecureScan_NoMatch-32                                                          0.000 ± 0%
+Entry_GetRelease-32                                                            0.000 ± 0%
+Entry_GetReleaseWithRetain-32                                                  0.000 ± 0%
+Entry_ConcurrentRetainRelease-32                                               4.000 ± 0%
+Pretty_NewFromLogger_Table-32                                                  10.00 ± 0%
+Pretty_New_Table-32                                                            9.000 ± 0%
+Any_String-32                                                                  1.000 ± 0%
+Any_Int-32                                                                     1.000 ± 0%
+Detailed_TreeMode-32                                                           0.000 ± 0%
+SecureField_UntrustedWriter-32                                                 1.000 ± 0%
+geomean                                                                                   ¹
+¹ summaries must be >0 to compute geomean
+
+pkg: github.com/tensorfoundrylabs/velocity/pretty
+k: 
+                              │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                              │                           sec/op                           │
+Pretty_NewFromLogger_Table-32                                                  939.4n ± 6%
+Pretty_New_Table-32                                                            929.9n ± 5%
+geomean                                                                        934.6n
+
+                              │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                              │                            B/op                            │
+Pretty_NewFromLogger_Table-32                                                   312.0 ± 0%
+Pretty_New_Table-32                                                             288.0 ± 0%
+geomean                                                                         299.8
+
+                              │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                              │                         allocs/op                          │
+Pretty_NewFromLogger_Table-32                                                   10.00 ± 0%
+Pretty_New_Table-32                                                             9.000 ± 0%
+geomean                                                                         9.487
+
+pkg: github.com/tensorfoundrylabs/velocity/slog
+                    │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                    │                           sec/op                           │
+SlogHandler_Info-32                                                 468.3n ± 11%
+
+                    │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                    │                            B/op                            │
+SlogHandler_Info-32                                                   192.0 ± 0%
+
+                    │ D:/projects/tensorfoundry/velocity/docs/bench-baseline.txt │
+                    │                         allocs/op                          │
+SlogHandler_Info-32                                                   6.000 ± 0%
+
+pkg: github.com/tensorfoundrylabs/velocity/slogbridge
+k: v
+                    │ D:/projects/tensorfoundry/velocity/docs/bench-v2.0.0.txt │
+                    │                          sec/op                          │
+SlogHandler_Info-32                                               99.34n ± 12%
+
+                    │ D:/projects/tensorfoundry/velocity/docs/bench-v2.0.0.txt │
+                    │                           B/op                           │
+SlogHandler_Info-32                                                 144.0 ± 0%
+
+                    │ D:/projects/tensorfoundry/velocity/docs/bench-v2.0.0.txt │
+                    │                        allocs/op                         │
+SlogHandler_Info-32                                                 3.000 ± 0%

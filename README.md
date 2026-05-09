@@ -72,23 +72,26 @@ Here's how Velocity stacks up against popular Go logging libraries (AMD Ryzen 9 
 
 Velocity is ~3x faster than zerolog and ~8x faster than zap on the hot logging path. charmbracelet/log's near-zero numbers are from short-circuiting format work when writing to non-TTY output; its `With` cost (2618 ns) shows the real overhead. pterm is a display library first, and its allocation profile reflects that.
 
-### Internal benchmarks (v1.1 baseline, AMD Ryzen 9 5950X, Go 1.24)
+### Internal benchmarks (v2.0.0, AMD Ryzen 9 5950X, Go 1.24)
 
-| Operation | ns/op | B/op | allocs/op |
-|-----------|------:|-----:|----------:|
-| Info, no fields | 27 | 0 | 0 |
-| Info, 5 pre-built fields | 34 | 0 | 0 |
-| Info, 10 pre-built fields | 39 | 0 | 0 |
-| Info, tree mode | 36 | 0 | 0 |
-| Level check (disabled) | 2.1 | 0 | 0 |
-| Sampler check | 5.5 | 0 | 0 |
-| Entry pool round-trip | 14 | 0 | 0 |
-| Int field construction | 1.3 | 0 | 0 |
-| ConsoleWriter, 5 fields | 431 | 32 | 3 |
-| JSONWriter, 5 fields | 582 | 0 | 0 |
-| JSONWriter, parallel | 170 | 0 | 0 |
-| Render / RenderRaw | 1.8 | 0 | 0 |
-| slog handler, 3 attrs | 445 | 192 | 6 |
+| Operation | v1.1.3 ns/op | v2.0.0 ns/op | delta | B/op | allocs/op |
+|-----------|-------------:|-------------:|------:|-----:|----------:|
+| Info, no fields | 26 | 28 | +8% | 0 | 0 |
+| Info, 5 pre-built fields | 38 | 33 | -13% | 0 | 0 |
+| Info, 10 pre-built fields | 39 | 35 | -10% | 0 | 0 |
+| Info, tree mode | 36 | 33 | -8% | 0 | 0 |
+| Level check (disabled) | 2.1 | 2.2 | +5% | 0 | 0 |
+| Sampler check | 5.3 | 5.8 | +9% | 0 | 0 |
+| Entry pool round-trip | 14 | 14 | 0% | 0 | 0 |
+| Int field construction | 1.3 | 1.4 | +8% | 0 | 0 |
+| ConsoleWriter, 5 fields | 433 | 483 | +12% | 32 | 3 |
+| JSONWriter, 5 fields | 594 | 642 | +8% | 0 | 0 |
+| JSONWriter, parallel | 170 | 192 | +13% | 0 | 0 |
+| WithComponent child | 270 | 159 | -41% | 192 | 3 |
+| Secure scan, no match | 67 | 35 | -48% | 0 | 0 |
+| slog handler, 3 attrs | 468 | 99 | -79% | 144 | 3 |
+
+**Notes on v2 changes:** `Info (no fields)` and the writer paths carry a small overhead from the added `scanSecure` flag check and immutable theme lookup (vs mutable cached fields). The multi-field paths are faster due to the unified `any`-field path elimination. `WithComponent` improved significantly from child-logger construction changes. `SecureScan_NoMatch` halved due to early-exit on the `IndexByte` fast path. The slog bridge numbers dropped from ~468 ns to ~99 ns because the v1 benchmark was writing to stdout rather than discarding — that was a measurement bug, not a real v1 advantage.
 
 Run benchmarks: `go test -bench=. -benchmem -count=3 ./...`
 
