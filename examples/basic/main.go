@@ -64,12 +64,12 @@ func main() {
 	log.Info("this info message won't appear either")
 	log.Warn("this warning still gets through")
 
-	// Drop back to debug so we can show InfoDetailed.
+	// Drop back to debug so we can show Detailed().
 	log.SetLevel(velocity.LevelDebug)
 
-	// InfoDetailed forces a tree-format display for the fields, which is much
-	// easier to read when there are many fields or values are long.
-	log.InfoDetailed("deployment summary",
+	// Detailed() returns a child logger that forces tree-format for every call.
+	// Easier to read when there are many fields or values are long.
+	log.Detailed().Info("deployment summary",
 		velocity.String("environment", "staging"),
 		velocity.String("version", "2.4.1"),
 		velocity.Int("replicas", 3),

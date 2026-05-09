@@ -60,7 +60,7 @@ func stageBanner(log *velocity.Logger) {
 	}
 
 	banner := velocity.CreateBanner("Terminal Velocity", "0.1.0", "tensorfoundry.io", ascii)
-	log.Banner(strings.Split(strings.TrimRight(banner, "\n"), "\n")...)
+	log.BannerLines(strings.Split(strings.TrimRight(banner, "\n"), "\n")...)
 	log.Newline()
 }
 
@@ -131,25 +131,28 @@ func stageDeploymentConfig(log *velocity.Logger, p *velocity.Pretty) {
 func stagePreflightChecks(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Pre-flight Checks")
 
-	sf := log.Status()
+	style := log.Style()
+	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
+	okCell := colour(style.StatusOKColour, "OK")
+	warnCell := colour(style.StatusWarnColour, "WARN")
 
 	rows := [][]string{
-		{"GPU Memory", "node-0", sf.Okay("OK"), "79.8 GB free"},
-		{"GPU Memory", "node-1", sf.Okay("OK"), "79.8 GB free"},
-		{"GPU Memory", "node-2", sf.Okay("OK"), "79.8 GB free"},
-		{"GPU Memory", "node-3", sf.Okay("OK"), "79.8 GB free"},
-		{"CUDA Version", "node-0", sf.Okay("OK"), "12.4 / driver 550.54.15"},
-		{"CUDA Version", "node-1", sf.Okay("OK"), "12.4 / driver 550.54.15"},
-		{"CUDA Version", "node-2", sf.Okay("OK"), "12.4 / driver 550.54.15"},
-		{"CUDA Version", "node-3", sf.Okay("OK"), "12.4 / driver 550.54.15"},
-		{"Disk Space", "node-0", sf.Okay("OK"), "340 GB free"},
-		{"Disk Space", "node-1", sf.Okay("OK"), "280 GB free"},
-		{"Disk Space", "node-2", sf.Okay("OK"), "310 GB free"},
-		{"Disk Space", "node-3", sf.Warn("WARN"), "18 GB free (need 35 GB)"},
-		{"Network", "node-0", sf.Okay("OK"), "IB latency 1.2us"},
-		{"Network", "node-1", sf.Okay("OK"), "IB latency 1.1us"},
-		{"Network", "node-2", sf.Okay("OK"), "IB latency 1.3us"},
-		{"Network", "node-3", sf.Okay("OK"), "IB latency 1.2us"},
+		{"GPU Memory", "node-0", okCell, "79.8 GB free"},
+		{"GPU Memory", "node-1", okCell, "79.8 GB free"},
+		{"GPU Memory", "node-2", okCell, "79.8 GB free"},
+		{"GPU Memory", "node-3", okCell, "79.8 GB free"},
+		{"CUDA Version", "node-0", okCell, "12.4 / driver 550.54.15"},
+		{"CUDA Version", "node-1", okCell, "12.4 / driver 550.54.15"},
+		{"CUDA Version", "node-2", okCell, "12.4 / driver 550.54.15"},
+		{"CUDA Version", "node-3", okCell, "12.4 / driver 550.54.15"},
+		{"Disk Space", "node-0", okCell, "340 GB free"},
+		{"Disk Space", "node-1", okCell, "280 GB free"},
+		{"Disk Space", "node-2", okCell, "310 GB free"},
+		{"Disk Space", "node-3", warnCell, "18 GB free (need 35 GB)"},
+		{"Network", "node-0", okCell, "IB latency 1.2us"},
+		{"Network", "node-1", okCell, "IB latency 1.1us"},
+		{"Network", "node-2", okCell, "IB latency 1.3us"},
+		{"Network", "node-3", okCell, "IB latency 1.2us"},
 	}
 
 	p.Table(
@@ -274,7 +277,7 @@ func stageNodeDeployment(log *velocity.Logger, p *velocity.Pretty) string {
 		if node.willFail {
 			spinner.StopWithError(fmt.Sprintf("Deployment to %s failed", node.name))
 
-			nodeLog.ErrorDetailed("container failed to start: insufficient disk space",
+			nodeLog.Detailed().Error("container failed to start: insufficient disk space",
 				velocity.String("error", "no space left on device"),
 				velocity.String("disk_used", "93%"),
 				velocity.String("disk_free", "18 GB"),
@@ -333,14 +336,18 @@ func stageRecovery(log *velocity.Logger, p *velocity.Pretty, failedNode string) 
 func stageHealthVerification(log *velocity.Logger, p *velocity.Pretty) {
 	p.Section("Health Verification")
 
-	sf := log.Status()
+	style := log.Style()
+	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
+	healthyCell := colour(style.StatusOKColour, "HEALTHY")
+	relocatedCell := colour(style.StatusInfoColour, "RELOCATED")
+	failedCell := colour(style.StatusFailColour, "FAILED")
 
 	rows := [][]string{
-		{"node-0", "llama-3.1-70b-awq", sf.Okay("HEALTHY"), "38 ms", "http://10.0.1.10:8080/v1"},
-		{"node-0*", "llama-3.1-70b-awq", sf.Info("RELOCATED"), "41 ms", "http://10.0.1.10:8080/v1 (replica 2)"},
-		{"node-1", "llama-3.1-70b-awq", sf.Okay("HEALTHY"), "35 ms", "http://10.0.1.11:8080/v1"},
-		{"node-2", "llama-3.1-70b-awq", sf.Okay("HEALTHY"), "37 ms", "http://10.0.1.12:8080/v1"},
-		{"node-3", "-", sf.Fail("FAILED"), "-", "disk full, out of service"},
+		{"node-0", "llama-3.1-70b-awq", healthyCell, "38 ms", "http://10.0.1.10:8080/v1"},
+		{"node-0*", "llama-3.1-70b-awq", relocatedCell, "41 ms", "http://10.0.1.10:8080/v1 (replica 2)"},
+		{"node-1", "llama-3.1-70b-awq", healthyCell, "35 ms", "http://10.0.1.11:8080/v1"},
+		{"node-2", "llama-3.1-70b-awq", healthyCell, "37 ms", "http://10.0.1.12:8080/v1"},
+		{"node-3", "-", failedCell, "-", "disk full, out of service"},
 	}
 
 	p.Table(

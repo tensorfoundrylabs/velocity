@@ -2,227 +2,196 @@ package velocity
 
 import (
 	"bytes"
+	"strings"
 	"sync"
 	"testing"
 )
 
-func TestDetailedLogging(t *testing.T) {
+func TestDetailed_ForcesTreeDisplay(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name        string
-		setupLogger func() *Logger
-		logFunc     func(*Logger)
-		wantTree    bool
+		name    string
+		logFunc func(l *Logger)
 	}{
 		{
-			name: "InfoDetailed always uses tree display even with inline config",
-			setupLogger: func() *Logger {
-				cfg := defaultConfig()
-				cfg.FieldDisplayMode = FieldDisplayInline
-				return newFromConfig(cfg)
-			},
+			name: "Info on Detailed() child uses tree display even with inline config",
 			logFunc: func(l *Logger) {
-				l.InfoDetailed("Test message",
+				l.Detailed().Info("Test message",
 					String("key1", "value1"),
 					Int("key2", 42),
 					Bool("key3", true))
 			},
-			wantTree: true,
 		},
 		{
-			name: "ErrorDetailed always uses tree display",
-			setupLogger: func() *Logger {
-				cfg := defaultConfig()
-				cfg.FieldDisplayMode = FieldDisplayInline
-				return newFromConfig(cfg)
-			},
+			name: "Error on Detailed() child always uses tree display",
 			logFunc: func(l *Logger) {
-				l.ErrorDetailed("Error occurred",
+				l.Detailed().Error("Error occurred",
 					String("error", "connection timeout"),
 					Int("retry", 3))
 			},
-			wantTree: true,
 		},
 		{
-			name: "WarnDetailed always uses tree display",
-			setupLogger: func() *Logger {
-				cfg := defaultConfig()
-				cfg.FieldDisplayMode = FieldDisplayInline
-				return newFromConfig(cfg)
-			},
+			name: "Warn on Detailed() child always uses tree display",
 			logFunc: func(l *Logger) {
-				l.WarnDetailed("Warning message",
+				l.Detailed().Warn("Warning message",
 					String("warning", "high memory usage"),
 					Float64("usage_percent", 89.5))
 			},
-			wantTree: true,
-		},
-		{
-			name: "DebugDetailed always uses tree display",
-			setupLogger: func() *Logger {
-				cfg := defaultConfig()
-				cfg.FieldDisplayMode = FieldDisplayInline
-				cfg.ConsoleLevel = LevelDebug
-				return newFromConfig(cfg)
-			},
-			logFunc: func(l *Logger) {
-				l.DebugDetailed("Debug info",
-					String("module", "auth"),
-					String("action", "token_refresh"))
-			},
-			wantTree: true,
-		},
-		{
-			name: "Regular Info uses inline when configured",
-			setupLogger: func() *Logger {
-				cfg := defaultConfig()
-				cfg.FieldDisplayMode = FieldDisplayInline
-				return newFromConfig(cfg)
-			},
-			logFunc: func(l *Logger) {
-				l.Info("Regular message",
-					String("key", "value"),
-					Int("number", 123))
-			},
-			wantTree: false,
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(_ *testing.T) {
-			logger := tt.setupLogger()
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-			// The test will use the configured console writer
-			// We're primarily testing that the forceTreeDisplay flag
-			// is properly set and passed through the system
+			var buf bytes.Buffer
+			cfg := defaultConfig()
+			cfg.FieldDisplayMode = FieldDisplayInline
+			cfg.ConsoleOutput = &buf
+			l := newFromConfig(cfg)
 
-			tt.logFunc(logger)
+			tt.logFunc(l)
 
-			// For this test, we're mainly verifying that the methods compile
-			// and execute without panics. Full output testing would require
-			// more setup to capture console writer output.
-
-			// The key thing we're testing is that the forceTreeDisplay flag
-			// is properly set and passed through the system.
+			// Tree display uses "├" or "└" as branch glyphs.
+			out := buf.String()
+			if !strings.ContainsAny(out, "├└") {
+				t.Errorf("expected tree glyphs in output, got: %s", out)
+			}
 		})
 	}
 }
 
-func TestDetailedLoggingThreadSafety(_ *testing.T) {
+func TestDetailed_Debug_ForcesTreeDisplay(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.FieldDisplayMode = FieldDisplayInline
+	cfg.ConsoleLevel = LevelDebug
+	cfg.ConsoleOutput = &buf
+	l := newFromConfig(cfg)
+
+	l.Detailed().Debug("Debug info",
+		String("module", "auth"),
+		String("action", "token_refresh"))
+
+	out := buf.String()
+	if !strings.ContainsAny(out, "├└") {
+		t.Errorf("expected tree glyphs in debug output, got: %s", out)
+	}
+}
+
+func TestDetailed_RegularLoggerStillInline(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.FieldDisplayMode = FieldDisplayInline
+	cfg.ConsoleOutput = &buf
+	l := newFromConfig(cfg)
+
+	l.Info("Regular message",
+		String("key", "value"),
+		Int("number", 123))
+
+	out := buf.String()
+	if strings.ContainsAny(out, "├└") {
+		t.Errorf("regular logger should not produce tree glyphs in inline mode, got: %s", out)
+	}
+}
+
+func TestDetailed_ThreadSafety(_ *testing.T) {
 	cfg := defaultConfig()
 	cfg.FieldDisplayMode = FieldDisplayInline
 	logger := newFromConfig(cfg)
-
-	// Run concurrent detailed and normal logs
-	done := make(chan bool)
-
-	go func() {
-		for i := range 100 {
-			logger.InfoDetailed("Detailed log", Int("iteration", i))
-		}
-		done <- true
-	}()
-
-	go func() {
-		for i := range 100 {
-			logger.Info("Normal log", Int("iteration", i))
-		}
-		done <- true
-	}()
-
-	go func() {
-		for i := range 100 {
-			logger.ErrorDetailed("Detailed error", Int("iteration", i))
-		}
-		done <- true
-	}()
-
-	// Wait for all goroutines
-	for range 3 {
-		<-done
-	}
-
-	// If we get here without panics or races, thread safety is maintained
-}
-
-func TestDetailedMethodsWithNilLogger(_ *testing.T) {
-	var logger *Logger = nil
-
-	// These should not panic, just print to stderr
-	logger.InfoDetailed("Test", String("key", "value"))
-	logger.ErrorDetailed("Test", String("key", "value"))
-	logger.WarnDetailed("Test", String("key", "value"))
-	logger.DebugDetailed("Test", String("key", "value"))
-}
-
-func TestDetailedMethodsRespectLogLevel(_ *testing.T) {
-	cfg := defaultConfig()
-	cfg.ConsoleLevel = LevelWarn // Only warn and above
-	logger := newFromConfig(cfg)
-
-	// These should be filtered out
-	logger.DebugDetailed("Debug", String("key", "value"))
-	logger.InfoDetailed("Info", String("key", "value"))
-
-	// These should pass through
-	logger.WarnDetailed("Warn", String("key", "value"))
-	logger.ErrorDetailed("Error", String("key", "value"))
-}
-
-func TestRaw_ConcurrentWithWrite(_ *testing.T) {
-	buf := &bytes.Buffer{}
-	log := New(WithConsoleOutput(buf))
+	detailed := logger.Detailed()
 
 	var wg sync.WaitGroup
-	const iters = 200
-
 	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
-		for range iters {
-			log.Raw("raw line\n")
+		for i := range 100 {
+			detailed.Info("Detailed log", Int("iteration", i))
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		for range iters {
-			log.Info("info message")
+		for i := range 100 {
+			logger.Info("Normal log", Int("iteration", i))
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		for range iters {
-			log.Raw("another raw\n")
+		for i := range 100 {
+			detailed.Error("Detailed error", Int("iteration", i))
 		}
 	}()
 
 	wg.Wait()
 }
 
-// TestEntryPoolResetsForceTreeDisplay verifies that the forceTreeDisplay flag
-// is properly reset when entries are returned to the pool and reused.
-// This prevents the bug where entries from logDetailed() calls would retain
-// the tree display flag and affect subsequent regular log calls.
+func TestDetailed_NilLogger(_ *testing.T) {
+	var logger *Logger
+	// Nil Detailed() returns nil — subsequent calls must not panic.
+	d := logger.Detailed()
+	if d != nil {
+		d.Info("should not panic")
+	}
+}
+
+func TestDetailed_RespectLogLevel(_ *testing.T) {
+	cfg := defaultConfig()
+	cfg.ConsoleLevel = LevelWarn
+	logger := newFromConfig(cfg)
+	detailed := logger.Detailed()
+
+	// These are below threshold and should be filtered.
+	detailed.Debug("Debug", String("key", "value"))
+	detailed.Info("Info", String("key", "value"))
+
+	// These should pass through without panic.
+	detailed.Warn("Warn", String("key", "value"))
+	detailed.Error("Error", String("key", "value"))
+}
+
+func TestDetailed_InheritsBaseFields(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	parent := newFromConfig(cfg)
+	parent.baseFields = []Field{String("svc", "payments")}
+
+	detailed := parent.Detailed()
+	detailed.Info("checkout")
+
+	if !strings.Contains(buf.String(), "payments") {
+		t.Errorf("expected base field to propagate to Detailed child, got: %s", buf.String())
+	}
+}
+
 func TestEntryPoolResetsForceTreeDisplay(t *testing.T) {
+	t.Parallel()
+
 	// Get an entry from the pool
 	entry1 := GetEntry()
 
-	// Verify it starts with forceTreeDisplay = false
 	if entry1.forceTreeDisplay {
 		t.Error("New entry from pool should have forceTreeDisplay = false")
 	}
 
-	// Simulate using it in a logDetailed call
+	// Simulate what logDetailed used to do — flag on the entry directly.
 	entry1.forceTreeDisplay = true
 	entry1.Write()
 	entry1.Release()
 
-	// Get another entry from the pool (might be the same one we just released)
+	// Get another entry (may be the same one returned to pool).
 	entry2 := GetEntry()
-
-	// Verify forceTreeDisplay has been reset to false
 	if entry2.forceTreeDisplay {
 		t.Error("Entry from pool should have forceTreeDisplay reset to false after Reset()")
 	}

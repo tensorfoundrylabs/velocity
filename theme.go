@@ -228,6 +228,13 @@ var ThemeNord = cachedTheme(&Theme{
 	TableHeader:      Colour256(110), // Frost Blue
 })
 
+// noColourTheme is returned by Logger.Style() when the logger has no console
+// writer or colour is disabled. All ANSI fields are empty strings, so callers
+// that embed Style().CachedMessageFg() in output get plain text automatically.
+var noColourTheme = cachedTheme(&Theme{
+	Name: "NoColour",
+})
+
 func (t *Theme) GetColourForLevel(level Level) Colour {
 	switch level {
 	case LevelDebug:
@@ -244,66 +251,4 @@ func (t *Theme) GetColourForLevel(level Level) Colour {
 		return t.InfoColour
 	}
 	return t.InfoColour
-}
-
-// StatusFormatter provides colour-aware status indicator formatting for operation results.
-// Pre-caches ANSI codes at initialization for zero-allocation formatting.
-type StatusFormatter struct {
-	okCode    string
-	failCode  string
-	warnCode  string
-	infoCode  string
-	resetCode string // Reset to message colour instead of terminal default
-	enabled   bool
-}
-
-// NewStatusFormatter creates a formatter that respects terminal capabilities and theme.
-// Pass nil theme to disable colours.
-func NewStatusFormatter(theme *Theme, isTTY bool) *StatusFormatter {
-	sf := &StatusFormatter{
-		enabled: isTTY && theme != nil,
-	}
-
-	if sf.enabled {
-		sf.okCode = theme.StatusOKColour.ANSI(true)
-		sf.failCode = theme.StatusFailColour.ANSI(true)
-		sf.warnCode = theme.StatusWarnColour.ANSI(true)
-		sf.infoCode = theme.StatusInfoColour.ANSI(true)
-		// Reset to message colour instead of terminal default to maintain log colour consistency
-		sf.resetCode = theme.MessageColour.ANSI(true)
-	}
-
-	return sf
-}
-
-// Okay formats an OK status with green colour when enabled.
-func (sf *StatusFormatter) Okay(text string) string {
-	if !sf.enabled {
-		return text
-	}
-	return sf.okCode + text + sf.resetCode
-}
-
-// Fail formats a FAIL status with red colour when enabled.
-func (sf *StatusFormatter) Fail(text string) string {
-	if !sf.enabled {
-		return text
-	}
-	return sf.failCode + text + sf.resetCode
-}
-
-// Warn formats a WARN status with yellow colour when enabled.
-func (sf *StatusFormatter) Warn(text string) string {
-	if !sf.enabled {
-		return text
-	}
-	return sf.warnCode + text + sf.resetCode
-}
-
-// Info formats an INFO status with blue colour when enabled.
-func (sf *StatusFormatter) Info(text string) string {
-	if !sf.enabled {
-		return text
-	}
-	return sf.infoCode + text + sf.resetCode
 }

@@ -14,11 +14,10 @@ import (
 type Logger struct {
 	sampler Sampler
 
-	cfg             *config
-	bufPool         *BufferPool
-	consoleWriter   *ConsoleWriter
-	jsonWriter      *JSONWriter
-	statusFormatter *StatusFormatter
+	cfg           *config
+	bufPool       *BufferPool
+	consoleWriter *ConsoleWriter
+	jsonWriter    *JSONWriter
 
 	// Additional writers added post-initialisation for dynamic log routing
 	additionalWriters *MultiWriter
@@ -27,8 +26,13 @@ type Logger struct {
 	// Set by With() and inherited by child loggers.
 	baseFields []Field
 
+	// forceTreeDisplay makes every log call on this logger render fields as a tree,
+	// regardless of FieldDisplayMode. Set via Detailed().
+	forceTreeDisplay bool
+
 	writersMu sync.RWMutex
 	level     atomic.Int32
+	closed    atomic.Bool
 }
 
 // New constructs a Logger from the given options. Panics if the resolved
@@ -106,20 +110,10 @@ func newFromConfig(cfg *config) *Logger {
 			logger.consoleWriter.template.timeFormat = cfg.TimeFormat
 			logger.consoleWriter.template.initCache()
 		}
-		isTTY := logger.consoleWriter != nil && logger.consoleWriter.IsTTY()
-		theme := cfg.ConsoleTheme
-		if cfg.DisableColour {
-			theme = nil
-		}
-		logger.statusFormatter = NewStatusFormatter(theme, isTTY)
 	}
 
 	if cfg.StructuredOutput != nil && cfg.StructuredOutput != io.Discard {
 		logger.jsonWriter = NewJSONWriter(cfg.StructuredOutput)
-	}
-
-	if logger.statusFormatter == nil {
-		logger.statusFormatter = NewStatusFormatter(nil, false)
 	}
 
 	return logger
@@ -180,9 +174,9 @@ func (l *Logger) With(fields ...Field) *Logger {
 		bufPool:           l.bufPool,
 		consoleWriter:     l.consoleWriter,
 		jsonWriter:        l.jsonWriter,
-		statusFormatter:   l.statusFormatter,
 		sampler:           l.sampler,
 		additionalWriters: l.additionalWriters,
+		forceTreeDisplay:  l.forceTreeDisplay,
 	}
 	child.level.Store(l.level.Load())
 	newBase := make([]Field, len(l.baseFields)+len(fields))
@@ -224,21 +218,55 @@ func (l *Logger) RemoveWriter(name string) {
 	}
 }
 
-// Close closes any additional writers that were added to the logger.
-// Thread-safe and nil-safe - returns nil if logger is nil or has no additional writers.
+// Close flushes and shuts down all writers owned by the logger.
+//
+// Specifically: the console writer is flushed (its output buffer drained), the
+// JSON writer is flushed, and all named writers added via AddWriter are drained
+// and closed. Caller-supplied io.Writers passed via WithConsoleOutput /
+// WithStructuredOutput are NOT closed — the logger does not own those handles.
+//
+// Close is idempotent: subsequent calls are no-ops. After Close returns, any
+// further log calls on this logger drop silently.
+//
+// Returns the first error encountered; remaining flushes still proceed.
 func (l *Logger) Close() error {
 	if l == nil {
 		return nil
+	}
+	// Already closed — nothing to do.
+	if !l.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	var firstErr error
+	setErr := func(e error) {
+		if firstErr == nil && e != nil {
+			firstErr = e
+		}
+	}
+
+	// Flush the console writer if it implements io.Closer (ring-buffer path does).
+	if l.consoleWriter != nil {
+		if c, ok := any(l.consoleWriter).(io.Closer); ok {
+			setErr(c.Close())
+		}
+	}
+
+	// Flush the JSON writer if it implements io.Closer.
+	if l.jsonWriter != nil {
+		if c, ok := any(l.jsonWriter).(io.Closer); ok {
+			setErr(c.Close())
+		}
 	}
 
 	l.writersMu.Lock()
 	defer l.writersMu.Unlock()
 
 	if l.additionalWriters != nil {
-		return l.additionalWriters.Close()
+		setErr(l.additionalWriters.Close())
 	}
 
-	return nil
+	return firstErr
 }
 
 func (l *Logger) Debug(msg string, fields ...Field) {
@@ -246,7 +274,7 @@ func (l *Logger) Debug(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[!DBG] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelDebug) {
+	if l.closed.Load() || !l.isEnabled(LevelDebug) {
 		return
 	}
 	l.log(LevelDebug, msg, fields...)
@@ -257,7 +285,7 @@ func (l *Logger) Info(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[INFO] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelInfo) {
+	if l.closed.Load() || !l.isEnabled(LevelInfo) {
 		return
 	}
 	l.log(LevelInfo, msg, fields...)
@@ -268,7 +296,7 @@ func (l *Logger) Warn(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[WARN] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelWarn) {
+	if l.closed.Load() || !l.isEnabled(LevelWarn) {
 		return
 	}
 	l.log(LevelWarn, msg, fields...)
@@ -279,7 +307,7 @@ func (l *Logger) Error(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[ERR!] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelError) {
+	if l.closed.Load() || !l.isEnabled(LevelError) {
 		return
 	}
 	l.log(LevelError, msg, fields...)
@@ -296,54 +324,6 @@ func (l *Logger) Fatal(msg string, fields ...Field) {
 		return
 	}
 	os.Exit(1)
-}
-
-// DebugDetailed logs a debug message with fields always displayed in tree format
-func (l *Logger) DebugDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[DEBU] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelDebug) {
-		return
-	}
-	l.logDetailed(LevelDebug, msg, fields...)
-}
-
-// InfoDetailed logs an info message with fields always displayed in tree format
-func (l *Logger) InfoDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[INFO] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelInfo) {
-		return
-	}
-	l.logDetailed(LevelInfo, msg, fields...)
-}
-
-// WarnDetailed logs a warning message with fields always displayed in tree format
-func (l *Logger) WarnDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[WARN] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelWarn) {
-		return
-	}
-	l.logDetailed(LevelWarn, msg, fields...)
-}
-
-// ErrorDetailed logs an error message with fields always displayed in tree format
-func (l *Logger) ErrorDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[ERR!] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelError) {
-		return
-	}
-	l.logDetailed(LevelError, msg, fields...)
 }
 
 func (l *Logger) isEnabled(level Level) bool {
@@ -382,12 +362,7 @@ func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 }
 
 func (l *Logger) log(level Level, msg string, fields ...Field) {
-	l.logInternal(level, msg, false, fields...)
-}
-
-// logDetailed logs a message with fields forced to display in tree format.
-func (l *Logger) logDetailed(level Level, msg string, fields ...Field) {
-	l.logInternal(level, msg, true, fields...)
+	l.logInternal(level, msg, l.forceTreeDisplay, fields...)
 }
 
 // LogEntry dispatches a pre-populated entry to all configured writers.
@@ -481,10 +456,10 @@ func (l *Logger) Theme() *Theme {
 }
 
 // SetTheme updates the active theme on all writers that support it.
-// Updates cfg.ConsoleTheme so subsequent With() clones and WithTemplate calls inherit the new theme.
+// Updates cfg.ConsoleTheme so subsequent With() clones inherit the new theme.
 // Nil theme is treated as explicit colour-disable; writers receive nil and handle it themselves.
 // User-defined themes are cached automatically: if the theme's ANSI sequences are not yet populated
-// a clone is cached and used, so the caller's original pointer is not mutated. Nil-safe.
+// they are computed in-place, so the caller's original pointer is not mutated. Nil-safe.
 func (l *Logger) SetTheme(theme *Theme) {
 	if l == nil {
 		return
@@ -520,38 +495,24 @@ func (l *Logger) SetTheme(theme *Theme) {
 	}
 }
 
-// Status returns the StatusFormatter for coloured status indicators.
-// Safe to call even if logger is nil - returns a non-coloured formatter.
-func (l *Logger) Status() *StatusFormatter {
-	if l == nil || l.statusFormatter == nil {
-		return NewStatusFormatter(nil, false)
-	}
-	return l.statusFormatter
-}
-
-// Raw prints a message without any formatting, timestamp, or level.
-// The caller is responsible for including newlines if desired.
-func (l *Logger) Raw(message string) {
+// Style returns the active theme for use in manual ANSI formatting.
+// When the logger has no console writer (JSON-only or nop), it returns
+// a no-colour theme so callers can always call Style() without a nil check.
+func (l *Logger) Style() *Theme {
 	if l == nil {
-		_, _ = fmt.Fprint(os.Stdout, message)
-		return
+		return noColourTheme
 	}
-
-	switch {
-	case l.consoleWriter != nil && l.consoleWriter.out != nil:
-		l.consoleWriter.mu.Lock()
-		_, _ = io.WriteString(l.consoleWriter.out, message)
-		l.consoleWriter.mu.Unlock()
-	case l.cfg != nil && l.cfg.ConsoleOutput != nil:
-		_, _ = io.WriteString(l.cfg.ConsoleOutput, message)
-	default:
-		_, _ = fmt.Fprint(os.Stdout, message)
+	if l.cfg != nil && l.cfg.ConsoleTheme != nil && !l.cfg.DisableColour {
+		return l.cfg.ConsoleTheme
 	}
+	return noColourTheme
 }
 
-// Banner prints multiple lines of text without formatting.
-// Newlines are automatically added after each line.
-func (l *Logger) Banner(lines ...string) {
+// BannerLines prints multiple lines of pre-formatted text to the console writer
+// without log timestamps, levels, or field formatting.
+// Named BannerLines to avoid collision with the Banner Renderable type.
+// Nil-safe.
+func (l *Logger) BannerLines(lines ...string) {
 	if l == nil {
 		for _, line := range lines {
 			_, _ = fmt.Fprintln(os.Stdout, line)
@@ -559,52 +520,59 @@ func (l *Logger) Banner(lines ...string) {
 		return
 	}
 
+	var out io.Writer
+	switch {
+	case l.consoleWriter != nil && l.consoleWriter.out != nil:
+		l.consoleWriter.mu.Lock()
+		defer l.consoleWriter.mu.Unlock()
+		out = l.consoleWriter.out
+	case l.cfg != nil && l.cfg.ConsoleOutput != nil:
+		out = l.cfg.ConsoleOutput
+	default:
+		out = os.Stdout
+	}
+
 	for _, line := range lines {
-		l.Raw(line + "\n")
+		_, _ = fmt.Fprintln(out, line)
 	}
 }
 
-func (l *Logger) SetTemplate(t *Template) {
-	if l == nil {
-		return
-	}
-
-	if l.consoleWriter != nil {
-		l.consoleWriter.SetTemplate(t)
-	}
-}
-
-// WithTemplate creates a child logger with a different output template.
-// The consoleWriter is intentionally recreated so the new template takes effect.
-func (l *Logger) WithTemplate(t *Template) *Logger {
+// Detailed returns a child logger that forces every log call to render fields
+// in tree format, regardless of the logger's FieldDisplayMode setting.
+// The child shares writers, config, sampler, and pool with the parent.
+// One alloc at the call site; zero extra cost per log call after that.
+func (l *Logger) Detailed() *Logger {
 	if l == nil {
 		return nil
 	}
-
-	newLogger := &Logger{
+	child := &Logger{
 		cfg:               l.cfg,
 		bufPool:           l.bufPool,
+		consoleWriter:     l.consoleWriter,
 		jsonWriter:        l.jsonWriter,
-		statusFormatter:   l.statusFormatter,
 		sampler:           l.sampler,
 		additionalWriters: l.additionalWriters,
+		forceTreeDisplay:  true,
 	}
-	newLogger.level.Store(l.level.Load())
-
+	child.level.Store(l.level.Load())
 	if len(l.baseFields) > 0 {
 		newBase := make([]Field, len(l.baseFields))
 		copy(newBase, l.baseFields)
-		newLogger.baseFields = newBase
+		child.baseFields = newBase
 	}
+	return child
+}
 
-	if l.cfg.ConsoleOutput != nil && l.cfg.ConsoleOutput != io.Discard {
-		newLogger.consoleWriter = NewConsoleWriterWithOptions(l.cfg.ConsoleOutput, l.cfg.ConsoleTheme, l.cfg.DisplayTimezone, l.cfg.FieldDisplayMode)
-		if t != nil {
-			newLogger.consoleWriter.SetTemplate(t)
-		}
-	}
+// WithComponent returns a child logger that stamps every entry with a
+// "component" string field. Sugar for l.With(String("component", name)).
+func (l *Logger) WithComponent(name string) *Logger {
+	return l.With(String("component", name))
+}
 
-	return newLogger
+// WithRequest returns a child logger that stamps every entry with a
+// "request_id" string field. Sugar for l.With(String("request_id", id)).
+func (l *Logger) WithRequest(id string) *Logger {
+	return l.With(String("request_id", id))
 }
 
 // Render writes r to the console writer, indented to align with the message column.

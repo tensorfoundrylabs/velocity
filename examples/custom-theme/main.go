@@ -70,8 +70,8 @@ func main() {
 
 	log.Newline()
 
-	// Detailed mode shows fields as a tree, same colours.
-	log.InfoDetailed("system status",
+	// Detailed() child forces tree mode, same colours as the parent theme.
+	log.Detailed().Info("system status",
 		velocity.String("cpu", "Arasaka X9-R"),
 		velocity.Int("cores", 128),
 		velocity.Float64("clock_ghz", 5.8),
@@ -98,16 +98,19 @@ func main() {
 
 	log.Newline()
 
-	// Status formatter picks up the theme for coloured OK/FAIL/WARN.
-	sf := velocity.NewStatusFormatter(ThemeCyberpunk, true)
+	// log.Style() returns the active theme. Use its ANSI codes directly to
+	// colour table cell content. Phase 2 adds Theme.Format(slot, s) as a
+	// cleaner API; this is the Phase 1 idiom.
+	style := log.Style()
+	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
 
 	p.Table(
 		[]string{"Implant", "Status", "Integrity"},
 		[][]string{
-			{"Kiroshi Optics Mk.3", sf.Okay("ONLINE"), "98%"},
-			{"Mantis Blades", sf.Okay("ONLINE"), "100%"},
-			{"Sandevistan Mk.4", sf.Warn("DEGRADED"), "67%"},
-			{"Monowire", sf.Fail("OFFLINE"), "12%"},
+			{"Kiroshi Optics Mk.3", colour(style.StatusOKColour, "ONLINE"), "98%"},
+			{"Mantis Blades", colour(style.StatusOKColour, "ONLINE"), "100%"},
+			{"Sandevistan Mk.4", colour(style.StatusWarnColour, "DEGRADED"), "67%"},
+			{"Monowire", colour(style.StatusFailColour, "OFFLINE"), "12%"},
 		},
 	)
 

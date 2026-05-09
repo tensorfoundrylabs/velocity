@@ -35,14 +35,19 @@ func main() {
 	// Section headers make it easy to scan a long run's output.
 	p.Section("Pre-flight Checks")
 
-	// StatusFormatter gives you coloured OK/FAIL/WARN/INFO tokens.
-	// Useful for checklist-style output where the status is the key signal.
-	sf := log.Status()
-	fmt.Printf("  %-30s %s\n", "Docker daemon reachable:", sf.Okay("OK"))
-	fmt.Printf("  %-30s %s\n", "Registry credentials:", sf.Okay("OK"))
-	fmt.Printf("  %-30s %s\n", "Kubernetes context:", sf.Warn("WARN (non-prod)"))
-	fmt.Printf("  %-30s %s\n", "Staging namespace exists:", sf.Okay("OK"))
-	fmt.Printf("  %-30s %s\n", "Production namespace:", sf.Fail("FAIL"))
+	// log.Style() returns the active theme. Use its colour fields to produce
+	// ANSI tokens for checklist-style output. Phase 2 adds Theme.Format(slot, s)
+	// as a dedicated API; this is the Phase 1 pattern.
+	style := log.Style()
+	colour := func(c velocity.Colour, s string) string { return c.ANSI(true) + s + velocity.Reset }
+	statusOK := colour(style.StatusOKColour, "OK")
+	statusWarn := colour(style.StatusWarnColour, "WARN (non-prod)")
+	statusFail := colour(style.StatusFailColour, "FAIL")
+	fmt.Printf("  %-30s %s\n", "Docker daemon reachable:", statusOK)
+	fmt.Printf("  %-30s %s\n", "Registry credentials:", statusOK)
+	fmt.Printf("  %-30s %s\n", "Kubernetes context:", statusWarn)
+	fmt.Printf("  %-30s %s\n", "Staging namespace exists:", statusOK)
+	fmt.Printf("  %-30s %s\n", "Production namespace:", statusFail)
 
 	p.Section("Environment Info")
 

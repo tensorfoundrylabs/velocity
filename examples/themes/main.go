@@ -39,9 +39,9 @@ func showTheme(theme *velocity.Theme) {
 	log.Warn("memory pressure detected", velocity.Int("used_mb", 780))
 	log.Error("health check failed", velocity.String("target", "db.internal"))
 
-	// InfoDetailed forces tree-format for the fields, which shows how each
+	// Detailed() returns a child that forces tree-format, showing how each
 	// theme colours key names and values separately.
-	log.InfoDetailed("deployment complete",
+	log.Detailed().Info("deployment complete",
 		velocity.String("environment", "staging"),
 		velocity.String("version", "3.1.0"),
 		velocity.Int("instances", 5),

@@ -77,7 +77,7 @@ func TestWith_EmptyFields_ReturnsSelf(t *testing.T) {
 	}
 }
 
-func TestWithTemplate_PreservesParentState(t *testing.T) {
+func TestWith_PreservesParentState(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -96,16 +96,14 @@ func TestWithTemplate_PreservesParentState(t *testing.T) {
 		return nil
 	}))
 
-	child := withField.WithTemplate(nil)
-
-	// Sampler must be the same instance.
-	if child.sampler != sampler {
+	// Sampler must be the same instance on the child.
+	if withField.sampler != sampler {
 		t.Error("expected child sampler to match parent sampler")
 	}
 
 	// baseFields must contain the "svc" field.
 	found := false
-	for _, f := range child.baseFields {
+	for _, f := range withField.baseFields {
 		if f.Key == "svc" {
 			found = true
 			break
@@ -115,14 +113,71 @@ func TestWithTemplate_PreservesParentState(t *testing.T) {
 		t.Error("expected child baseFields to contain 'svc' field")
 	}
 
-	child.Info("test message")
+	withField.Info("test message")
 
 	// Close to flush the async MultiWriter before asserting.
-	if err := child.Close(); err != nil {
+	if err := withField.Close(); err != nil {
 		t.Fatalf("close error: %v", err)
 	}
 
 	if count.Load() == 0 {
 		t.Error("expected additional writer to receive at least one entry")
+	}
+}
+
+func TestWithComponent_SetsField(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	parent := newForTesting(&buf)
+	child := parent.WithComponent("auth")
+
+	child.Info("login")
+
+	out := buf.String()
+	if !strings.Contains(out, "auth") {
+		t.Errorf("expected 'auth' in output from WithComponent, got: %s", out)
+	}
+}
+
+func TestWithComponent_ParentUnaffected(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	parent := newForTesting(&buf)
+	_ = parent.WithComponent("auth")
+
+	buf.Reset()
+	parent.Info("parent log")
+
+	out := buf.String()
+	if strings.Contains(out, "auth") {
+		t.Errorf("parent log should not contain component field, got: %s", out)
+	}
+}
+
+func TestWithRequest_SetsField(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	parent := newForTesting(&buf)
+	child := parent.WithRequest("req-abc-123")
+
+	child.Info("handling")
+
+	out := buf.String()
+	if !strings.Contains(out, "req-abc-123") {
+		t.Errorf("expected 'req-abc-123' in output from WithRequest, got: %s", out)
+	}
+}
+
+func TestWithComponent_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	var l *Logger
+	// Nil With() returns nil, so nil.WithComponent is safe.
+	child := l.WithComponent("x")
+	if child != nil {
+		t.Error("expected nil for nil.WithComponent()")
 	}
 }

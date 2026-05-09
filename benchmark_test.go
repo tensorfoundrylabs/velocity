@@ -312,15 +312,15 @@ func BenchmarkInfo_TreeMode_Parallel(b *testing.B) {
 	})
 }
 
-// BenchmarkInfoDetailed_TreeMode measures the InfoDetailed path which always forces
+// BenchmarkDetailed_TreeMode measures the Detailed() child path which forces
 // tree display regardless of the configured FieldDisplayMode.
-func BenchmarkInfoDetailed_TreeMode(b *testing.B) {
-	l := newDiscardLogger()
+func BenchmarkDetailed_TreeMode(b *testing.B) {
+	l := newDiscardLogger().Detailed()
 	fields := fiveFields()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		l.InfoDetailed("detailed entry", fields...)
+		l.Info("detailed entry", fields...)
 	}
 }
 

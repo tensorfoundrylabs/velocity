@@ -1,6 +1,6 @@
 // Package main demonstrates velocity's table rendering for structured
 // terminal output. Tables auto-size columns and handle ANSI colour codes
-// in cell content (e.g. from StatusFormatter) without breaking alignment.
+// in cell content without breaking alignment.
 package main
 
 import (
@@ -17,7 +17,13 @@ func main() {
 		velocity.WithLevel(velocity.LevelDebug),
 	)
 
-	sf := log.Status()
+	// log.Style() returns the active theme. Use its colour fields directly
+	// to produce ANSI-coloured cell content. Phase 2 will add Theme.Format(slot, s)
+	// as a cleaner API for this pattern.
+	style := log.Style()
+	ok := func(s string) string { return style.StatusOKColour.ANSI(true) + s + velocity.Reset }
+	warn := func(s string) string { return style.StatusWarnColour.ANSI(true) + s + velocity.Reset }
+	fail := func(s string) string { return style.StatusFailColour.ANSI(true) + s + velocity.Reset }
 	theme := velocity.ThemeNightOwl
 
 	fmt.Println("=== Pretty Table ===")
@@ -26,11 +32,11 @@ func main() {
 	log.RenderRaw(velocity.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
-			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
-			{"payments", sf.Okay("HEALTHY"), "45ms", "us-east-1"},
-			{"search", sf.Warn("DEGRADED"), "380ms", "eu-west-1"},
-			{"notifications", sf.Fail("DOWN"), "-", "ap-southeast-2"},
-			{"analytics", sf.Okay("HEALTHY"), "28ms", "us-west-2"},
+			{"auth-api", ok("HEALTHY"), "12ms", "us-east-1"},
+			{"payments", ok("HEALTHY"), "45ms", "us-east-1"},
+			{"search", warn("DEGRADED"), "380ms", "eu-west-1"},
+			{"notifications", fail("DOWN"), "-", "ap-southeast-2"},
+			{"analytics", ok("HEALTHY"), "28ms", "us-west-2"},
 		},
 		theme,
 	))
@@ -41,17 +47,16 @@ func main() {
 	log.RenderRaw(velocity.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
-			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
-			{"node-1", "A100 80GB", "65.1 / 80.0 GB", sf.Okay("81%"), "65C"},
-			{"node-2", "A100 80GB", "78.9 / 80.0 GB", sf.Warn("98%"), "82C"},
-			{"node-3", "A100 80GB", "0.0 / 80.0 GB", sf.Fail("0%"), "34C"},
+			{"node-0", "A100 80GB", "72.3 / 80.0 GB", ok("89%"), "68C"},
+			{"node-1", "A100 80GB", "65.1 / 80.0 GB", ok("81%"), "65C"},
+			{"node-2", "A100 80GB", "78.9 / 80.0 GB", warn("98%"), "82C"},
+			{"node-3", "A100 80GB", "0.0 / 80.0 GB", fail("0%"), "34C"},
 		},
 		theme,
 	))
 	log.Newline()
 
-	// Tables work without colour too. velocity.NewPretty(os.Stdout, nil) demonstrates
-	// the standalone constructor without a logger.
+	// Tables work without colour too.
 	fmt.Println("=== Plain Table (no theme, no colour) ===")
 	fmt.Println()
 	log.RenderRaw(velocity.NewTable(
@@ -90,9 +95,9 @@ func main() {
 	log.Render(velocity.NewTable(
 		[]string{"Migration", "Duration", "Status"},
 		[][]string{
-			{"001_initial_schema.sql", "5ms", sf.Okay("OK")},
-			{"002_webhooks.sql", "2ms", sf.Okay("OK")},
-			{"003_model_access.sql", "3ms", sf.Okay("OK")},
+			{"001_initial_schema.sql", "5ms", ok("OK")},
+			{"002_webhooks.sql", "2ms", ok("OK")},
+			{"003_model_access.sql", "3ms", ok("OK")},
 		},
 		theme,
 	))
