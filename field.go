@@ -34,6 +34,11 @@ const (
 	FieldTypeSecureURL // URL with userinfo password redacted
 	FieldTypeRedacted  // permanently redacted; no plaintext stored anywhere
 	FieldTypeTruncated // value clipped to maxLen; may still be sensitive
+
+	// FieldTypeGroupItems carries a []GroupItem for Logger.Group calls.
+	// Stored as a typed Field so Entry layout stays unchanged — entries that never
+	// call Logger.Group pay zero cost.
+	FieldTypeGroupItems
 )
 
 // Field represents a structured log field optimised for minimal allocations.
@@ -319,6 +324,10 @@ func (f Field) Value() any {
 			return *(*string)(f.value)
 		}
 		return ""
+	case FieldTypeGroupItems:
+		// Items are handled directly by group-aware writers.
+		// Returning nil here prevents fmt fallback from trying to dereference the slice pointer.
+		return nil
 	case FieldTypeUnknown:
 		return nil
 	}
@@ -395,6 +404,17 @@ func (f Field) writeFormatted(buf interface {
 		// Truncated values are not sensitive by definition; always emit as-is.
 		if f.value != nil {
 			_, _ = buf.WriteString(*(*string)(f.value))
+		}
+	case FieldTypeGroupItems:
+		// Group items are rendered by the console/JSON writers directly.
+		// In generic contexts (e.g. additional writers) write the item count as a hint.
+		if f.value != nil {
+			items := *(*[]GroupItem)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(items)))
+			_, _ = buf.WriteString("[")
+			_, _ = buf.Write(tmp[:n])
+			_, _ = buf.WriteString(" items]")
 		}
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing

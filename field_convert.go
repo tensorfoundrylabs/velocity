@@ -89,6 +89,15 @@ func FieldValueToString(f Field) string {
 			return ""
 		}
 		return *(*string)(f.value)
+	case FieldTypeGroupItems:
+		// Return a human-readable hint; group-aware writers handle items directly.
+		if f.value == nil {
+			return "[0 items]"
+		}
+		items := *(*[]GroupItem)(f.value)
+		var tmp [20]byte
+		n := formatInt(tmp[:], int64(len(items)))
+		return "[" + UnsafeString(tmp[:n]) + " items]"
 	case FieldTypeUnknown:
 		return ""
 	}

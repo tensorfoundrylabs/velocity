@@ -494,8 +494,154 @@ func consoleFormatValueCore(buf *BytesBuffer, f Field) {
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by formatValueSecure before consoleFormatValueCore is called.
 
+	case FieldTypeGroupItems:
+		// Group items are rendered by WriteGroup; in generic paths emit a hint.
+		if f.value != nil {
+			items := *(*[]GroupItem)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(items)))
+			_ = buf.WriteByte('[')
+			_, _ = buf.Write(tmp[:n])
+			buf.WriteString(" items]")
+		}
+
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing
+	}
+}
+
+// WriteGroup renders a Group log entry. On TTY it emits the coloured count header
+// followed by indented item lines; on non-TTY it falls back to the standard
+// template path for the header and appends plain item lines.
+func (w *ConsoleWriter) WriteGroup(e *Entry, items []GroupItem) error {
+	return w.WriteGroupSecure(e, items, w.isTTY, "[REDACTED]")
+}
+
+// WriteGroupSecure is the trust-aware group write path.
+func (w *ConsoleWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool, redactionMark string) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ErrWriterClosed
+	}
+	tmpl := w.template
+	theme := w.theme
+	tz := w.displayTimezone
+	isTTY := w.isTTY
+	w.mu.Unlock()
+
+	tempBuf := GetTemplateBuffer()
+	defer PutTemplateBuffer(tempBuf)
+
+	switch {
+	case isTTY && tmpl != nil:
+		// On TTY: coloured level + count-coloured message header, then indented item lines.
+		buildGroupLineTTY(tempBuf, e, theme, tz, trusted, redactionMark, items, tmpl)
+	case tmpl != nil:
+		// Non-TTY: standard template for the header (level + plain message with count),
+		// then plain item lines appended directly.
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		// The template appends a trailing '\n'; item lines follow without extra spacing.
+		writeGroupConsoleItems(tempBuf, items)
+	default:
+		fmt.Fprintf(tempBuf, "%s\n", e.Message)
+		writeGroupConsoleItems(tempBuf, items)
+	}
+
+	w.mu.Lock()
+	_, err := w.out.Write(tempBuf.Bytes())
+	w.mu.Unlock()
+	return err
+}
+
+// buildGroupLineTTY builds the full TTY group block: timestamp + level + coloured
+// message+count header, then indented+coloured item lines.
+func buildGroupLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Location, trusted bool, redactionMark string, items []GroupItem, tmpl *Template) {
+	// Timestamp.
+	if !e.Time.IsZero() {
+		if theme != nil {
+			buf.WriteString(theme.cachedTimestampFgStr())
+		}
+		displayTime := e.Time.In(tz)
+		buf.Write(displayTime.AppendFormat(buf.AvailableBuffer(), time.RFC3339))
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		buf.WriteByte(' ')
+	}
+
+	// Level badge "[INFO]".
+	if theme != nil {
+		buf.WriteString(theme.cachedLevelCode(e.Level))
+	}
+	buf.WriteByte('[')
+	buf.WriteString(e.Level.ConciseLabel())
+	buf.WriteByte(']')
+	if theme != nil {
+		buf.WriteString(Reset)
+	}
+	buf.WriteByte(' ')
+
+	// Message (secure-aware, with count rendered in SlotCount colour).
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+
+	// msg here is already "text (N)" — we need to split out the " (N)" suffix and
+	// re-render it with the SlotCount colour. Find the last " (" which we inserted.
+	// This is safe because groupMsgWithCount always appends " (N)".
+	if idx := strings.LastIndex(msg, " ("); idx >= 0 {
+		head := msg[:idx]
+		tail := msg[idx+2 : len(msg)-1] // extract the count digits only
+		if theme != nil {
+			buf.WriteString(theme.CachedMessageFg())
+		}
+		buf.WriteString(head)
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		buf.WriteString(" (")
+		countPrefix, countSuffix := theme.Wrap(SlotCount)
+		buf.WriteString(countPrefix)
+		buf.WriteString(tail)
+		buf.WriteString(countSuffix)
+		buf.WriteByte(')')
+	} else {
+		if theme != nil {
+			buf.WriteString(theme.CachedMessageFg())
+		}
+		buf.WriteString(msg)
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+	}
+	buf.WriteByte('\n')
+
+	// Item lines indented to the message column so they sit flush under the header.
+	indent := tmpl.CachedMessageIndentStr()
+	for i, item := range items {
+		marker := resolvedMarker(item.Marker, i, len(items))
+		buf.WriteString(indent)
+		buf.WriteString(groupItemIndent)
+		if theme != nil {
+			buf.WriteString(theme.CachedFieldKeyFg())
+		}
+		buf.WriteString(marker)
+		buf.WriteByte(' ')
+		if theme != nil {
+			buf.WriteString(Reset)
+			buf.WriteString(theme.CachedMessageFg())
+		}
+		buf.WriteString(item.Text)
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		buf.WriteByte('\n')
 	}
 }
 

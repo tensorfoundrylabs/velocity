@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,7 +68,7 @@ func (w *JSONWriter) formatJSONStatusSecure(buf *BytesBuffer, e *Entry, trusted 
 
 	w.writeJSONString(buf, "timestamp")
 	_ = buf.WriteByte(':')
-	w.writeJSONTime(buf, e.Time, time.RFC3339Nano)
+	w.writeJSONTime(buf, e.Time)
 
 	_ = buf.WriteByte(',')
 	w.writeJSONString(buf, "level")
@@ -114,6 +115,115 @@ func (w *JSONWriter) formatJSONStatusSecure(buf *BytesBuffer, e *Entry, trusted 
 	_ = buf.WriteByte('}')
 }
 
+// WriteGroup emits a JSON entry for a Logger.Group call.
+// The entry message is the plain header string "msg (N)"; the structured fields
+// "count" (int) and "items" (string array, markers stripped) are added.
+func (w *JSONWriter) WriteGroup(e *Entry, items []GroupItem) error {
+	return w.WriteGroupSecure(e, items, false, "[REDACTED]")
+}
+
+// WriteGroupSecure is the trust-aware group JSON write path.
+func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool, redactionMark string) error {
+	rawBuf := w.bufPool.Get(HintStructuredLog)
+	buf := NewBytesBuffer(rawBuf)
+
+	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
+
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		w.bufPool.Put(rawBuf)
+		return ErrWriterClosed
+	}
+	_, err := w.out.Write(buf.Bytes())
+	if err == nil {
+		_, err = w.out.Write(newlineByte)
+	}
+	w.mu.Unlock()
+
+	w.bufPool.Put(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
+}
+
+func (w *JSONWriter) formatJSONGroupSecure(buf *BytesBuffer, e *Entry, items []GroupItem, trusted bool, redactionMark string) {
+	_ = buf.WriteByte('{')
+
+	w.writeJSONString(buf, "timestamp")
+	_ = buf.WriteByte(':')
+	w.writeJSONTime(buf, e.Time)
+
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "level")
+	_ = buf.WriteByte(':')
+	w.writeJSONString(buf, e.Level.String())
+
+	// Emit message without the " (N)" suffix — the count field carries that.
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, "message")
+	_ = buf.WriteByte(':')
+	// Strip the " (N)" suffix from the composite message so the JSON message is clean.
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	// groupMsgWithCount always appends " (N)"; strip it back out for the JSON message.
+	if idx := strings.LastIndex(msg, " ("); idx >= 0 {
+		msg = msg[:idx]
+	}
+	w.writeJSONString(buf, msg)
+
+	if e.Caller != "" {
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "caller")
+		_ = buf.WriteByte(':')
+		w.writeJSONString(buf, e.Caller)
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, "line")
+		_ = buf.WriteByte(':')
+		buf.WriteInt(int64(e.Line))
+	}
+
+	// Count and items array: markers are visual-only, JSON carries only text.
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, groupCountKey)
+	_ = buf.WriteByte(':')
+	var tmp [20]byte
+	n := formatInt(tmp[:], int64(len(items)))
+	_, _ = buf.Write(tmp[:n])
+
+	_ = buf.WriteByte(',')
+	w.writeJSONString(buf, groupItemsKey)
+	_ = buf.WriteByte(':')
+	_ = buf.WriteByte('[')
+	for i, item := range items {
+		if i > 0 {
+			_ = buf.WriteByte(',')
+		}
+		w.writeJSONString(buf, item.Text)
+	}
+	_ = buf.WriteByte(']')
+
+	// Any additional Fields on the entry (base fields from With()).
+	for _, f := range e.Fields {
+		if f.Type == FieldTypeGroupItems {
+			continue // already emitted above
+		}
+		_ = buf.WriteByte(',')
+		w.writeJSONString(buf, f.Key)
+		_ = buf.WriteByte(':')
+		w.writeJSONFieldValueSecure(buf, f, trusted, redactionMark)
+	}
+
+	_ = buf.WriteByte('}')
+}
+
 // WriteSecure implements SecureWriter. trusted controls whether Secure field
 // values are emitted as plaintext or as redactionMark. JSON writers are typically
 // called with trusted=false; a trusted JSON sink (e.g. an internal audit log)
@@ -149,7 +259,7 @@ func (w *JSONWriter) formatJSONSecure(buf *BytesBuffer, e *Entry, trusted bool, 
 
 	w.writeJSONString(buf, "timestamp")
 	_ = buf.WriteByte(':')
-	w.writeJSONTime(buf, e.Time, time.RFC3339Nano)
+	w.writeJSONTime(buf, e.Time)
 
 	_ = buf.WriteByte(',')
 	w.writeJSONString(buf, "level")
@@ -191,11 +301,11 @@ func (w *JSONWriter) formatJSONSecure(buf *BytesBuffer, e *Entry, trusted bool, 
 	_ = buf.WriteByte('}')
 }
 
-// writeJSONTime writes a quoted timestamp directly into buf using AppendFormat.
-// RFC3339/RFC3339Nano output is ASCII-safe, so JSON escaping is not needed.
-func (*JSONWriter) writeJSONTime(buf *BytesBuffer, t time.Time, layout string) {
+// writeJSONTime writes a quoted RFC3339Nano timestamp directly into buf.
+// RFC3339Nano output is ASCII-safe, so JSON escaping is not needed.
+func (*JSONWriter) writeJSONTime(buf *BytesBuffer, t time.Time) {
 	_ = buf.WriteByte('"')
-	buf.AppendTime(t, layout)
+	buf.AppendTime(t, time.RFC3339Nano)
 	_ = buf.WriteByte('"')
 }
 
@@ -310,7 +420,7 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 
 	case FieldTypeTime:
 		t := *(*time.Time)(f.value)
-		w.writeJSONTime(buf, t, time.RFC3339Nano)
+		w.writeJSONTime(buf, t)
 
 	case FieldTypeDuration:
 		d := time.Duration(f.num)
@@ -381,6 +491,18 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.
+
+	case FieldTypeGroupItems:
+		// Group items are emitted directly by formatJSONGroupSecure; in the generic
+		// field path emit the count as a number so the JSON remains valid.
+		if f.value != nil {
+			items := *(*[]GroupItem)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(items)))
+			_, _ = buf.Write(tmp[:n])
+		} else {
+			buf.WriteString("0")
+		}
 
 	case FieldTypeUnknown:
 		// Null prevents JSON parsing errors when field type cannot be determined

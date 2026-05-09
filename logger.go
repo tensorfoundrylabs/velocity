@@ -473,6 +473,90 @@ func (l *Logger) logStatus(level Level, kind StatusKind, msg string, fields ...F
 	entry.Write()
 }
 
+// Group logs a count-headed block with one item per line.
+//
+// On a TTY console the output is:
+//
+//	2006-01-02T15:04:05+10:00 [INFO] Registering routes (3)
+//	                                   ├─ GET  /api/v1/users
+//	                                   ├─ POST /api/v1/users
+//	                                   └─ GET  /api/v1/users/:id
+//
+// The JSON writer emits a single entry with "count" and "items" fields.
+// Item markers are visual-only and are stripped from JSON output.
+// All standard log-call semantics apply: level filtering, sampling, base fields.
+func (l *Logger) Group(level Level, msg string, items ...GroupItem) {
+	if l == nil {
+		fmt.Fprintf(os.Stderr, "[%s] %s (%d)\n", level.ConciseLabel(), msg, len(items))
+		return
+	}
+	if l.closed.Load() || !l.isEnabled(level) {
+		return
+	}
+	l.logGroup(level, msg, items)
+}
+
+// logGroup is the internal implementation of Group.
+func (l *Logger) logGroup(level Level, msg string, items []GroupItem) {
+	if l == nil {
+		return
+	}
+
+	if l.sampler != nil && !l.sampler.Sample(level, msg) {
+		return
+	}
+
+	entry := GetEntry()
+	defer entry.Release()
+
+	// The composite "msg (N)" string is set as the entry message so the standard
+	// template path renders the count on non-TTY paths without special-casing.
+	entry.SetLevel(level)
+	entry.SetMessage(groupMsgWithCount(msg, len(items)))
+	entry.SetTime(time.Now())
+	entry.forceTreeDisplay = l.forceTreeDisplay
+
+	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		entry.maybeSecure = true
+	}
+
+	if len(l.baseFields) > 0 {
+		entry.WithFields(l.baseFields...)
+	}
+
+	l.captureCaller(entry, 0)
+
+	if l.cfg != nil {
+		// Console and JSON writers receive items directly — their dedicated Group
+		// methods handle rendering without adding a FieldTypeGroupItems field to
+		// the entry, which would cause the standard template to emit "[N items]".
+		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
+			if err := l.consoleWriter.WriteGroup(entry, items); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+			}
+		}
+
+		if level >= l.cfg.StructuredLevel && l.jsonWriter != nil {
+			if err := l.jsonWriter.WriteGroup(entry, items); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+			}
+		}
+
+		entry.Write()
+
+		l.writersMu.RLock()
+		if l.additionalWriters != nil {
+			// Additional writers get the typed field so they can optionally
+			// render the items. Writers that don't understand FieldTypeGroupItems
+			// emit "[N items]" as a fallback hint (see writeFormatted).
+			entry.WithFields(groupItemsField(items))
+			_ = l.additionalWriters.Write(entry)
+		}
+		l.writersMu.RUnlock()
+		return
+	}
+
+	entry.Write()
+}
+
 func (l *Logger) Fatal(msg string, fields ...Field) {
 	if l == nil {
 		fmt.Fprintf(os.Stderr, "[FATL] %s\n", msg)
