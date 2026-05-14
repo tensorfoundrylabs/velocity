@@ -96,7 +96,7 @@ func renderGroupTTY(buf *bytes.Buffer, msg string, items []GroupItem, theme *The
 	}
 	buf.WriteString(msg)
 	if msgCode != "" {
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 	}
 	buf.WriteString(" (")
 	countPrefix, countSuffix := theme.Wrap(SlotCount)
@@ -166,14 +166,14 @@ func writeGroupConsoleTTYItems(buf *bytes.Buffer, items []GroupItem, theme *Them
 		buf.WriteString(marker)
 		buf.WriteByte(' ')
 		if keyCode != "" {
-			buf.WriteString(Reset)
+			buf.WriteString(theme.ResetStr())
 		}
 		if msgCode != "" {
 			buf.WriteString(msgCode)
 		}
 		buf.WriteString(item.Text)
 		if msgCode != "" {
-			buf.WriteString(Reset)
+			buf.WriteString(theme.ResetStr())
 		}
 		buf.WriteByte('\n')
 	}

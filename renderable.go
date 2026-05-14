@@ -123,19 +123,19 @@ func renderBox(buf *bytes.Buffer, theme *Theme, title, content string) {
 	}
 	buf.WriteString(strings.Repeat("─", topFill))
 	buf.WriteString("┐")
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 
 	for _, line := range lines {
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString("│ ")
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedMessageFg())
 		buf.WriteString(padRightRunes(line, width-3))
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString("│")
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString("\n")
 	}
 
@@ -143,7 +143,7 @@ func renderBox(buf *bytes.Buffer, theme *Theme, title, content string) {
 	buf.WriteString("└")
 	buf.WriteString(strings.Repeat("─", width-2))
 	buf.WriteString("┘")
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -218,7 +218,7 @@ func writeTableTopBorder(buf *bytes.Buffer, theme *Theme, colWidths []int) {
 			buf.WriteString("┬")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -229,14 +229,14 @@ func writeTableHeaders(buf *bytes.Buffer, theme *Theme, headers []string, colWid
 			buf.WriteString("│")
 		}
 		buf.WriteString(" ")
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedTableHeaderFg())
 		buf.WriteString(padRight(header, colWidths[i]))
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString(" ")
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -248,7 +248,7 @@ func writeTableHeaderSeparator(buf *bytes.Buffer, theme *Theme, colWidths []int)
 			buf.WriteString("┼")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -261,14 +261,14 @@ func writeTableRow(buf *bytes.Buffer, theme *Theme, row []string, colWidths []in
 		buf.WriteString(" ")
 		buf.WriteString(theme.CachedMessageFg())
 		buf.WriteString(padRightVisible(cell, colWidths[i]))
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString(" ")
 		if i < len(colWidths)-1 {
 			buf.WriteString("│")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -280,7 +280,7 @@ func writeTableBottomBorder(buf *bytes.Buffer, theme *Theme, colWidths []int) {
 			buf.WriteString("┴")
 		}
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -332,19 +332,19 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	buf.WriteString("╔")
 	buf.WriteString(strings.Repeat("─", boxWidth))
 	buf.WriteString("╗")
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 
 	for _, line := range lines {
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString("│ ")
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedMessageFg())
 		buf.WriteString(padRightRunes(line, contentWidth))
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString(" │")
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 		buf.WriteString("\n")
 	}
 
@@ -352,7 +352,7 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	buf.WriteString("╚")
 	buf.WriteString(strings.Repeat("─", boxWidth))
 	buf.WriteString("╝")
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
 
@@ -402,7 +402,7 @@ func writeTreeItemInto(buf *bytes.Buffer, theme *Theme, node TreeItem, prefix st
 	} else {
 		buf.WriteString(node.Key)
 	}
-	buf.WriteString(Reset)
+	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 
 	childPrefix := prefix
@@ -438,11 +438,11 @@ func (kv *KeyValue) Render(w io.Writer) error {
 	defer PutBuffer(buf)
 	buf.WriteString(kv.theme.CachedFieldKeyFg())
 	buf.WriteString(kv.key)
-	buf.WriteString(Reset)
+	buf.WriteString(kv.theme.ResetStr())
 	buf.WriteString(": ")
 	buf.WriteString(kv.theme.CachedFieldValFg())
 	buf.WriteString(kv.value)
-	buf.WriteString(Reset)
+	buf.WriteString(kv.theme.ResetStr())
 	buf.WriteString("\n")
 	_, err := buf.WriteTo(w)
 	return err
@@ -487,18 +487,18 @@ func (s *SystemInfo) Render(w io.Writer) error {
 			buf.WriteString(s.info.Version)
 		}
 		buf.WriteString(" ▓")
-		buf.WriteString(Reset)
+		buf.WriteString(s.theme.ResetStr())
 		buf.WriteString("\n")
 	}
 
 	for _, pair := range s.info.Fields {
 		buf.WriteString(s.theme.CachedFieldKeyFg())
 		buf.WriteString(padRight(pair.Key+":", 20))
-		buf.WriteString(Reset)
+		buf.WriteString(s.theme.ResetStr())
 		buf.WriteString(" ")
 		buf.WriteString(s.theme.CachedMessageFg())
 		buf.WriteString(pair.Value)
-		buf.WriteString(Reset)
+		buf.WriteString(s.theme.ResetStr())
 		buf.WriteString("\n")
 	}
 

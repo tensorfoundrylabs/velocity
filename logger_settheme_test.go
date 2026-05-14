@@ -174,16 +174,20 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 // Style() returned noColourTheme even when a console writer was active because
 // cfg.ConsoleTheme was nil (the nil-means-NightOwl convention).
 // WithDevelopment() leaves ConsoleTheme nil (uses the default), so Style() must
-// still return a coloured theme that matches what the console writer actually uses.
+// return a coloured theme when colour is enabled (FORCE_COLOR=1 or real TTY).
 func TestLogger_Style_ColourFollowsActiveTheme(t *testing.T) {
-	t.Parallel()
+	// Cannot run in parallel because t.Setenv modifies a process-wide env var.
+	// Style() is colour-aware: it returns mono for non-TTY writers and the
+	// themed palette for TTY writers. Use FORCE_COLOR=1 to test the colour
+	// path without requiring a real terminal in CI.
+	t.Setenv("FORCE_COLOR", "1")
 
 	log := New(WithDevelopment())
 	style := log.Style()
 
-	// A coloured theme must not be the no-colour sentinel.
+	// A coloured theme must not be the no-colour sentinel under FORCE_COLOR.
 	if style == noColourTheme {
-		t.Error("Style() returned noColourTheme for a development logger with an active console writer")
+		t.Error("Style() returned noColourTheme under FORCE_COLOR=1 for a development logger")
 	}
 
 	// Must not be nil.
@@ -193,7 +197,7 @@ func TestLogger_Style_ColourFollowsActiveTheme(t *testing.T) {
 
 	// Confirm at least one ANSI code is present (timestamp or level colour).
 	if style.cachedTimestampFgStr() == "" && style.cachedLevelCode(LevelInfo) == "" {
-		t.Error("Style() returned a theme with no ANSI codes — expected coloured output")
+		t.Error("Style() returned a theme with no ANSI codes under FORCE_COLOR=1 — expected coloured output")
 	}
 }
 

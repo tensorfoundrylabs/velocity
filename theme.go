@@ -375,6 +375,16 @@ func (t *Theme) CachedTableHeaderFg() string { return t.cachedTableHeaderFgStr()
 // CachedInfoColourFg returns the pre-computed ANSI foreground for the info colour.
 func (t *Theme) CachedInfoColourFg() string { return t.cachedInfoColourFgStr() }
 
+// ResetStr returns the ANSI reset sequence for colour themes, or an empty string
+// for colour-free (mono) themes. Use this in renderers instead of the bare Reset
+// constant so that NO_COLOR and ThemeMono suppress resets along with the colour codes.
+func (t *Theme) ResetStr() string {
+	if t == nil || t.noColour {
+		return ""
+	}
+	return Reset
+}
+
 // --- Built-in themes ---
 
 // ThemeNightOwl is a dark, high-contrast palette inspired by the Night Owl VS Code theme.

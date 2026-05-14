@@ -62,7 +62,10 @@ func TestClose_WithAdditionalWriter(t *testing.T) {
 }
 
 func TestStyle_ReturnsTheme(t *testing.T) {
-	t.Parallel()
+	// Cannot run in parallel because t.Setenv modifies a process-wide env var.
+	// Style() returns mono for non-TTY writers; use FORCE_COLOR to test the
+	// colour path without requiring a real terminal in CI.
+	t.Setenv("FORCE_COLOR", "1")
 
 	log := New(
 		WithConsoleOutput(bytes.NewBuffer(nil)),
@@ -74,7 +77,7 @@ func TestStyle_ReturnsTheme(t *testing.T) {
 		t.Fatal("Style() returned nil")
 	}
 	if theme == noColourTheme {
-		t.Error("expected themed logger to return its theme, not noColourTheme")
+		t.Error("expected themed logger to return its theme under FORCE_COLOR=1, not noColourTheme")
 	}
 }
 

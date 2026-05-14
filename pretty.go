@@ -19,19 +19,28 @@ type Pretty struct {
 }
 
 // NewPretty returns a Pretty that writes to w using the given theme.
-// If theme is nil, ThemeNightOwl is used. If w is nil, output goes to io.Discard.
+// When theme is nil, colour capability is derived from w using resolveColourForWriter
+// (which honours FORCE_COLOR / NO_COLOR and fd-level TTY detection): a colour-capable
+// writer gets ThemeNightOwl; a non-colour writer gets ThemeMono.
+// If w is nil, output goes to io.Discard with no colour.
 func NewPretty(w io.Writer, theme *Theme) *Pretty {
-	if theme == nil {
-		theme = ThemeNightOwl
-	}
 	if w == nil {
-		w = io.Discard
+		return &Pretty{writer: io.Discard, theme: ThemeMono}
+	}
+	if theme == nil {
+		if resolveColourForWriter(w) {
+			theme = ThemeNightOwl
+		} else {
+			theme = ThemeMono
+		}
 	}
 	return &Pretty{writer: w, theme: theme}
 }
 
 // NewPrettyFromLogger returns a Pretty whose writes are serialised under the logger's
 // console writer mutex, preventing interleaving with concurrent log calls.
+// The theme is derived from Logger.Style(), which returns a mono theme when the
+// console writer has colour disabled (NO_COLOR, piped output, or WithProduction).
 // Returns nil if log is nil — callers can branch on presence without a nil check ladder.
 func NewPrettyFromLogger(log *Logger) *Pretty {
 	if log == nil {
@@ -39,7 +48,7 @@ func NewPrettyFromLogger(log *Logger) *Pretty {
 	}
 	return &Pretty{
 		writer: &prettyLoggerWriter{log: log},
-		theme:  log.Theme(),
+		theme:  log.Style(),
 	}
 }
 
@@ -119,11 +128,11 @@ func (p *Pretty) Bullet(level int, text string) {
 	buf.WriteString(indent)
 	buf.WriteString(p.theme.CachedFieldKeyFg())
 	buf.WriteString(bullet)
-	buf.WriteString(Reset)
+	buf.WriteString(p.theme.ResetStr())
 	buf.WriteString(" ")
 	buf.WriteString(p.theme.CachedMessageFg())
 	buf.WriteString(text)
-	buf.WriteString(Reset)
+	buf.WriteString(p.theme.ResetStr())
 	buf.WriteString("\n")
 	_, _ = buf.WriteTo(p.writer)
 }
@@ -147,7 +156,7 @@ func (p *Pretty) Section(title string) {
 	defer PutBuffer(buf)
 	buf.WriteString(p.theme.CachedMessageFg())
 	buf.WriteString(title)
-	buf.WriteString(Reset)
+	buf.WriteString(p.theme.ResetStr())
 	buf.WriteString("\n")
 	buf.WriteString(strings.Repeat("─", 40))
 	buf.WriteString("\n")
@@ -177,7 +186,7 @@ func (p *Pretty) Panel(title, content string) {
 		buf.WriteString(" ▓\n")
 	}
 	buf.WriteString(content)
-	buf.WriteString(Reset)
+	buf.WriteString(p.theme.ResetStr())
 	buf.WriteString("\n")
 	_, _ = buf.WriteTo(p.writer)
 }
@@ -256,7 +265,7 @@ func (p *Pretty) printStyled(icon, message, ansiCode string) {
 		buf.WriteString(" ")
 	}
 	buf.WriteString(message)
-	buf.WriteString(Reset)
+	buf.WriteString(p.theme.ResetStr())
 	buf.WriteString("\n")
 	_, _ = buf.WriteTo(p.writer)
 }

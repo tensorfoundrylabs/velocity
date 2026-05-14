@@ -159,7 +159,7 @@ func renderContinuationTTY(buf *bytes.Buffer, msg string, lines []string, theme 
 	}
 	buf.WriteString(msg)
 	if msgCode != "" {
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 	}
 	buf.WriteByte('\n')
 

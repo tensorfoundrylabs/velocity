@@ -794,7 +794,12 @@ func (l *Logger) Style() *Theme {
 	if l.consoleWriter == nil {
 		return noColourTheme
 	}
-	// Console writer is active: delegate to Theme() for the NightOwl fallback.
+	// Colour resolved to off for this writer (NO_COLOR, piped, non-TTY) — return
+	// mono so callers using Style().Format() don't emit ANSI into pipes or files.
+	if !l.consoleWriter.isTTY {
+		return noColourTheme
+	}
+	// Console writer is active and colour-capable: return the themed palette.
 	return l.Theme()
 }
 

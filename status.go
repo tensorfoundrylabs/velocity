@@ -202,7 +202,7 @@ func renderStatusItemTTY(buf *bytes.Buffer, kind StatusKind, msg string, theme *
 	}
 	buf.WriteString(msg)
 	if msgCode != "" {
-		buf.WriteString(Reset)
+		buf.WriteString(theme.ResetStr())
 	}
 
 	// Fields rendered inline with key/value colours from the theme.
@@ -247,7 +247,7 @@ func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColou
 		}
 		buf.WriteString(f.Key)
 		if keyCode != "" {
-			buf.WriteString(Reset)
+			buf.WriteString(theme.ResetStr())
 		}
 
 		buf.WriteByte('=')
@@ -267,7 +267,7 @@ func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColou
 		}
 
 		if valCode != "" {
-			buf.WriteString(Reset)
+			buf.WriteString(theme.ResetStr())
 		}
 	}
 }
