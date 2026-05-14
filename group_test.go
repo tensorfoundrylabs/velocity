@@ -71,7 +71,7 @@ func TestGroupNilReceiver(t *testing.T) {
 func TestGroupRenderEmpty(t *testing.T) {
 	t.Parallel()
 
-	g := NewGroup("Loaded plugins", nil, ThemeMono, false)
+	g := NewGroup("Loaded plugins", nil, ThemeMono)
 	out := g.String()
 
 	if !strings.Contains(out, "Loaded plugins (0)") {
@@ -91,7 +91,7 @@ func TestGroupRenderSingleItem(t *testing.T) {
 
 	g := NewGroup("Loaded plugins", []GroupItem{
 		{Text: "auth"},
-	}, ThemeMono, false)
+	}, ThemeMono)
 	out := g.String()
 
 	if !strings.Contains(out, "(1)") {
@@ -113,7 +113,7 @@ func TestGroupRenderMultipleItemsAutoLast(t *testing.T) {
 		{Text: "POST /api/v1/users"},
 		{Text: "GET  /api/v1/users/:id"},
 	}
-	g := NewGroup("Registering routes", items, ThemeMono, false)
+	g := NewGroup("Registering routes", items, ThemeMono)
 	out := g.String()
 
 	if !strings.Contains(out, "(3)") {
@@ -139,7 +139,7 @@ func TestGroupRenderExplicitMarkers(t *testing.T) {
 		{Marker: "✗", Text: "failed"},
 		{Marker: "~", Text: "skipped"},
 	}
-	g := NewGroup("Test results", items, ThemeMono, false)
+	g := NewGroup("Test results", items, ThemeMono)
 	out := g.String()
 
 	for _, want := range []string{"✓ passed", "✗ failed", "~ skipped"} {
@@ -154,6 +154,8 @@ func TestGroupRenderExplicitMarkers(t *testing.T) {
 }
 
 // --- TTY render: count has different colour (no ANSI in Mono, just check structure) ---
+// Exercises the TTY path via renderGroupTTY directly, since bytes.Buffer is not a
+// terminal and g.String() uses the plain path automatically.
 
 func TestGroupRenderTTY(t *testing.T) {
 	t.Parallel()
@@ -162,8 +164,11 @@ func TestGroupRenderTTY(t *testing.T) {
 		{Text: "item A"},
 		{Text: "item B"},
 	}
-	g := NewGroup("Processing", items, ThemeMono, true)
-	out := g.String()
+	g := NewGroup("Processing", items, ThemeMono)
+
+	var buf bytes.Buffer
+	renderGroupTTY(&buf, g.msg, g.items, g.theme)
+	out := buf.String()
 
 	if !strings.Contains(out, "Processing (2)") {
 		t.Errorf("expected header with count, got: %q", out)
@@ -428,13 +433,24 @@ func TestGroupRenderParity(t *testing.T) {
 		{Text: "gamma"},
 	}
 
-	for _, isTTY := range []bool{true, false} {
-		g := NewGroup("Test", items, ThemeMono, isTTY)
-		out := g.String()
-		for _, item := range items {
-			if !strings.Contains(out, item.Text) {
-				t.Errorf("isTTY=%v: missing item %q in output: %q", isTTY, item.Text, out)
-			}
+	// Both render paths (TTY and plain) must include all item text.
+	g := NewGroup("Test", items, ThemeMono)
+
+	// Plain path (bytes.Buffer is not a terminal).
+	plainOut := g.String()
+	for _, item := range items {
+		if !strings.Contains(plainOut, item.Text) {
+			t.Errorf("plain: missing item %q in output: %q", item.Text, plainOut)
+		}
+	}
+
+	// TTY path via internal helper.
+	var ttyBuf bytes.Buffer
+	renderGroupTTY(&ttyBuf, g.msg, g.items, g.theme)
+	ttyOut := ttyBuf.String()
+	for _, item := range items {
+		if !strings.Contains(ttyOut, item.Text) {
+			t.Errorf("tty: missing item %q in output: %q", item.Text, ttyOut)
 		}
 	}
 }

@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.0.0 — 2026-05-09
+## v2.0.0 — 2026-05-15
 
 Tag when ready: `git tag v2.0.0 feature/v2`
 
@@ -59,17 +59,22 @@ Tag when ready: `git tag v2.0.0 feature/v2`
 - `WithSecureTags(bool)` option — explicit opt-out of tag scanning
 - `scanSecure` per-instance atomic flag — recomputed on writer add/remove; zero cost when all writers are trusted
 - `StatusItem` renderable and `Logger.Status(level, kind, msg, fields...)` log-call form
+  - Console path: renders an inline indented badge (no timestamp, no level label) via `Logger.Render`
+  - JSON path: emits a full structured record with `"status"` field for log queries
+  - `NewStatusItem` no longer takes `isTTY bool` — TTY is resolved at `Render(w)` time
 - `StatusKind` enum: `StatusOK`, `StatusFail`, `StatusWarn`, `StatusInfo`, `StatusPending`, `StatusSkipped`
 - `Group` renderable and `Logger.Group(level, msg, items...)` — count-headed indented block
+  - `NewGroup` no longer takes `isTTY bool` — TTY resolved at `Render(w)` time
 - `GroupItem{Marker, Text}` — individual group entry
 - `ContinuationBlock` renderable and `Logger.Continue(level, msg, lines...)` — `│`-glyph continuation lines
+  - `NewContinuationBlock` no longer takes `isTTY bool` — TTY resolved at `Render(w)` time
 - `Hyperlink(uri, text, ...opts) string` — OSC 8 hyperlink with TTY detection and three fallback modes
 - `HyperlinkFallbackNone`, `HyperlinkFallbackParens`, `HyperlinkFallbackBrackets` — fallback modes
 - `HyperlinksSupported()` — cached TTY detection
 - `WithHyperlinkFallback(mode)` — per-call fallback override
 - `Pretty` facade moved to root; `NewPretty(w, theme)` and `NewPrettyFromLogger(logger)` constructors
 - Logger convenience methods: `Logger.Box`, `Logger.Table`, `Logger.Tree`, `Logger.BannerLines`, `Logger.KeyValues`, `Logger.SystemInfo` — render directly through console writer mutex
-- `velocity/live` package — stateful animated types (`Spinner`, `ProgressBar`, `MultiProgress`) extracted from old `velocity/pretty`
+- `velocity/live` package — stateful animated types (`Spinner`, `ProgressBar`, `MultiProgress`) extracted from old `velocity/pretty`; all types suppress control sequences (\r, ANSI erase) when writer is not a terminal
 - `velocity/slogbridge` — slog bridge package renamed, with corrected benchmark (was writing to stdout in v1)
 - 18 examples covering all major features (up from 11 in v1)
 

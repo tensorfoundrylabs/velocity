@@ -65,24 +65,24 @@ func TestStatusKindSlot(t *testing.T) {
 	}
 }
 
-// --- StatusItem.Render (TTY path) ---
+// --- StatusItem.Render (TTY path, tested via internal helper) ---
 
+// TestStatusItemRenderTTY exercises the TTY render path via renderStatusItemTTY
+// directly, since bytes.Buffer is not a terminal and Render(w) auto-detects TTY
+// from w. ThemeMono is used so assertions don't need to strip ANSI codes.
 func TestStatusItemRenderTTY(t *testing.T) {
 	t.Parallel()
 
-	// Use ThemeMono so there are no ANSI codes to strip in assertions.
-	item := NewStatusItem(StatusOK, "user signed in", ThemeMono, true,
+	item := NewStatusItem(StatusOK, "user signed in", ThemeMono,
 		Int("user_id", 42),
 		Duration("took", 18*1000*1000), // 18ms
 	)
 
 	var buf bytes.Buffer
-	if err := item.Render(&buf); err != nil {
-		t.Fatalf("Render() error: %v", err)
-	}
+	renderStatusItemTTY(&buf, item.kind, item.msg, item.theme, item.fields)
 
 	out := buf.String()
-	// Badge must be present with correct padding.
+	// Badge must be present with correct token.
 	if !strings.Contains(out, "[OKAY]") {
 		t.Errorf("expected badge [OKAY], got: %q", out)
 	}
@@ -109,9 +109,9 @@ func TestStatusItemBadgeCompact(t *testing.T) {
 		StatusSkipped: "[SKIP]",
 	}
 	for k, want := range cases {
-		item := NewStatusItem(k, "msg", ThemeMono, true)
+		item := NewStatusItem(k, "msg", ThemeMono)
 		var buf bytes.Buffer
-		_ = item.Render(&buf)
+		renderStatusItemTTY(&buf, item.kind, item.msg, item.theme, item.fields)
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("kind %s: expected badge %q in output, got %q", k.String(), want, buf.String())
 		}
@@ -120,10 +120,12 @@ func TestStatusItemBadgeCompact(t *testing.T) {
 
 // --- StatusItem.Render (plain / non-TTY path) ---
 
+// TestStatusItemRenderPlain exercises the non-TTY render path. bytes.Buffer is
+// not a terminal so Render(w) uses the plain form automatically.
 func TestStatusItemRenderPlain(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusFail, "payment refused", ThemeMono, false,
+	item := NewStatusItem(StatusFail, "payment refused", ThemeMono,
 		String("reason", "card expired"),
 	)
 
@@ -149,11 +151,12 @@ func TestStatusItemRenderPlain(t *testing.T) {
 func TestStatusItemString(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusWarn, "slow query", ThemeMono, false)
+	item := NewStatusItem(StatusWarn, "slow query", ThemeMono)
 	s := item.String()
 	if !strings.Contains(s, "slow query") {
 		t.Errorf("String() missing message: %q", s)
 	}
+	// String() calls Render(&bytes.Buffer) — non-TTY path — badge still present.
 	if !strings.Contains(s, "[WARN]") {
 		t.Errorf("String() missing badge: %q", s)
 	}
@@ -179,7 +182,7 @@ func TestStatusItemNilReceiver(t *testing.T) {
 func TestStatusItemNoFields(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusPending, "waiting for upstream", ThemeMono, false)
+	item := NewStatusItem(StatusPending, "waiting for upstream", ThemeMono)
 	var buf bytes.Buffer
 	_ = item.Render(&buf)
 	out := buf.String()
@@ -197,7 +200,7 @@ func TestStatusItemNoFields(t *testing.T) {
 func TestStatusItemFiveFields(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusInfo, "ready", ThemeMono, false,
+	item := NewStatusItem(StatusInfo, "ready", ThemeMono,
 		String("svc", "auth"),
 		Int("port", 8080),
 		Bool("tls", true),
@@ -228,15 +231,16 @@ func TestLoggerStatusConsole(t *testing.T) {
 	log.Status(LevelInfo, StatusOK, "database connected", String("host", "localhost"))
 
 	out := buf.String()
-	// On non-TTY console without colour the standard template path fires,
-	// which won't include the badge. That's the expected fallback behaviour —
-	// the test validates that Status routes through the writer without panicking
-	// and that the message and field appear.
+	// Status renders inline via Render — expect the badge and message.
 	if !strings.Contains(out, "database connected") {
 		t.Errorf("expected message in console output: %q", out)
 	}
 	if !strings.Contains(out, "host") {
 		t.Errorf("expected host field in console output: %q", out)
+	}
+	// Badge must be present — Render uses the plain form on non-TTY.
+	if !strings.Contains(out, "[OKAY]") {
+		t.Errorf("expected badge [OKAY] in console output: %q", out)
 	}
 }
 

@@ -25,18 +25,16 @@ type GroupItem struct {
 // On TTY the count token is coloured with SlotCount; items are indented past the
 // message column. On non-TTY the count token is plain text. JSON output emits a
 // single entry with "count" and "items" fields — markers are visual-only and
-// are stripped from JSON.
+// are stripped from JSON. TTY detection happens at Render time via IsTerminalWriter.
 type Group struct {
 	theme *Theme
 	msg   string
 	items []GroupItem
-	isTTY bool
 }
 
 // NewGroup constructs a Group. theme may be nil (falls back to ThemeNightOwl).
-// isTTY controls whether ANSI codes are emitted; Logger.Group sets this from its
-// console writer.
-func NewGroup(msg string, items []GroupItem, theme *Theme, isTTY bool) *Group {
+// TTY detection is deferred to Render time — callers do not need to pass isTTY.
+func NewGroup(msg string, items []GroupItem, theme *Theme) *Group {
 	if theme == nil {
 		theme = ThemeNightOwl
 	}
@@ -47,18 +45,17 @@ func NewGroup(msg string, items []GroupItem, theme *Theme, isTTY bool) *Group {
 		msg:   msg,
 		items: its,
 		theme: theme,
-		isTTY: isTTY,
 	}
 }
 
-// Render writes the group block to w. The header line carries the message and
-// count; each item follows on its own indented line.
+// Render writes the group block to w. TTY is detected from w at call time.
+// The header line carries the message and count; each item follows on its own indented line.
 func (g *Group) Render(w io.Writer) error {
 	if g == nil {
 		return nil
 	}
 	var buf bytes.Buffer
-	if g.isTTY {
+	if IsTerminalWriter(w) {
 		renderGroupTTY(&buf, g.msg, g.items, g.theme)
 	} else {
 		renderGroupPlain(&buf, g.msg, g.items)

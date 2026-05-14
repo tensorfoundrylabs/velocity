@@ -103,20 +103,20 @@ const statusKindNone StatusKind = 0xFF
 const statusBadgeSep = " "
 
 // StatusItem is a Renderable that displays an outcome badge followed by a message
-// and optional structured fields. On TTY it renders a coloured [ OK ] style badge;
-// on non-TTY and in JSON output the badge becomes a structured "status" field.
+// and optional structured fields. On TTY it renders a coloured [OKAY] style badge;
+// on non-TTY the badge becomes plain text — no ANSI escapes in pipes or files.
+// TTY detection happens at Render time via IsTerminalWriter, so the same StatusItem
+// may be rendered to both a terminal and a file correctly.
 type StatusItem struct {
 	theme  *Theme
 	msg    string
 	fields []Field
 	kind   StatusKind
-	isTTY  bool
 }
 
 // NewStatusItem constructs a StatusItem. theme may be nil (falls back to ThemeNightOwl).
-// isTTY controls whether the coloured badge or the plain text form is used when
-// Render is called directly; Logger.Status determines this from its console writer.
-func NewStatusItem(kind StatusKind, msg string, theme *Theme, isTTY bool, fields ...Field) *StatusItem {
+// TTY detection is deferred to Render time — callers do not need to pass isTTY.
+func NewStatusItem(kind StatusKind, msg string, theme *Theme, fields ...Field) *StatusItem {
 	if theme == nil {
 		theme = ThemeNightOwl
 	}
@@ -124,15 +124,14 @@ func NewStatusItem(kind StatusKind, msg string, theme *Theme, isTTY bool, fields
 		kind:   kind,
 		msg:    msg,
 		theme:  theme,
-		isTTY:  isTTY,
 		fields: make([]Field, len(fields)),
 	}
 	copy(s.fields, fields)
 	return s
 }
 
-// Render writes the status item to w. On TTY it emits the coloured badge form;
-// otherwise it emits a plain-text form with no ANSI escapes.
+// Render writes the status item to w. TTY is detected from w at call time:
+// when w is a real terminal the coloured badge form is used; otherwise plain text.
 // The trailing newline is always written so consecutive StatusItems align without
 // the caller having to manage spacing.
 func (s *StatusItem) Render(w io.Writer) error {
@@ -141,7 +140,7 @@ func (s *StatusItem) Render(w io.Writer) error {
 	}
 
 	var buf bytes.Buffer
-	if s.isTTY {
+	if IsTerminalWriter(w) {
 		renderStatusItemTTY(&buf, s.kind, s.msg, s.theme, s.fields)
 	} else {
 		renderStatusItemPlain(&buf, s.kind, s.msg, s.fields)

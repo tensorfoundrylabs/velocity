@@ -84,12 +84,12 @@ func main() {
 	log.Newline()
 
 	// Standalone StatusItem rendered via Logger.Render for inline display.
+	// TTY is detected automatically from the console writer at render time.
 	log.Info("re-checking payment gateway")
 	item := velocity.NewStatusItem(
 		velocity.StatusOK,
 		"payment gateway recovered",
 		log.Style(),
-		log.Style().Stylish(os.Stdout),
 		velocity.String("provider", "stripe"),
 		velocity.Duration("rtt", 12*time.Millisecond),
 	)

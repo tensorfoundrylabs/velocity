@@ -81,7 +81,8 @@ func stripOSC8(s string) string {
 //
 // On TTY the glyph is coloured with SlotContinuation; on non-TTY the same Unicode
 // glyph is used without colour — keeping visual parity across pipe and terminal
-// while only the decoration differs.
+// while only the decoration differs. TTY detection happens at Render time via
+// IsTerminalWriter, so the same block may be rendered to both a terminal and a file.
 //
 // In JSON the continuation lines are emitted as a "continuation" array. Any OSC 8
 // hyperlink sequences in the lines are stripped from the JSON form because log
@@ -90,13 +91,12 @@ type ContinuationBlock struct {
 	theme *Theme
 	msg   string
 	lines []string
-	isTTY bool
 }
 
 // NewContinuationBlock constructs a ContinuationBlock. theme may be nil (falls
-// back to ThemeNightOwl). isTTY controls whether the SlotContinuation colour is
-// applied; Logger.Continue sets this from its console writer.
-func NewContinuationBlock(msg string, lines []string, theme *Theme, isTTY bool) *ContinuationBlock {
+// back to ThemeNightOwl). TTY detection is deferred to Render time — callers do
+// not need to pass isTTY.
+func NewContinuationBlock(msg string, lines []string, theme *Theme) *ContinuationBlock {
 	if theme == nil {
 		theme = ThemeNightOwl
 	}
@@ -106,18 +106,18 @@ func NewContinuationBlock(msg string, lines []string, theme *Theme, isTTY bool) 
 		msg:   msg,
 		lines: ls,
 		theme: theme,
-		isTTY: isTTY,
 	}
 }
 
-// Render writes the continuation block to w. The first line is the message;
-// subsequent lines follow with the │ prefix and indent.
+// Render writes the continuation block to w. TTY is detected from w at call time:
+// when w is a real terminal the SlotContinuation glyph is coloured; otherwise plain.
+// The first line is the message; subsequent lines follow with the │ prefix and indent.
 func (c *ContinuationBlock) Render(w io.Writer) error {
 	if c == nil {
 		return nil
 	}
 	var buf bytes.Buffer
-	if c.isTTY {
+	if IsTerminalWriter(w) {
 		renderContinuationTTY(&buf, c.msg, c.lines, c.theme)
 	} else {
 		renderContinuationPlain(&buf, c.msg, c.lines)

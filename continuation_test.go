@@ -84,7 +84,7 @@ func TestContinuationBlockNilReceiver(t *testing.T) {
 func TestContinuationBlockNoLines(t *testing.T) {
 	t.Parallel()
 
-	c := NewContinuationBlock("HTTP server listening", nil, ThemeMono, false)
+	c := NewContinuationBlock("HTTP server listening", nil, ThemeMono)
 	out := c.String()
 
 	// Only the header line should be present.
@@ -108,7 +108,7 @@ func TestContinuationBlockMultipleLines(t *testing.T) {
 		"Available at http://localhost:8080",
 		"Press Ctrl+C to stop",
 	}
-	c := NewContinuationBlock("HTTP server listening", lines, ThemeMono, false)
+	c := NewContinuationBlock("HTTP server listening", lines, ThemeMono)
 	out := c.String()
 
 	// Header + 2 continuation lines.
@@ -129,7 +129,7 @@ func TestContinuationBlockMultipleLines(t *testing.T) {
 func TestContinuationBlockEmptyLinePreserved(t *testing.T) {
 	t.Parallel()
 
-	c := NewContinuationBlock("msg", []string{"first", "", "last"}, ThemeMono, false)
+	c := NewContinuationBlock("msg", []string{"first", "", "last"}, ThemeMono)
 	out := c.String()
 
 	// Empty string still gets the glyph prefix (as an empty continuation).
@@ -138,11 +138,16 @@ func TestContinuationBlockEmptyLinePreserved(t *testing.T) {
 	}
 }
 
+// TestContinuationBlockTTYUsesGlyph exercises the TTY path via renderContinuationTTY
+// directly, since bytes.Buffer is not a terminal and c.String() uses the plain path.
 func TestContinuationBlockTTYUsesGlyph(t *testing.T) {
 	t.Parallel()
 
-	c := NewContinuationBlock("msg", []string{"line one"}, ThemeMono, true)
-	out := c.String()
+	c := NewContinuationBlock("msg", []string{"line one"}, ThemeMono)
+
+	var buf bytes.Buffer
+	renderContinuationTTY(&buf, c.msg, c.lines, c.theme)
+	out := buf.String()
 
 	if !strings.Contains(out, continuationGlyph) {
 		t.Errorf("TTY render missing glyph: %q", out)
@@ -369,13 +374,24 @@ func TestContinuationBlockRenderParity(t *testing.T) {
 
 	lines := []string{"alpha", "beta", "gamma"}
 
-	for _, isTTY := range []bool{true, false} {
-		c := NewContinuationBlock("msg", lines, ThemeMono, isTTY)
-		out := c.String()
-		for _, line := range lines {
-			if !strings.Contains(out, line) {
-				t.Errorf("isTTY=%v: missing line %q in output: %q", isTTY, line, out)
-			}
+	// Both render paths must include all line text.
+	c := NewContinuationBlock("msg", lines, ThemeMono)
+
+	// Plain path (bytes.Buffer is not a terminal).
+	plainOut := c.String()
+	for _, line := range lines {
+		if !strings.Contains(plainOut, line) {
+			t.Errorf("plain: missing line %q in output: %q", line, plainOut)
+		}
+	}
+
+	// TTY path via internal helper.
+	var ttyBuf bytes.Buffer
+	renderContinuationTTY(&ttyBuf, c.msg, c.lines, c.theme)
+	ttyOut := ttyBuf.String()
+	for _, line := range lines {
+		if !strings.Contains(ttyOut, line) {
+			t.Errorf("tty: missing line %q in output: %q", line, ttyOut)
 		}
 	}
 }
