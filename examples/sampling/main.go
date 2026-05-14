@@ -25,6 +25,7 @@ func main() {
 	sampler := velocity.NewCountSampler(5, 100)
 
 	log := velocity.New(
+		velocity.WithDevelopment(),
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelInfo),
 		velocity.WithSampler(sampler),

@@ -17,7 +17,9 @@ func main() {
 		velocity.WithTheme(velocity.ThemeNightOwl),
 	)
 
-	p := velocity.NewPretty(os.Stdout, velocity.ThemeNightOwl)
+	// NewPrettyFromLogger routes Pretty writes through the logger's console writer
+	// mutex, so log lines and pretty output cannot interleave.
+	p := velocity.NewPrettyFromLogger(log)
 
 	// Banner shows the tool name using the double-border box built into the logger.
 	// Great for the splash screen at startup.

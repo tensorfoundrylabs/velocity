@@ -2,8 +2,7 @@
 // destinations at runtime: a human-readable console, a JSON stream, and a
 // filtered sink that only captures errors. We also demonstrate WriterFunc
 // as a lightweight adapter for custom processing, and WriterTrusted() to
-// opt a writer into receiving unredacted Secure fields (Phase 4 wires this
-// to field-level redaction — for now the flag is plumbed but not enforced).
+// opt a writer into receiving unredacted Secure fields.
 package main
 
 import (
@@ -23,7 +22,7 @@ func main() {
 
 	// A JSON buffer lets us inspect what the JSON writer received after logging.
 	// In a real service this would be a file or a network socket.
-	// Marked trusted: when Phase 4 lands this writer will receive unredacted Secure fields.
+	// Marked trusted: this writer receives unredacted Secure fields.
 	jsonBuf := &bytes.Buffer{}
 	jsonWriter := velocity.NewJSONWriter(jsonBuf)
 	log.AddWriter("json", jsonWriter, velocity.WriterTrusted())

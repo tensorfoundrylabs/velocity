@@ -82,6 +82,4 @@ func main() {
 	devLog.Info("development preset logger is ready",
 		velocity.String("preset", "development"),
 	)
-
-	_ = os.Stdout
 }

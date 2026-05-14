@@ -69,6 +69,6 @@ func showTheme(theme *velocity.Theme) {
 	failPfx, failSfx := theme.Wrap(velocity.SlotStatusFail)
 	infoPfx, infoSfx := theme.Wrap(velocity.SlotStatusInfo)
 	fmt.Printf("\n  Status slots (via Wrap):\n")
-	fmt.Printf("    %s[ OK ]%s  %s[WARN]%s  %s[FAIL]%s  %s[INFO]%s\n",
+	fmt.Printf("    %s[OKAY]%s  %s[WARN]%s  %s[FAIL]%s  %s[INFO]%s\n",
 		okPfx, okSfx, warnPfx, warnSfx, failPfx, failSfx, infoPfx, infoSfx)
 }

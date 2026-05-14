@@ -1,3 +1,5 @@
+.DEFAULT_GOAL := help
+
 .PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-notify run-secure run-ring-buffer run-status-items run-groups run-continuation run-hyperlinks run-all build-all clean help
 
 SEPARATOR = @echo "" && echo "============================================================" && echo ""
