@@ -122,7 +122,14 @@ func newFromConfig(cfg *config) *Logger {
 	logger.level.Store(int32(effectiveLevel))
 
 	if cfg.ConsoleOutput != nil && cfg.ConsoleOutput != io.Discard {
-		logger.consoleWriter = NewConsoleWriterWithOptions(cfg.ConsoleOutput, cfg.ConsoleTheme, cfg.DisplayTimezone, cfg.FieldDisplayMode)
+		// Resolve the theme before constructing the writer so it never needs to
+		// know about DisableColour. When colour is disabled we pass noColourTheme
+		// (all cached escapes are empty strings) instead of the user-supplied theme.
+		consoleTheme := cfg.ConsoleTheme
+		if cfg.DisableColour {
+			consoleTheme = noColourTheme
+		}
+		logger.consoleWriter = NewConsoleWriterWithOptions(cfg.ConsoleOutput, consoleTheme, cfg.DisplayTimezone, cfg.FieldDisplayMode)
 		// Recompute cached prefix widths after applying a custom TimeFormat so
 		// Logger.Render's indent matches the actual rendered timestamp width.
 		if cfg.TimeFormat != "" && logger.consoleWriter != nil {

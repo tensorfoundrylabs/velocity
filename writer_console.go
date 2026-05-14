@@ -39,12 +39,12 @@ func NewConsoleWriterWithTimezone(out io.Writer, theme *Theme, displayTimezone *
 }
 
 func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *time.Location, fieldDisplayMode FieldDisplayMode) *ConsoleWriter {
-	// Track if theme was explicitly nil for disabling colours.
-	useColours := true
+	// nil theme means "use the default" — not "disable colour".
+	// Colour is disabled by passing noColourTheme explicitly (see newFromConfig).
 	if theme == nil {
 		theme = ThemeNightOwl
-		useColours = false
 	}
+	useColours := !theme.noColour
 	// Themes are immutable from NewTheme — no caching step needed here.
 
 	if displayTimezone == nil {

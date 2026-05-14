@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug fixes
+
+- Console writer now correctly emits colour when no theme is explicitly configured; previously, the default-theme path silently disabled colour.
+
 ## v2.0.0 — 2026-05-15
 
 Tag when ready: `git tag v2.0.0 feature/v2`
