@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func TestNewPrettyFromLogger_RoutesToLogger(t *testing.T) {

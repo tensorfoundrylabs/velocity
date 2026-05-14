@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {

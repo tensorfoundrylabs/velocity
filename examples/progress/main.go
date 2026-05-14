@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/live"
+	"github.com/tensorfoundrylabs/velocity/v2"
+	"github.com/tensorfoundrylabs/velocity/v2/live"
 )
 
 func main() {

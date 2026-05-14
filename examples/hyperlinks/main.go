@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {
@@ -102,7 +102,7 @@ func main() {
 	log.RenderRaw(velocity.NewTable(
 		[]string{"Resource", "URL"},
 		[][]string{
-			{"API reference", velocity.Hyperlink("https://pkg.go.dev/github.com/tensorfoundrylabs/velocity", "pkg.go.dev")},
+			{"API reference", velocity.Hyperlink("https://pkg.go.dev/github.com/tensorfoundrylabs/velocity/v2", "pkg.go.dev")},
 			{"Source code", velocity.Hyperlink("https://github.com/tensorfoundrylabs/velocity", "github.com")},
 			{"Changelog", velocity.Hyperlink("https://github.com/tensorfoundrylabs/velocity/releases", "releases")},
 		},

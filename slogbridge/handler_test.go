@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
-	slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
+	slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"
 )
 
 // newTestLogger creates a logger writing to buf with colour disabled for easy assertion.

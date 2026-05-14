@@ -1,14 +1,14 @@
-module github.com/tensorfoundrylabs/velocity/benchmarks
+module github.com/tensorfoundrylabs/velocity/v2/benchmarks
 
 go 1.24.0
 
-replace github.com/tensorfoundrylabs/velocity => ../
+replace github.com/tensorfoundrylabs/velocity/v2 => ../
 
 require (
 	github.com/charmbracelet/log v1.0.0
 	github.com/pterm/pterm v0.12.83
 	github.com/rs/zerolog v1.35.0
-	github.com/tensorfoundrylabs/velocity v0.0.0-00010101000000-000000000000
+	github.com/tensorfoundrylabs/velocity/v2 v2.0.0-00010101000000-000000000000
 	go.uber.org/zap v1.27.1
 )
 

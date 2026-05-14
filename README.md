@@ -1,7 +1,7 @@
 <p align="center">
   <img src="assets/banner.png" alt="Velocity" width="600" /><br/>
   <a href="https://github.com/tensorfoundrylabs/velocity/actions/workflows/ci.yml"><img src="https://github.com/tensorfoundrylabs/velocity/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://pkg.go.dev/github.com/tensorfoundrylabs/velocity"><img src="https://pkg.go.dev/badge/github.com/tensorfoundrylabs/velocity.svg" alt="Go Reference"></a>
+  <a href="https://pkg.go.dev/github.com/tensorfoundrylabs/velocity/v2"><img src="https://pkg.go.dev/badge/github.com/tensorfoundrylabs/velocity/v2.svg" alt="Go Reference"></a>
   <a href="https://goreportcard.com/report/github.com/tensorfoundrylabs/velocity"><img src="https://goreportcard.com/badge/github.com/tensorfoundrylabs/velocity" alt="Go Report Card"></a>
   <a href="https://github.com/tensorfoundrylabs/velocity/releases/latest"><img src="https://img.shields.io/github/v/release/tensorfoundrylabs/velocity?color=blue" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/tensorfoundrylabs/velocity" alt="License"></a>
@@ -13,7 +13,7 @@ Fast, allocation-optimised structured logging for Go with rich terminal output. 
 ## Install
 
 ```bash
-go get github.com/tensorfoundrylabs/velocity@v2
+go get github.com/tensorfoundrylabs/velocity/v2
 ```
 
 ## Quick Start
@@ -27,9 +27,9 @@ log.Info("server started", velocity.String("addr", ":8080"), velocity.Int("worke
 
 ```go
 import (
-    "github.com/tensorfoundrylabs/velocity"                          // core logging, writers, renderables, themes
-    "github.com/tensorfoundrylabs/velocity/live"                     // spinners and progress bars
-    slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"    // log/slog bridge
+    "github.com/tensorfoundrylabs/velocity/v2"                          // core logging, writers, renderables, themes
+    "github.com/tensorfoundrylabs/velocity/v2/live"                     // spinners and progress bars
+    slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"    // log/slog bridge
 )
 ```
 
@@ -190,7 +190,7 @@ log.Continue(velocity.LevelInfo, "Server listening",
 ### log/slog bridge
 
 ```go
-import slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
+import slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"
 
 vlog := velocity.New(velocity.WithDevelopment())
 slog.SetDefault(slogbridge.NewLogger(vlog))

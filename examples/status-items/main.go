@@ -18,7 +18,7 @@ import (
 	"os"
 	"time"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {

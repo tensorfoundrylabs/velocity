@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 // ThemeCyberpunk is a neon-on-dark palette inspired by Night City.

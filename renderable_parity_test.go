@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
 // Compile-time assertions: every renderable type must satisfy velocity.Renderable.

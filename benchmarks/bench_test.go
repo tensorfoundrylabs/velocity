@@ -16,7 +16,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
 // Library describes the subset of a logging library's API needed for comparison.

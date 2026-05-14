@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/tensorfoundrylabs/velocity"
-	slogbridge "github.com/tensorfoundrylabs/velocity/slogbridge"
+	"github.com/tensorfoundrylabs/velocity/v2"
+	slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
 // borderLen returns the visible character count of a line stripped of ANSI codes.

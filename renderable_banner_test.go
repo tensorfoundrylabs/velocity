@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func TestBanner_SingleLine(t *testing.T) {
