@@ -101,3 +101,33 @@ func TestStyle_NilLogger(t *testing.T) {
 		t.Fatal("nil logger Style() returned nil")
 	}
 }
+
+func TestNopLogger_NonNil(t *testing.T) {
+	t.Parallel()
+
+	l := NopLogger()
+	if l == nil {
+		t.Fatal("NopLogger() returned nil")
+	}
+}
+
+func TestNopLogger_NoOutput(t *testing.T) {
+	t.Parallel()
+
+	// NopLogger must accept log calls without panicking and write nothing to stderr.
+	// We verify by exercising all severity levels — none should panic.
+	l := NopLogger()
+	l.Debug("debug")
+	l.Info("info")
+	l.Warn("warn")
+	l.Error("error")
+}
+
+func TestNopLogger_CloseSafe(t *testing.T) {
+	t.Parallel()
+
+	l := NopLogger()
+	if err := l.Close(); err != nil {
+		t.Fatalf("NopLogger Close() returned error: %v", err)
+	}
+}

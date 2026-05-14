@@ -6,7 +6,9 @@ Tag when ready: `git tag v2.0.0 feature/v2`
 
 ### Breaking
 
-- `NewWithBuilder`, `NewWithOptions`, `NewWithConfig`, `NewDevelopment`, `NewForTesting`, `NopLogger` removed — use `New(opts ...Option)` with preset options
+- Module path changed to `github.com/tensorfoundrylabs/velocity/v2` — update all imports accordingly
+- `NewWithBuilder`, `NewWithOptions`, `NewWithConfig`, `NewDevelopment`, `NewForTesting` removed — use `New(opts ...Option)` with preset options
+- `NopLogger()` retained for compatibility — equivalent to `New(WithNop())`
 - `Builder` type removed — configure via options only
 - `Config` struct unexported — no direct field access
 - `Default*Config` family removed
@@ -20,7 +22,8 @@ Tag when ready: `git tag v2.0.0 feature/v2`
 - `AtomicLevel` exported type removed — level is now an internal `atomic.Int32`
 - `velocity/pretty` package removed — all renderables moved to root package
 - `velocity/slog` package removed — replaced by `velocity/slogbridge` (`package slogbridge`)
-- `BoxResult`, `TableResult`, `TreeResult`, `BannerResult`, `KeyValueResult`, `BulletResult`, `SystemInfoResult` removed — types renamed to `Box`, `Table`, `Tree`, `Banner`, `KeyValue`, `Bullet`, `SystemInfo`
+- `BoxResult`, `TableResult`, `TreeResult`, `BannerResult`, `KeyValueResult`, `SystemInfoResult` removed — types renamed to `Box`, `Table`, `Tree`, `Banner`, `KeyValue`, `SystemInfo`
+- `BulletResult` removed — `Bullet` was only ever a `Logger` method, not a standalone type
 - `NewFromLogger` constructor pattern removed from pretty — use `Logger.Box(...)`, `Logger.Table(...)`, etc. directly
 - Theme `Cache()` and `EnsureCached()` removed — themes are immutable post-construction
 - Colour options consolidated to `WithColour(bool)`

@@ -59,6 +59,12 @@ func New(opts ...Option) *Logger {
 	return l
 }
 
+// NopLogger returns a Logger that discards all output. Intended for tests and
+// wiring paths where a non-nil logger is required but output is unwanted.
+func NopLogger() *Logger {
+	return New(WithNop())
+}
+
 // TryNew constructs a Logger from the given options, returning any validation
 // error rather than panicking.
 func TryNew(opts ...Option) (*Logger, error) {
