@@ -28,6 +28,16 @@ import (
 	"github.com/tensorfoundrylabs/velocity/v2/live"
 )
 
+// link is a TTY-aware wrapper for velocity.Hyperlink. OSC 8 sequences are only
+// emitted when stdout is an actual terminal that supports them; plain text is
+// returned otherwise so no control sequences reach pipes or log aggregators.
+func link(uri, text string) string {
+	if velocity.IsTerminalWriter(os.Stdout) && velocity.HyperlinksSupported() {
+		return velocity.Hyperlink(uri, text)
+	}
+	return text
+}
+
 func main() {
 	startTime := time.Now()
 
@@ -138,7 +148,7 @@ func stageDeploymentConfig(log *velocity.Logger, p *velocity.Pretty) {
 		},
 		{Key: "Max Batch Size", Value: 32},
 		{Key: "Max Sequence Length", Value: 8192},
-	}, velocity.ThemeNightOwl))
+	}, log.Style()))
 
 	log.Newline()
 }
@@ -234,11 +244,11 @@ func stageRouteRegistration(log *velocity.Logger) {
 	log.Newline()
 
 	// Continue places all lines under one timestamped INFO entry. OSC 8
-	// hyperlinks inside continuation lines are zero-cost on non-supporting
-	// terminals — the fallback renders the URL in parentheses.
+	// hyperlinks are only emitted when stdout is a TTY that supports them;
+	// plain URLs are used otherwise so no control sequences reach pipes.
 	log.Continue(velocity.LevelInfo, "Inference server listening",
-		"API:      "+velocity.Hyperlink("http://10.0.1.10:8080/v1", "http://10.0.1.10:8080/v1"),
-		"Metrics:  "+velocity.Hyperlink("http://10.0.1.10:9090/metrics", "http://10.0.1.10:9090/metrics"),
+		"API:      "+link("http://10.0.1.10:8080/v1", "http://10.0.1.10:8080/v1"),
+		"Metrics:  "+link("http://10.0.1.10:9090/metrics", "http://10.0.1.10:9090/metrics"),
 		"Press Ctrl+C to stop",
 	)
 
@@ -461,7 +471,7 @@ func stageSummary(log *velocity.Logger, p *velocity.Pretty, started time.Time, r
 	// operator sees it even when stdout is redirected to a log aggregator.
 	// This is the alloy pattern: ephemeral operator messages that must not
 	// get buried in log volume.
-	dashURL := velocity.Hyperlink("http://10.0.1.10:8080/v1/models", "http://10.0.1.10:8080/v1/models")
+	dashURL := link("http://10.0.1.10:8080/v1/models", "http://10.0.1.10:8080/v1/models")
 	log.NotifyBox(velocity.NewBox(
 		"Deployment complete",
 		fmt.Sprintf(
@@ -470,7 +480,7 @@ func stageSummary(log *velocity.Logger, p *velocity.Pretty, started time.Time, r
 				"Address node-3 disk space to restore full capacity.",
 			dashURL,
 		),
-		velocity.ThemeNightOwl,
+		log.Style(),
 	))
 
 	// Ring buffer snapshot — the last N entries the logger wrote. In a real

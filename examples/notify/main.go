@@ -30,10 +30,11 @@ func main() {
 
 	// NotifyBox renders to stderr (default) with a visible border so the URL
 	// stands out even when the terminal is flooded with log output.
+	// log.Style() returns a mono theme when colour is disabled (NO_COLOR, piped).
 	log.NotifyBox(velocity.NewBox(
 		"Setup not complete",
 		fmt.Sprintf("Open this URL to finish configuring your instance:\n\n  %s\n\nThe URL expires in 15 minutes.", setupURL),
-		velocity.ThemeNightOwl,
+		log.Style(),
 	))
 
 	// Regular structured log — goes through the normal pipeline (console stdout

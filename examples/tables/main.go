@@ -19,8 +19,8 @@ func main() {
 
 	// Theme.Format(slot, s) is the canonical way to colour cell content in v2.
 	// The theme handles all ANSI construction; callers just pick a semantic slot.
+	// log.Style() returns a mono theme when colour is disabled (piped, NO_COLOR).
 	style := log.Style()
-	theme := velocity.ThemeNightOwl
 
 	fmt.Println("=== Pretty Table ===")
 	fmt.Println()
@@ -34,7 +34,7 @@ func main() {
 			{"notifications", style.Format(velocity.SlotStatusFail, "DOWN"), "-", "ap-southeast-2"},
 			{"analytics", style.Format(velocity.SlotStatusOK, "HEALTHY"), "28ms", "us-west-2"},
 		},
-		theme,
+		style,
 	))
 	log.Newline()
 
@@ -48,11 +48,11 @@ func main() {
 			{"node-2", "A100 80GB", "78.9 / 80.0 GB", style.Format(velocity.SlotStatusWarn, "98%"), "82C"},
 			{"node-3", "A100 80GB", "0.0 / 80.0 GB", style.Format(velocity.SlotStatusFail, "0%"), "34C"},
 		},
-		theme,
+		style,
 	))
 	log.Newline()
 
-	// Tables work without colour too.
+	// Tables work without colour too — log.Style() is already mono when piped.
 	fmt.Println("=== Plain Table (no theme, no colour) ===")
 	fmt.Println()
 	log.RenderRaw(velocity.NewTable(
@@ -63,7 +63,7 @@ func main() {
 			{"/v1/models", "GET", "450", "3ms"},
 			{"/health", "GET", "10,000", "1ms"},
 		},
-		nil,
+		style,
 	))
 	log.Newline()
 
@@ -78,7 +78,7 @@ func main() {
 			{"1204", "nginx", "0.3", "0.2", "32M", "8M", "?", "S", "nginx: worker process"},
 			{"1891", "prometheus", "1.2", "0.8", "256M", "64M", "?", "Sl", "/usr/bin/prometheus"},
 		},
-		theme,
+		style,
 	))
 	log.Newline()
 

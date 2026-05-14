@@ -59,14 +59,14 @@ func main() {
 	// the same in a non-supporting terminal (Parens fallback appends the URL).
 	plain := "https://tensorfoundry.io/docs"
 
-	// Use HyperlinkFallbackNone when stdout is not a TTY to avoid leaking
-	// OSC 8 sequences into pipes or files.
+	// Only emit OSC 8 when stdout is a terminal. HyperlinksSupported() checks env
+	// vars and TERM_PROGRAM but does not know whether stdout has been redirected —
+	// the stdoutIsTTY guard catches the pipe/redirect case.
 	var linked string
-	if stdoutIsTTY {
+	if stdoutIsTTY && velocity.HyperlinksSupported() {
 		linked = velocity.Hyperlink("https://tensorfoundry.io/docs", "velocity docs")
 	} else {
-		linked = velocity.Hyperlink("https://tensorfoundry.io/docs", "velocity docs",
-			velocity.WithHyperlinkFallback(velocity.HyperlinkFallbackNone))
+		linked = "velocity docs (https://tensorfoundry.io/docs)"
 	}
 
 	fmt.Println("Plain URL:", plain)
@@ -89,14 +89,13 @@ func main() {
 
 	// The three fallback variants are only meaningfully different when OSC 8 is
 	// disabled; when it is active all three emit the same OSC 8 sequence and look
-	// identical on a supporting terminal. Show them only under the disabled banner.
-	if !supported {
-		fmt.Println("Fallback variants (OSC 8 disabled — differences visible here):")
-		fmt.Printf("  Parens   : %s\n", velocity.Hyperlink(uri, text, velocity.WithHyperlinkFallback(velocity.HyperlinkFallbackParens)))
-		fmt.Printf("  Brackets : %s\n", velocity.Hyperlink(uri, text, velocity.WithHyperlinkFallback(velocity.HyperlinkFallbackBrackets)))
-		fmt.Printf("  None     : %s\n", velocity.Hyperlink(uri, text, velocity.WithHyperlinkFallback(velocity.HyperlinkFallbackNone)))
-		fmt.Println()
-	}
+	// identical on a supporting terminal. Show them using plain string construction
+	// so the output is predictable regardless of terminal support.
+	fmt.Println("Fallback variant formats (shown as plain text for illustration):")
+	fmt.Printf("  Parens   : %s\n", text+" ("+uri+")")
+	fmt.Printf("  Brackets : %s\n", text+" ["+uri+"]")
+	fmt.Printf("  None     : %s\n", text)
+	fmt.Println()
 
 	// --- Combining with Theme.Format ---
 	//
@@ -105,9 +104,11 @@ func main() {
 	// all supporting terminals. When stdout is not a TTY, Hyperlink returns
 	// plain text so no escape sequences reach the pipe.
 	style := log.Style()
-	setupLink := velocity.Hyperlink(uri, "Open setup page")
-	if !stdoutIsTTY {
-		setupLink = velocity.Hyperlink(uri, "Open setup page", velocity.WithHyperlinkFallback(velocity.HyperlinkFallbackParens))
+	var setupLink string
+	if stdoutIsTTY && velocity.HyperlinksSupported() {
+		setupLink = velocity.Hyperlink(uri, "Open setup page")
+	} else {
+		setupLink = "Open setup page (" + uri + ")"
 	}
 	coloured := style.Format(velocity.SlotHyperlink, setupLink)
 	fmt.Println("Coloured hyperlink:", coloured)
@@ -127,12 +128,14 @@ func main() {
 		docsURL = "documentation (https://tensorfoundry.io/docs)"
 	}
 
+	// log.Style() returns a mono theme when stdout is not a TTY (NO_COLOR, piped),
+	// so the box and table are colour-free in that case.
 	box := velocity.NewBox(
 		"Setup Required",
 		"Open the following URL to complete your installation:\n\n"+
 			"  "+setupURL+"\n\n"+
 			"See the "+docsURL+" for details.",
-		velocity.ThemeNightOwl,
+		log.Style(),
 	)
 	log.Render(box)
 	log.Newline()
@@ -147,7 +150,7 @@ func main() {
 		{"Source code", "https://github.com/tensorfoundrylabs/velocity"},
 		{"Changelog", "https://github.com/tensorfoundrylabs/velocity/releases"},
 	}
-	if stdoutIsTTY {
+	if stdoutIsTTY && velocity.HyperlinksSupported() {
 		tableRows = [][]string{
 			{"API reference", velocity.Hyperlink("https://pkg.go.dev/github.com/tensorfoundrylabs/velocity/v2", "pkg.go.dev")},
 			{"Source code", velocity.Hyperlink("https://github.com/tensorfoundrylabs/velocity", "github.com")},
@@ -157,7 +160,7 @@ func main() {
 	log.RenderRaw(velocity.NewTable(
 		[]string{"Resource", "URL"},
 		tableRows,
-		velocity.ThemeNightOwl,
+		log.Style(),
 	))
 	log.Newline()
 

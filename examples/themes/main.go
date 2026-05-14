@@ -50,24 +50,29 @@ func showTheme(theme *velocity.Theme) {
 		velocity.Bool("canary", false),
 	)
 
+	// log.Style() returns the active palette when colour is enabled (TTY or
+	// FORCE_COLOR), or ThemeMono when NO_COLOR / piped — so Format and Wrap
+	// calls are always colour-aware without manual env-var checks.
+	style := log.Style()
+
 	// Theme.Format(slot, s) — semantic colouring without raw ANSI.
 	// Each slot has a well-defined role across all built-in themes.
 	fmt.Printf("\n  Style slots:\n")
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotGood, "SlotGood — success / positive outcome"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotBad, "SlotBad  — error / failure"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotWarn, "SlotWarn — warning / degraded"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotInfo, "SlotInfo — informational"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotMuted, "SlotMuted — secondary / de-emphasised"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotStrong, "SlotStrong — emphasis"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotHeading, "SlotHeading — section headings"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotEndpoint, "SlotEndpoint — service/URL labels"))
-	fmt.Printf("    %s\n", theme.Format(velocity.SlotTableHeader, "SlotTableHeader — column headers"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotGood, "SlotGood — success / positive outcome"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotBad, "SlotBad  — error / failure"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotWarn, "SlotWarn — warning / degraded"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotInfo, "SlotInfo — informational"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotMuted, "SlotMuted — secondary / de-emphasised"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotStrong, "SlotStrong — emphasis"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotHeading, "SlotHeading — section headings"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotEndpoint, "SlotEndpoint — service/URL labels"))
+	fmt.Printf("    %s\n", style.Format(velocity.SlotTableHeader, "SlotTableHeader — column headers"))
 
 	// Status badge demonstration using Wrap for prefix/suffix embedding.
-	okPfx, okSfx := theme.Wrap(velocity.SlotStatusOK)
-	warnPfx, warnSfx := theme.Wrap(velocity.SlotStatusWarn)
-	failPfx, failSfx := theme.Wrap(velocity.SlotStatusFail)
-	infoPfx, infoSfx := theme.Wrap(velocity.SlotStatusInfo)
+	okPfx, okSfx := style.Wrap(velocity.SlotStatusOK)
+	warnPfx, warnSfx := style.Wrap(velocity.SlotStatusWarn)
+	failPfx, failSfx := style.Wrap(velocity.SlotStatusFail)
+	infoPfx, infoSfx := style.Wrap(velocity.SlotStatusInfo)
 	fmt.Printf("\n  Status slots (via Wrap):\n")
 	fmt.Printf("    %s[OKAY]%s  %s[WARN]%s  %s[FAIL]%s  %s[INFO]%s\n",
 		okPfx, okSfx, warnPfx, warnSfx, failPfx, failSfx, infoPfx, infoSfx)
