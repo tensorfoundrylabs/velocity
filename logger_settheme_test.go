@@ -169,3 +169,56 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 		t.Log("note: themes produced identical byte sequences (unlikely but not a hard failure)")
 	}
 }
+
+// TestLogger_Style_ColourFollowsActiveTheme is a regression test for the bug where
+// Style() returned noColourTheme even when a console writer was active because
+// cfg.ConsoleTheme was nil (the nil-means-NightOwl convention).
+// WithDevelopment() leaves ConsoleTheme nil (uses the default), so Style() must
+// still return a coloured theme that matches what the console writer actually uses.
+func TestLogger_Style_ColourFollowsActiveTheme(t *testing.T) {
+	t.Parallel()
+
+	log := New(WithDevelopment())
+	style := log.Style()
+
+	// A coloured theme must not be the no-colour sentinel.
+	if style == noColourTheme {
+		t.Error("Style() returned noColourTheme for a development logger with an active console writer")
+	}
+
+	// Must not be nil.
+	if style == nil {
+		t.Error("Style() returned nil")
+	}
+
+	// Confirm at least one ANSI code is present (timestamp or level colour).
+	if style.cachedTimestampFgStr() == "" && style.cachedLevelCode(LevelInfo) == "" {
+		t.Error("Style() returned a theme with no ANSI codes — expected coloured output")
+	}
+}
+
+// TestLogger_Style_NoConsoleWriter returns mono theme for JSON-only loggers.
+func TestLogger_Style_NoConsoleWriter(t *testing.T) {
+	t.Parallel()
+
+	// Production preset: JSON only, no console output.
+	log := New(WithProduction())
+	style := log.Style()
+
+	if style != noColourTheme {
+		t.Errorf("Style() on JSON-only logger should return noColourTheme, got %v", style)
+	}
+}
+
+// TestLogger_Style_DisableColour returns mono theme when colour is off.
+func TestLogger_Style_DisableColour(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithConsoleOutput(&buf), WithColour(false))
+	style := log.Style()
+
+	if style != noColourTheme {
+		t.Errorf("Style() with DisableColour should return noColourTheme, got %v", style)
+	}
+}

@@ -408,8 +408,14 @@ func (l *Logger) Error(msg string, fields ...Field) {
 }
 
 // Status logs a message at the given level with a StatusKind badge.
-// The console writer renders a coloured "[OK    ]" badge aligned to a fixed width.
-// The JSON writer emits a "status" field with the lowercase kind string.
+//
+// Console output: renders an inline indented badge ([OKAY] / [FAIL] etc.) with
+// no timestamp or level label — visually subordinate to the surrounding log lines.
+//
+// JSON / structured output: emits a full structured record with a "status" field
+// set to the lowercase kind string (ok, fail, warn, info, pending, skip), so log
+// queries continue to work.
+//
 // All standard log-call semantics apply: level filtering, sampling, base fields.
 func (l *Logger) Status(level Level, kind StatusKind, msg string, fields ...Field) {
 	if l == nil {
@@ -419,13 +425,32 @@ func (l *Logger) Status(level Level, kind StatusKind, msg string, fields ...Fiel
 	if l.closed.Load() || !l.isEnabled(level) {
 		return
 	}
-	l.logStatus(level, kind, msg, fields...)
+
+	// Console path: inline badge via Render, no timestamp or level label.
+	// Uses the logger's active theme and routes through the console writer mutex
+	// so status items cannot interleave with concurrent log lines.
+	if l.consoleWriter != nil && level >= l.cfg.ConsoleLevel {
+		item := NewStatusItem(kind, msg, l.Theme(), fields...)
+		l.Render(item)
+	}
+
+	// Structured / additional-writer path: full record with statusKind set.
+	// The console writer is skipped here — it already rendered inline above.
+	l.logStatusStructured(level, kind, msg, fields...)
 }
 
-// logStatus is the internal implementation of Status, mirroring logInternal
-// but setting entry.statusKind before dispatching to writers.
-func (l *Logger) logStatus(level Level, kind StatusKind, msg string, fields ...Field) {
+// logStatusStructured emits a structured log entry for Status calls.
+// Only JSON and additional writers receive this entry; the console writer is
+// intentionally skipped because Status renders inline via Render instead.
+func (l *Logger) logStatusStructured(level Level, kind StatusKind, msg string, fields ...Field) {
 	if l == nil {
+		return
+	}
+
+	// Nothing to do when there are no structured outputs.
+	hasStructured := (l.jsonWriter != nil && level >= l.cfg.StructuredLevel) ||
+		l.additionalWriters != nil
+	if !hasStructured {
 		return
 	}
 
@@ -455,28 +480,18 @@ func (l *Logger) logStatus(level Level, kind StatusKind, msg string, fields ...F
 
 	l.captureCaller(entry, 0)
 
-	if l.cfg != nil {
-		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
-			if err := l.consoleWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
-			}
+	if l.jsonWriter != nil && level >= l.cfg.StructuredLevel {
+		if err := l.jsonWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
 		}
-
-		if level >= l.cfg.StructuredLevel && l.jsonWriter != nil {
-			if err := l.jsonWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
-			}
-		}
-
-		entry.Write()
-
-		l.writersMu.RLock()
-		if l.additionalWriters != nil {
-			_ = l.additionalWriters.Write(entry)
-		}
-		l.writersMu.RUnlock()
-		return
 	}
 
 	entry.Write()
+
+	l.writersMu.RLock()
+	if l.additionalWriters != nil {
+		_ = l.additionalWriters.Write(entry)
+	}
+	l.writersMu.RUnlock()
 }
 
 // Group logs a count-headed block with one item per line.
@@ -756,16 +771,24 @@ func (l *Logger) SetTheme(theme *Theme) {
 }
 
 // Style returns the active theme for use in manual ANSI formatting.
-// When the logger has no console writer (JSON-only or nop), it returns
-// a no-colour theme so callers can always call Style() without a nil check.
+// Follows the same fallback logic as Theme(): nil cfg.ConsoleTheme falls back
+// to ThemeNightOwl (matching the console writer), not to the no-colour sentinel.
+// noColourTheme is only returned when colour is explicitly disabled, or when the
+// logger has no console writer at all (JSON-only, nop, or production preset).
 func (l *Logger) Style() *Theme {
 	if l == nil {
 		return noColourTheme
 	}
-	if l.cfg != nil && l.cfg.ConsoleTheme != nil && !l.cfg.DisableColour {
-		return l.cfg.ConsoleTheme
+	// Colour explicitly disabled — return a mono theme regardless of writer.
+	if l.cfg != nil && l.cfg.DisableColour {
+		return noColourTheme
 	}
-	return noColourTheme
+	// No console output configured — there is no styled channel to match.
+	if l.consoleWriter == nil {
+		return noColourTheme
+	}
+	// Console writer is active: delegate to Theme() for the NightOwl fallback.
+	return l.Theme()
 }
 
 // BannerLines prints multiple lines of pre-formatted text to the console writer
