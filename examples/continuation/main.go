@@ -56,13 +56,25 @@ func main() {
 		}
 	}()
 
+	// Gate OSC 8 hyperlinks on whether stdout is a real terminal. HyperlinksSupported()
+	// is per-process and does not detect pipe/redirect — IsTerminalWriter fills that gap.
+	stdoutIsTTY := velocity.IsTerminalWriter(os.Stdout)
+
+	// hyperlink returns an OSC 8 link when stdout is a TTY, otherwise a plain URL.
+	hyperlink := func(url string) string {
+		if stdoutIsTTY {
+			return velocity.Hyperlink(url, url)
+		}
+		return url
+	}
+
 	// --- Server startup block ---
 	// The primary INFO line records the event in the structured pipeline.
 	// Continuation lines carry the human-readable context (URL, keybind) without
 	// polluting the structured log with ad-hoc fields.
 	log.Continue(velocity.LevelInfo, "HTTP server listening",
-		"Available at: "+velocity.Hyperlink("http://localhost:8080", "http://localhost:8080"),
-		"Metrics:      "+velocity.Hyperlink("http://localhost:9090/metrics", "http://localhost:9090/metrics"),
+		"Available at: "+hyperlink("http://localhost:8080"),
+		"Metrics:      "+hyperlink("http://localhost:9090/metrics"),
 		"Press Ctrl+C to stop",
 	)
 

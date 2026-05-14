@@ -18,7 +18,7 @@ import (
 
 func main() {
 	// Attach a ring that holds the last 100 entries.
-	// Untrusted by default — Phase 4 will redact Secure fields here.
+	// Untrusted by default — Secure fields are redacted when read via Snapshot.
 	ring := velocity.NewRingBufferWriter(100)
 
 	log := velocity.New(
@@ -26,7 +26,6 @@ func main() {
 		velocity.WithConsoleOutput(os.Stdout),
 	)
 	log.AddWriter("ring", ring)
-	defer func() { _ = log.Close() }()
 
 	log.Info("Logger ready, ring attached")
 
@@ -44,27 +43,12 @@ func main() {
 
 	fmt.Println()
 
-	// --- Pattern 1: snapshot (HTTP debug endpoint) ---
-	//
-	// Grab the last 3 entries. In a real service this is called inside an
-	// http.HandlerFunc and the result is JSON-encoded into the response.
-	snaps := ring.Snapshot(3)
-	fmt.Printf("=== Snapshot: last %d entries ===\n", len(snaps))
-	for _, s := range snaps {
-		fmt.Printf("  [%s] %s", s.Level, s.Message)
-		for _, f := range s.Fields {
-			fmt.Printf("  %s=%s", f.Key, f.Value)
-		}
-		fmt.Println()
-	}
-
-	fmt.Println()
-
 	// --- Pattern 2: subscribe (live tail) ---
 	//
+	// Start the subscriber BEFORE closing the logger so the ring is still open.
 	// A background goroutine receives every new snapshot as it arrives.
 	// The channel buffers 16 entries; slow consumers drop, not block.
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	ch := ring.Subscribe(ctx, 16)
@@ -84,8 +68,32 @@ func main() {
 		log.Info(msg)
 	}
 
+	// Close flushes the async MultiWriter so all entries reach the ring.
+	// This also closes the ring, which closes all subscriber channels.
+	// The subscriber goroutine exits cleanly when its channel is closed.
+	if err := log.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close error: %v\n", err)
+	}
+
 	// Wait for the subscriber goroutine to finish draining.
 	<-done
+
+	fmt.Println()
+
+	// --- Pattern 1: snapshot (HTTP debug endpoint) ---
+	//
+	// Grab the last 3 entries from the now-closed ring.
+	// In a real service this is called inside an http.HandlerFunc and the
+	// result is JSON-encoded into the response.
+	snaps := ring.Snapshot(3)
+	fmt.Printf("=== Snapshot: last %d entries ===\n", len(snaps))
+	for _, s := range snaps {
+		fmt.Printf("  [%s] %s", s.Level, s.Message)
+		for _, f := range s.Fields {
+			fmt.Printf("  %s=%s", f.Key, f.Value)
+		}
+		fmt.Println()
+	}
 
 	s := ring.Stats()
 	fmt.Printf("\nRing stats: capacity=%d fill=%d total=%d drops=%d\n",
