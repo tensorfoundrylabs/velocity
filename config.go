@@ -121,8 +121,38 @@ func isTerminal(f *os.File) bool {
 	}
 }
 
+// resolveColourForWriter reports whether ANSI colour should be emitted to w,
+// applying the standard environment overrides in priority order:
+//
+//  1. NO_COLOR=<non-empty>  — always disable (https://no-color.org)
+//  2. FORCE_COLOR=<non-empty> — always enable
+//  3. term.IsTerminal        — auto-detect from the file descriptor
+//
+// Windows terminal emulators (VS Code, Git Bash, Windows Terminal) often
+// present stdout as a named pipe rather than a console handle, which causes
+// term.IsTerminal to return false even on a real terminal. FORCE_COLOR=1 is
+// the documented escape hatch for those environments.
+func resolveColourForWriter(w io.Writer) bool {
+	// NO_COLOR has highest priority — explicit opt-out.
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	// FORCE_COLOR overrides TTY detection — explicit opt-in.
+	if os.Getenv("FORCE_COLOR") != "" {
+		return true
+	}
+	// Fall back to fd-level detection.
+	return IsTerminalWriter(w)
+}
+
 // IsTerminalWriter reports whether w is a terminal, using term.IsTerminal when possible.
 // Used to auto-detect colour support.
+//
+// Note: on Windows, terminal emulators that run shells as child processes (VS Code,
+// Git Bash, Windows Terminal) may proxy stdout through a pipe, causing this to return
+// false even when the output is visible in a colour-capable terminal. In that case,
+// set FORCE_COLOR=1 to override detection, or use resolveColourForWriter which
+// handles both env vars and fd detection.
 func IsTerminalWriter(w io.Writer) bool {
 	if f, ok := w.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms

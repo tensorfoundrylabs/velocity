@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+### New features
+
+- `FORCE_COLOR=<non-empty>` environment variable forces ANSI colour output regardless of whether stdout is a real terminal. Useful on Windows where terminal emulators proxy stdout through a named pipe, causing `term.IsTerminal` to return false even in a colour-capable terminal.
+- `NO_COLOR=<non-empty>` environment variable unconditionally disables ANSI colour output, following the https://no-color.org convention. Takes precedence over `FORCE_COLOR`.
+- `TTYRenderable` interface — optional extension to `Renderable` for types that need the terminal state at render time. `Logger.Render` and `Logger.RenderRaw` detect this interface and pass the console writer's resolved TTY state so colour decisions are correct even when rendering through an intermediate buffer.
+
 ### Bug fixes
 
 - Console writer now correctly emits colour when no theme is explicitly configured; previously, the default-theme path silently disabled colour.
+- `StatusItem`, `Group`, and `ContinuationBlock` now implement `TTYRenderable` and expose a `RenderTTY(w, isTTY)` method. Previously, when rendered via `Logger.Render`, `IsTerminalWriter` on the intermediate buffer always returned false, producing plain (uncoloured) badge/item output even on real terminals.
+- `template.useColours` is now gated on actual TTY state at writer construction, not just on whether the theme has colours. Previously, ANSI sequences were always emitted when the theme was non-mono, including when stdout was a pipe or file.
+- `ConsoleWriter.SetTheme` now updates `template.useColours` to reflect the new theme and current TTY state; previously it left `useColours=false` from initial construction when the writer was built on a non-TTY.
 
 ## v2.0.0 — 2026-05-15
 

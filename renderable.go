@@ -17,6 +17,21 @@ type Renderable interface {
 	Render(w io.Writer) error
 }
 
+// TTYRenderable is an optional extension to Renderable for types that need to
+// know whether the destination is a TTY before choosing between ANSI and plain
+// output. Logger.Render checks for this interface and passes the console writer's
+// resolved TTY state (which accounts for FORCE_COLOR / NO_COLOR env vars and
+// fd-level detection), so rendering decisions are consistent with how the rest
+// of the log line was formatted.
+//
+// Types that implement this interface should NOT call IsTerminalWriter on the
+// supplied io.Writer — they should use the isTTY argument instead, because the
+// writer is an intermediate buffer, not the final output sink.
+type TTYRenderable interface {
+	Renderable
+	RenderTTY(w io.Writer, isTTY bool) error
+}
+
 // Box-drawing constants shared by tree, box, and table renderers.
 const (
 	treeBranch = "├─ "

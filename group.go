@@ -50,12 +50,25 @@ func NewGroup(msg string, items []GroupItem, theme *Theme) *Group {
 
 // Render writes the group block to w. TTY is detected from w at call time.
 // The header line carries the message and count; each item follows on its own indented line.
+//
+// Note: when called via Logger.Render the writer is an intermediate buffer.
+// Logger.Render detects TTYRenderable and calls RenderTTY with the correct TTY state.
 func (g *Group) Render(w io.Writer) error {
 	if g == nil {
 		return nil
 	}
+	return g.RenderTTY(w, IsTerminalWriter(w))
+}
+
+// RenderTTY writes the group block to w with explicit TTY state. Callers that
+// already know the terminal state (e.g. Logger.Render) should use this to avoid
+// false-negative TTY detection on intermediate buffers.
+func (g *Group) RenderTTY(w io.Writer, isTTY bool) error {
+	if g == nil {
+		return nil
+	}
 	var buf bytes.Buffer
-	if IsTerminalWriter(w) {
+	if isTTY {
 		renderGroupTTY(&buf, g.msg, g.items, g.theme)
 	} else {
 		renderGroupPlain(&buf, g.msg, g.items)

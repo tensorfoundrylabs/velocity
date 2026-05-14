@@ -134,13 +134,30 @@ func NewStatusItem(kind StatusKind, msg string, theme *Theme, fields ...Field) *
 // when w is a real terminal the coloured badge form is used; otherwise plain text.
 // The trailing newline is always written so consecutive StatusItems align without
 // the caller having to manage spacing.
+//
+// Note: when called via Logger.Render the writer is an intermediate buffer, not the
+// final output sink. Logger.Render detects this and calls RenderTTY instead, passing
+// the console writer's resolved TTY state. Callers that hold the writer directly
+// (e.g. writing a StatusItem directly to os.Stdout) should call RenderTTY and pass
+// IsTerminalWriter(w) themselves if they need accurate TTY detection on Windows.
 func (s *StatusItem) Render(w io.Writer) error {
+	if s == nil {
+		return nil
+	}
+	return s.RenderTTY(w, IsTerminalWriter(w))
+}
+
+// RenderTTY writes the status item to w with explicit TTY state. Use this instead
+// of Render when the caller already knows the TTY state of the destination (e.g.
+// Logger.Render passes the console writer's resolved isTTY flag so that FORCE_COLOR
+// and fd detection are respected even though the intermediate writer is a buffer).
+func (s *StatusItem) RenderTTY(w io.Writer, isTTY bool) error {
 	if s == nil {
 		return nil
 	}
 
 	var buf bytes.Buffer
-	if IsTerminalWriter(w) {
+	if isTTY {
 		renderStatusItemTTY(&buf, s.kind, s.msg, s.theme, s.fields)
 	} else {
 		renderStatusItemPlain(&buf, s.kind, s.msg, s.fields)

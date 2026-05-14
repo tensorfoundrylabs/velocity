@@ -155,6 +155,15 @@ theme := velocity.NewTheme("Custom",
 styled := theme.Format(velocity.SlotGood, "all systems go")
 ```
 
+**Colour model.** Colour is automatically enabled when stdout is a real terminal (via `term.IsTerminal`). Two environment variables override detection:
+
+| Variable | Effect |
+|---|---|
+| `NO_COLOR=1` | Always disable ANSI, regardless of terminal type |
+| `FORCE_COLOR=1` | Always enable ANSI, regardless of terminal type |
+
+`NO_COLOR` takes precedence over `FORCE_COLOR`. `FORCE_COLOR=1` is useful on Windows where terminal emulators such as VS Code, Windows Terminal, and Git Bash proxy stdout through a named pipe, which causes `term.IsTerminal` to return false even in a fully colour-capable terminal.
+
 ### Renderables
 
 ```go

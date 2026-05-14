@@ -871,6 +871,12 @@ func (l *Logger) WithRequest(id string) *Logger {
 // Each line after the first is prefixed with spaces equal to the template prefix width
 // so the output sits flush with log messages in tree mode.
 //
+// When r implements TTYRenderable, RenderTTY is called with the console writer's
+// resolved TTY state (which accounts for FORCE_COLOR / NO_COLOR and fd detection),
+// so colour decisions match the rest of the log line. Types must implement TTYRenderable
+// if they use IsTerminalWriter internally — calling it on the intermediate buffer
+// passed by Render always yields false regardless of the actual output destination.
+//
 // JSON writers and MultiWriter silently ignore Render calls — indented rich output
 // is only meaningful on a terminal-backed console writer.
 //
@@ -881,12 +887,19 @@ func (l *Logger) Render(r Renderable) {
 	}
 
 	indent := l.consoleWriter.template.CachedMessageIndentStr()
+	isTTY := l.consoleWriter.isTTY
 
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)
 
-	if err := r.Render(tmp); err != nil {
-		return
+	if tr, ok := r.(TTYRenderable); ok {
+		if err := tr.RenderTTY(tmp, isTTY); err != nil {
+			return
+		}
+	} else {
+		if err := r.Render(tmp); err != nil {
+			return
+		}
 	}
 
 	out := indentLines(tmp.Bytes(), indent)
@@ -898,17 +911,26 @@ func (l *Logger) Render(r Renderable) {
 
 // RenderRaw writes r flush-left to the console writer, with no indentation.
 // Like Render, it is terminal-only and ignored by JSON/multi writers.
-// Nil-safe.
+// When r implements TTYRenderable, the console writer's TTY state is passed
+// rather than detecting it from the intermediate buffer. Nil-safe.
 func (l *Logger) RenderRaw(r Renderable) {
 	if l == nil || r == nil || l.consoleWriter == nil {
 		return
 	}
 
+	isTTY := l.consoleWriter.isTTY
+
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)
 
-	if err := r.Render(tmp); err != nil {
-		return
+	if tr, ok := r.(TTYRenderable); ok {
+		if err := tr.RenderTTY(tmp, isTTY); err != nil {
+			return
+		}
+	} else {
+		if err := r.Render(tmp); err != nil {
+			return
+		}
 	}
 
 	l.consoleWriter.mu.Lock()

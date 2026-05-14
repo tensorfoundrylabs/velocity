@@ -61,15 +61,21 @@ func TestTemplate_CachedPrefixWidth_BadgeStyle(t *testing.T) {
 // writer is a TTY. Previously, nil theme silently disabled colour even when DisableColour
 // was false.
 //
-// Technique: construct the writer, then flip isTTY=true and re-run cacheLevelColours() to
+// Technique: construct the writer, then flip isTTY=true and template.useColours=true to
 // simulate a real terminal, bypassing the io.Writer TTY probe which never fires on a buffer.
+// Both fields must be set together because template.useColours gates ANSI in the template
+// path, and isTTY gates the level-colour cache used by the fallback formatEntrySecure path.
 func TestConsoleWriter_ColourEmittedWhenNoThemeSet(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	// nil theme → should default to NightOwl with colour enabled.
 	w := NewConsoleWriter(&buf, nil)
+	// Simulate a real terminal — both flags must be updated together because
+	// template.useColours drives ANSI in the template path while isTTY drives
+	// the level-colour cache used by the fallback formatEntrySecure path.
 	w.isTTY = true
+	w.template.useColours = true
 	w.cacheLevelColours()
 
 	// At least one level colour must be non-empty — NightOwl defines them all.
@@ -221,5 +227,122 @@ func TestConsoleWriter_CachedWidthsAfterFieldDisplayMutation(t *testing.T) {
 	}
 	if TemplateDefault.fieldDisplayMode == FieldDisplayTree {
 		t.Error("TemplateDefault was mutated — shallow copy semantics broken")
+	}
+}
+
+// TestEnvVar_NoColour verifies that NO_COLOR=1 suppresses ANSI output even when
+// the writer would otherwise be treated as a TTY (isTTY forced true for the test).
+func TestEnvVar_NoColour(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("FORCE_COLOR", "") // ensure FORCE_COLOR does not override
+
+	var buf bytes.Buffer
+	w := NewConsoleWriter(&buf, ThemeNightOwl)
+
+	// Even forcing isTTY won't emit ANSI when NO_COLOR is set, because
+	// resolveColourForWriter() checked NO_COLOR at construction time.
+	// The field stays false regardless.
+	if w.isTTY {
+		t.Error("expected isTTY=false when NO_COLOR is set, but got true")
+	}
+	if w.template.useColours {
+		t.Error("expected template.useColours=false when NO_COLOR is set, but got true")
+	}
+
+	entry := GetEntry()
+	defer entry.Release()
+	entry.SetLevel(LevelInfo)
+	entry.SetMessage("no colour via env")
+
+	if err := w.Write(entry); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "\033[") {
+		t.Errorf("NO_COLOR=1: expected no ANSI escapes, got: %q", output)
+	}
+}
+
+// TestEnvVar_ForceColour verifies that FORCE_COLOR=1 enables ANSI output even
+// when the writer is a *bytes.Buffer (which would normally be non-TTY).
+func TestEnvVar_ForceColour(t *testing.T) {
+	t.Setenv("FORCE_COLOR", "1")
+	t.Setenv("NO_COLOR", "") // ensure NO_COLOR does not suppress
+
+	var buf bytes.Buffer
+	w := NewConsoleWriter(&buf, ThemeNightOwl)
+
+	if !w.isTTY {
+		t.Error("expected isTTY=true when FORCE_COLOR is set, but got false")
+	}
+	if !w.template.useColours {
+		t.Error("expected template.useColours=true when FORCE_COLOR is set, but got false")
+	}
+
+	entry := GetEntry()
+	defer entry.Release()
+	entry.SetLevel(LevelInfo)
+	entry.SetMessage("forced colour via env")
+
+	if err := w.Write(entry); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "\033[") {
+		t.Errorf("FORCE_COLOR=1: expected ANSI escapes, got: %q", output)
+	}
+}
+
+// TestStatusItem_ColourViaLoggerRender verifies that a StatusItem rendered via
+// Logger.Render emits ANSI colour sequences when the console writer is in TTY
+// mode. This guards the two-step buffer path in Logger.Render where IsTerminalWriter
+// on the intermediate buffer would always return false without TTYRenderable.
+func TestStatusItem_ColourViaLoggerRender(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithDevelopment(), WithConsoleOutput(&buf))
+	if log.consoleWriter == nil {
+		t.Fatal("expected consoleWriter to be set")
+	}
+
+	// Force TTY so colour is enabled.
+	log.consoleWriter.isTTY = true
+	log.consoleWriter.template.useColours = true
+	log.consoleWriter.cacheLevelColours()
+
+	item := NewStatusItem(StatusOK, "service healthy", log.Style())
+	log.Render(item)
+
+	output := buf.String()
+	if !strings.Contains(output, "\033[") {
+		t.Errorf("StatusItem via Logger.Render with isTTY=true: expected ANSI escapes, got: %q", output)
+	}
+}
+
+// TestStatusItem_NoColourViaLoggerRenderWhenNotTTY verifies that a StatusItem
+// rendered via Logger.Render emits plain text when the console writer is not a TTY.
+func TestStatusItem_NoColourViaLoggerRenderWhenNotTTY(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithDevelopment(), WithConsoleOutput(&buf))
+	if log.consoleWriter == nil {
+		t.Fatal("expected consoleWriter to be set")
+	}
+	// isTTY stays false — buf is not a terminal.
+
+	item := NewStatusItem(StatusOK, "service healthy", log.Style())
+	log.Render(item)
+
+	output := buf.String()
+	if strings.Contains(output, "\033[") {
+		t.Errorf("StatusItem via Logger.Render with isTTY=false: expected no ANSI escapes, got: %q", output)
+	}
+	// The badge itself must still appear.
+	if !strings.Contains(output, "[OKAY]") {
+		t.Errorf("StatusItem via Logger.Render: expected [OKAY] badge in plain output, got: %q", output)
 	}
 }

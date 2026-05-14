@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 type ConsoleWriter struct {
@@ -44,12 +42,22 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 	if theme == nil {
 		theme = ThemeNightOwl
 	}
-	useColours := !theme.noColour
-	// Themes are immutable from NewTheme — no caching step needed here.
+	themeHasColour := !theme.noColour
 
 	if displayTimezone == nil {
 		displayTimezone = time.Local
 	}
+
+	// Resolve whether this writer should emit ANSI sequences. This checks
+	// NO_COLOR / FORCE_COLOR first, then falls back to fd-level detection.
+	// On Windows, terminal emulators often proxy stdout as a named pipe;
+	// FORCE_COLOR=1 is the escape hatch for those environments.
+	isTTY := resolveColourForWriter(out)
+
+	// useColours is true only when both the writer can render colour AND the
+	// theme actually carries colour slots. A no-colour theme (noColourTheme,
+	// ThemeMono) always produces plain output regardless of TTY state.
+	useColours := isTTY && themeHasColour
 
 	templateCopy := *TemplateDefault
 	templateCopy.fieldDisplayMode = fieldDisplayMode
@@ -66,13 +74,10 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 		timeFunc:        time.Now,
 		bufPool:         NewBufferPool(),
 		displayTimezone: displayTimezone,
+		isTTY:           isTTY,
 	}
 
-	if f, ok := out.(interface{ Fd() uintptr }); ok {
-		w.isTTY = term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
-	}
-
-	if w.isTTY && useColours {
+	if useColours {
 		w.cacheLevelColours()
 	}
 
@@ -740,11 +745,18 @@ func (w *ConsoleWriter) Close() error {
 	return nil
 }
 
+// SetTheme replaces the active theme. When colour was disabled at construction
+// (e.g. no-colour theme or non-TTY writer) it stays disabled — switching to a
+// coloured theme on a non-TTY writer does not re-enable ANSI output.
+// When the writer is a TTY and the new theme has colour, colour is re-enabled.
 func (w *ConsoleWriter) SetTheme(theme *Theme) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	w.theme = theme
+	// Re-derive useColours from current isTTY and new theme state.
+	themeHasColour := theme != nil && !theme.noColour
+	w.template.useColours = w.isTTY && themeHasColour
 	w.cacheLevelColours()
 }
 

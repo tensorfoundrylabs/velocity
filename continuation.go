@@ -112,12 +112,25 @@ func NewContinuationBlock(msg string, lines []string, theme *Theme) *Continuatio
 // Render writes the continuation block to w. TTY is detected from w at call time:
 // when w is a real terminal the SlotContinuation glyph is coloured; otherwise plain.
 // The first line is the message; subsequent lines follow with the │ prefix and indent.
+//
+// Note: when called via Logger.Render the writer is an intermediate buffer.
+// Logger.Render detects TTYRenderable and calls RenderTTY with the correct TTY state.
 func (c *ContinuationBlock) Render(w io.Writer) error {
 	if c == nil {
 		return nil
 	}
+	return c.RenderTTY(w, IsTerminalWriter(w))
+}
+
+// RenderTTY writes the continuation block to w with explicit TTY state. Callers
+// that already know the terminal state (e.g. Logger.Render) should use this to
+// avoid false-negative TTY detection on intermediate buffers.
+func (c *ContinuationBlock) RenderTTY(w io.Writer, isTTY bool) error {
+	if c == nil {
+		return nil
+	}
 	var buf bytes.Buffer
-	if IsTerminalWriter(w) {
+	if isTTY {
 		renderContinuationTTY(&buf, c.msg, c.lines, c.theme)
 	} else {
 		renderContinuationPlain(&buf, c.msg, c.lines)
