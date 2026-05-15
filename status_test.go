@@ -352,3 +352,90 @@ func TestStatusJSONNoMessageBadge(t *testing.T) {
 		t.Errorf("badge text leaked into JSON message: %q", out)
 	}
 }
+
+// --- Logger.Status: sampler gate ---
+
+// TestLoggerStatus_SamplerGate verifies that the sampler runs before the console
+// render path, not just before the structured path. A sampled-out call must produce
+// no console output at all.
+func TestLoggerStatus_SamplerGate(t *testing.T) {
+	t.Parallel()
+
+	var consoleBuf safeBuffer
+	// CountSampler(5, 0): allow first 5, then drop everything.
+	log := New(
+		WithConsoleOutput(&consoleBuf),
+		WithColour(false),
+		WithSampler(NewCountSampler(5, 0)),
+	)
+	defer func() { _ = log.Close() }()
+
+	// Log 10 status calls — only the first 5 should produce output.
+	for range 10 {
+		log.Status(LevelInfo, StatusOK, "sampled")
+	}
+
+	out := consoleBuf.String()
+	count := strings.Count(out, "[OKAY]")
+	if count > 5 {
+		t.Errorf("sampler did not gate Status console output: got %d badges, want ≤5", count)
+	}
+	if count == 0 {
+		t.Error("expected at least some Status output before sampler kicked in, got none")
+	}
+}
+
+// TestLoggerStatus_BaseFieldsPropagated verifies that baseFields set via With()
+// appear in both the console badge line and the JSON structured record.
+func TestLoggerStatus_BaseFieldsPropagated(t *testing.T) {
+	t.Parallel()
+
+	var consoleBuf safeBuffer
+	var jsonBuf safeBuffer
+
+	parent := New(
+		WithConsoleOutput(&consoleBuf),
+		WithColour(false),
+		WithStructuredOutput(&jsonBuf),
+	)
+	defer func() { _ = parent.Close() }()
+
+	child := parent.With(String("request_id", "req-123"))
+	child.Status(LevelInfo, StatusOK, "processed")
+
+	// Console output must include the base field.
+	consoleOut := consoleBuf.String()
+	if !strings.Contains(consoleOut, "request_id") {
+		t.Errorf("base field missing from Status console output: %q", consoleOut)
+	}
+
+	// JSON output must also include the base field.
+	jsonOut := jsonBuf.String()
+	if !strings.Contains(jsonOut, "request_id") {
+		t.Errorf("base field missing from Status JSON output: %q", jsonOut)
+	}
+}
+
+// TestLoggerStatus_SecureTagRedactedOnNonTTY verifies that <secure> tags in the
+// Status message are redacted when the console writer is non-TTY (a bytes.Buffer).
+func TestLoggerStatus_SecureTagRedactedOnNonTTY(t *testing.T) {
+	t.Parallel()
+
+	var consoleBuf safeBuffer
+	log := New(
+		WithConsoleOutput(&consoleBuf),
+		WithColour(false),
+		WithStructuredOutput(io.Discard),
+	)
+	defer func() { _ = log.Close() }()
+
+	log.Status(LevelInfo, StatusOK, "token <secure>supersecret</secure> ok")
+
+	out := consoleBuf.String()
+	if strings.Contains(out, "supersecret") {
+		t.Errorf("secure tag content leaked in non-TTY console output: %q", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in non-TTY console output, got: %q", out)
+	}
+}
