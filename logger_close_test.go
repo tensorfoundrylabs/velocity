@@ -2,6 +2,7 @@ package velocity
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,50 @@ func TestNopLogger_CloseSafe(t *testing.T) {
 	l := NopLogger()
 	if err := l.Close(); err != nil {
 		t.Fatalf("NopLogger Close() returned error: %v", err)
+	}
+}
+
+// TestWithProduction_ProducesOutput is a regression test for the bug where
+// WithProduction set StructuredOutput to nil, producing no output at all.
+// The preset must route JSON entries to stderr (captured here via a buffer).
+func TestWithProduction_ProducesOutput(t *testing.T) {
+	t.Parallel()
+
+	var buf safeBuffer
+
+	log := New(
+		WithProduction(),
+		// Redirect the structured output to a buffer so we can inspect it.
+		WithStructuredOutput(&buf),
+	)
+	defer func() { _ = log.Close() }()
+
+	log.Info("hello")
+
+	out := buf.String()
+	if out == "" {
+		t.Fatal("WithProduction() produced no output — StructuredOutput was likely nil")
+	}
+	if !strings.Contains(out, "hello") {
+		t.Errorf("expected 'hello' in JSON output, got: %q", out)
+	}
+}
+
+// TestSetTheme_NilResetsToDefault verifies that SetTheme(nil) resets to NightOwl
+// rather than silently disabling colour. The documented way to disable colour is
+// WithColour(false), not passing nil to SetTheme.
+func TestSetTheme_NilResetsToDefault(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithConsoleOutput(&buf), WithTheme(ThemeSolarized))
+
+	log.SetTheme(nil)
+
+	if log.Theme() != ThemeNightOwl {
+		t.Errorf("SetTheme(nil): Theme() returned %v, want ThemeNightOwl", log.Theme())
+	}
+	if log.cfg.ConsoleTheme != ThemeNightOwl {
+		t.Errorf("SetTheme(nil): cfg.ConsoleTheme = %v, want ThemeNightOwl", log.cfg.ConsoleTheme)
 	}
 }

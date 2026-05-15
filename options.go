@@ -35,15 +35,19 @@ func WithDevelopment() Option {
 	}
 }
 
-// WithProduction resets config to production defaults: JSON to stdout at info level,
-// no console output, UTC timestamps.
+// WithProduction resets config to production defaults: JSON to stderr at info
+// level, no console output, UTC timestamps.
+//
+// stderr is used rather than stdout so application-level output (piped to
+// another process, written to a file, etc.) is not contaminated by log lines.
+// Override with WithStructuredOutput if a different destination is required.
 func WithProduction() Option {
 	return func(c *config) {
 		*c = config{
 			ConsoleOutput:    io.Discard,
 			ConsoleTheme:     nil,
 			ConsoleLevel:     LevelOff,
-			StructuredOutput: nil,
+			StructuredOutput: defaultStderr(),
 			StructuredFormat: FormatJSON,
 			StructuredLevel:  LevelInfo,
 			BufferSize:       4096,
