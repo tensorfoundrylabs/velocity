@@ -103,18 +103,6 @@ func initTemplate(t *Template) *Template {
 	return t
 }
 
-// buildWithTimezone converts UTC timestamps to the display timezone before rendering.
-// Delegates to buildWithTimezoneSecure with TTY-trusted defaults (called from
-// ConsoleWriter.WriteSecure which handles trust itself via formatEntrySecure for
-// the non-template path; the template path always calls this form from ConsoleWriter).
-func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location) {
-	// Template path: trust is handled by the caller (ConsoleWriter.WriteSecure
-	// which passes trusted=isTTY). The template itself doesn't know trust state;
-	// it renders plaintext for Secure fields and strips <secure> tags always.
-	// This preserves backward compatibility for callers that build templates directly.
-	t.buildWithTimezoneSecure(buf, entry, theme, displayTimezone, true, "[REDACTED]")
-}
-
 // buildWithTimezoneSecure is the trust-aware template rendering path.
 func (t *Template) buildWithTimezoneSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location, trusted bool, redactionMark string) {
 	if t.showTime && !entry.Time.IsZero() {
