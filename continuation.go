@@ -278,15 +278,15 @@ func (l *Logger) logContinue(level Level, msg string, lines []string) {
 
 		entry.Write()
 
-		l.writersMu.RLock()
-		if l.additionalWriters != nil {
+		l.writers.mu.RLock()
+		if l.writers.mw != nil {
 			// Additional writers receive a typed field so they can render the lines
 			// if they choose. Writers that don't understand FieldTypeContinuationLines
 			// emit "[N lines]" as a fallback hint (see writeFormatted).
 			entry.WithFields(continuationLinesField(lines))
-			_ = l.additionalWriters.Write(entry)
+			_ = l.writers.mw.Write(entry)
 		}
-		l.writersMu.RUnlock()
+		l.writers.mu.RUnlock()
 		return
 	}
 

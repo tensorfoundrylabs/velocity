@@ -291,3 +291,33 @@ func TestLogger_NilSetLevel(_ *testing.T) {
 	l.SetLevel(LevelDebug) // must not panic
 	_ = l.Level()          // must not panic
 }
+
+// TestLogger_ChildSeesWriterAddedAfterCreation is a regression test for the bug where
+// child loggers created via With() did not see writers added to the parent after the
+// child was created. The shared writerSet pointer must propagate the new writer to
+// all members of the logger family.
+func TestLogger_ChildSeesWriterAddedAfterCreation(t *testing.T) {
+	t.Parallel()
+
+	parent := New(WithConsoleOutput(&bytes.Buffer{}))
+
+	// Create a child before adding any writer.
+	child := parent.With(String("child", "true"))
+
+	var count atomic.Int64
+	fn := WriterFunc(func(_ *Entry) error {
+		count.Add(1)
+		return nil
+	})
+
+	// Add the writer to the parent AFTER the child was created.
+	parent.AddWriter("tracker", &fn)
+
+	// Log through the child — the shared writerSet means the tracker should fire.
+	child.Info("from child")
+
+	waitFor(t, func() bool {
+		return count.Load() >= 1
+	}, 300*time.Millisecond, 10*time.Millisecond,
+		"child should route through writer added to parent after child creation")
+}

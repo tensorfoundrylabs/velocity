@@ -23,9 +23,9 @@ func TestWriterTrusted_DefaultUntrusted(t *testing.T) {
 	log.AddWriter("sink", &NoOpWriter{})
 	defer func() { _ = log.Close() }()
 
-	log.writersMu.RLock()
-	trusted := log.additionalWriters.IsTrusted("sink")
-	log.writersMu.RUnlock()
+	log.writers.mu.RLock()
+	trusted := log.writers.mw.IsTrusted("sink")
+	log.writers.mu.RUnlock()
 
 	if trusted {
 		t.Error("writer added without WriterTrusted() should be untrusted by default")
@@ -40,9 +40,9 @@ func TestWriterTrusted_ExplicitTrust(t *testing.T) {
 	log.AddWriter("sink", &NoOpWriter{}, WriterTrusted())
 	defer func() { _ = log.Close() }()
 
-	log.writersMu.RLock()
-	trusted := log.additionalWriters.IsTrusted("sink")
-	log.writersMu.RUnlock()
+	log.writers.mu.RLock()
+	trusted := log.writers.mw.IsTrusted("sink")
+	log.writers.mu.RUnlock()
 
 	if !trusted {
 		t.Error("writer added with WriterTrusted() should be trusted")
@@ -58,10 +58,10 @@ func TestWriterTrusted_MixedWriters(t *testing.T) {
 	log.AddWriter("untrusted-sink", &NoOpWriter{})
 	defer func() { _ = log.Close() }()
 
-	log.writersMu.RLock()
-	trustedYes := log.additionalWriters.IsTrusted("trusted-sink")
-	trustedNo := log.additionalWriters.IsTrusted("untrusted-sink")
-	log.writersMu.RUnlock()
+	log.writers.mu.RLock()
+	trustedYes := log.writers.mw.IsTrusted("trusted-sink")
+	trustedNo := log.writers.mw.IsTrusted("untrusted-sink")
+	log.writers.mu.RUnlock()
 
 	if !trustedYes {
 		t.Error("trusted-sink should be trusted")

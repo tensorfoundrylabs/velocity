@@ -331,7 +331,8 @@ func TestRingBufferWriter_SetTrustedFlipsFlag(t *testing.T) {
 }
 
 // Verify that WriterTrusted() integration works end-to-end via the logger.
-// The trust flag must survive the AddWriter path so IsTrusted() reflects it.
+// The trust flag must survive the AddWriter path so both the MultiWriter worker
+// and the writer's own IsTrusted() reflect it.
 func TestRingBufferWriter_TrustedViaLoggerAddWriter(t *testing.T) {
 	t.Parallel()
 
@@ -340,15 +341,18 @@ func TestRingBufferWriter_TrustedViaLoggerAddWriter(t *testing.T) {
 	log := New(WithNop())
 	log.AddWriter("ring", r, WriterTrusted())
 
-	// The MultiWriter stores isTrusted on the worker, not on the writer itself.
-	// SetTrusted() is NOT called by AddWriter — that is intentional: MultiWriter
-	// holds the flag. IsTrusted() on the writer remains false unless the caller
-	// explicitly sets it via SetTrusted. This matches the design: trust lives in
-	// writerOptions, not in the writer struct.
-	//
-	// Verify MultiWriter's IsTrusted accessor instead.
-	if !log.additionalWriters.IsTrusted("ring") {
-		t.Error("writer registered with WriterTrusted() should report trusted in MultiWriter")
+	// AddWriter propagates trust to the writer via SetTrusted when available,
+	// so IsTrusted() on the ring writer itself should return true.
+	if !r.IsTrusted() {
+		t.Error("RingBufferWriter.IsTrusted() should be true after AddWriter with WriterTrusted()")
+	}
+
+	// MultiWriter worker state should also reflect the trust flag.
+	log.writers.mu.RLock()
+	multiTrusted := log.writers.mw.IsTrusted("ring")
+	log.writers.mu.RUnlock()
+	if !multiTrusted {
+		t.Error("MultiWriter worker should report trusted for WriterTrusted() registration")
 	}
 
 	_ = log.Close()
