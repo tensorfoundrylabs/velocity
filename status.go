@@ -231,7 +231,7 @@ func renderStatusItemPlain(buf *bytes.Buffer, kind StatusKind, msg string, field
 // When themed and useColours is true, field keys and values are coloured.
 // trusted controls whether Secure/SecureURL field plaintext is shown;
 // pass isTTY for console output (matches the trust model used by ConsoleWriter).
-func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColours bool, trusted bool) {
+func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColours, trusted bool) {
 	for _, f := range fields {
 		buf.WriteByte(' ')
 
