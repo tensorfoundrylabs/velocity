@@ -255,7 +255,7 @@ func (l *Logger) logContinue(level Level, msg string, lines []string) {
 	entry.SetTime(time.Now())
 	entry.forceTreeDisplay = l.forceTreeDisplay
 
-	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
 		entry.maybeSecure = true
 	}
 

@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -225,7 +226,7 @@ func TestScanSecure_FalseWithSecureTagsDisabled(t *testing.T) {
 
 	// WithSecureTags(false) keeps scanSecure permanently false.
 	l := New(WithSecureTags(false))
-	if l.scanSecure.Load() {
+	if l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=false when WithSecureTags(false) is applied")
 	}
 }
@@ -238,7 +239,7 @@ func TestScanSecure_TrueWithNonTTYConsole(t *testing.T) {
 	cfg.ConsoleOutput = &safeBuffer{} // non-TTY
 	cfg.StructuredOutput = nil
 	l := newFromConfig(cfg)
-	if !l.scanSecure.Load() {
+	if !l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=true for non-TTY console writer")
 	}
 }
@@ -252,7 +253,7 @@ func TestScanSecure_FalseWhenNoOutputs(t *testing.T) {
 	// console is io.Discard (also nil). No writers — nothing to redact for.
 	// The nop logger has ConsoleOutput=io.Discard which newFromConfig skips
 	// (it checks != io.Discard), so consoleWriter == nil and jsonWriter == nil.
-	if l.scanSecure.Load() {
+	if l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=false for nop logger with no real writers")
 	}
 }
@@ -265,7 +266,7 @@ func TestScanSecure_TrueWhenJSONWriterPresent(t *testing.T) {
 	cfg.ConsoleOutput = &safeBuffer{}
 	cfg.StructuredOutput = &safeBuffer{}
 	l := newFromConfig(cfg)
-	if !l.scanSecure.Load() {
+	if !l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=true when JSON writer is present")
 	}
 }
@@ -275,25 +276,25 @@ func TestScanSecure_RecomputedOnAddRemoveWriter(t *testing.T) {
 
 	// Start with a nop logger (no real writers, scanSecure=false).
 	l := New(WithNop())
-	if l.scanSecure.Load() {
+	if l.writers.scanSecure.Load() {
 		t.Fatal("precondition: scanSecure should be false for nop logger")
 	}
 
 	// Adding an untrusted writer must flip the flag.
 	l.AddWriter("sink", &NoOpWriter{})
-	if !l.scanSecure.Load() {
+	if !l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=true after AddWriter (untrusted)")
 	}
 
 	// Adding a trusted writer alongside the untrusted one must leave flag true.
 	l.AddWriter("trusted-sink", &NoOpWriter{}, WriterTrusted())
-	if !l.scanSecure.Load() {
+	if !l.writers.scanSecure.Load() {
 		t.Error("scanSecure must stay true while untrusted writer exists")
 	}
 
 	// Remove the untrusted writer — flag should drop back to false.
 	_ = l.RemoveWriter("sink")
-	if l.scanSecure.Load() {
+	if l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=false after removing the last untrusted writer")
 	}
 }
@@ -303,13 +304,13 @@ func TestScanSecure_WithSecureTagsFalse(t *testing.T) {
 
 	// WithSecureTags(false) must keep scanSecure permanently false regardless of writers.
 	l := New(WithStructuredOutput(&safeBuffer{}), WithSecureTags(false))
-	if l.scanSecure.Load() {
+	if l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=false when WithSecureTags(false) is set")
 	}
 
 	// Adding an untrusted writer must NOT flip the flag.
 	l.AddWriter("sink", &NoOpWriter{})
-	if l.scanSecure.Load() {
+	if l.writers.scanSecure.Load() {
 		t.Error("expected scanSecure=false after AddWriter when WithSecureTags(false)")
 	}
 }
@@ -406,4 +407,57 @@ func TestSecureTag_WriterRedactionMark(t *testing.T) {
 	if !strings.Contains(out, "***HIDDEN***") {
 		t.Errorf("must use custom redaction mark, got: %s", out)
 	}
+}
+
+// TestSecureTag_ChildLoggerSeesWriterAddedAfterCreation is a regression test for the bug
+// where child loggers created before AddWriter was called kept a stale scanSecure=false.
+// Because scanSecure was per-Logger (copied at With() time), the child's flag was never
+// updated when the parent gained an untrusted writer — so <secure> tags leaked in plaintext.
+func TestSecureTag_ChildLoggerSeesWriterAddedAfterCreation(t *testing.T) {
+	t.Parallel()
+
+	sink := &safeBuffer{}
+
+	// Parent has only a console to io.Discard — no structured writer, so scanSecure=false.
+	parent := New(WithConsoleOutput(io.Discard))
+	// Child is created before the untrusted writer is added.
+	child := parent.With(String("child", "yes"))
+
+	// Now add an untrusted JSON writer to the parent.
+	parent.AddWriter("json", NewJSONWriter(sink))
+
+	// Child logs a message with a <secure> tag — it must NOT appear in plaintext.
+	child.Info("token <secure>secret</secure>")
+
+	waitFor(t, func() bool {
+		return sink.Len() > 0
+	}, 2*time.Second, 5*time.Millisecond, "json writer receives entry from child")
+
+	out := sink.String()
+	if strings.Contains(out, "secret") {
+		t.Errorf("child logger leaked secure content; got: %s", out)
+	}
+	if !strings.Contains(out, redactedMark) {
+		t.Errorf("expected redaction mark %q in output; got: %s", redactedMark, out)
+	}
+}
+
+// TestSecureTag_TrustedWriterAddedAfterChildDoesNotFlipScan verifies that adding a
+// TRUSTED writer after child creation does not enable secure-tag scanning. Trusted
+// writers see plaintext by design — no scan needed for their sake.
+func TestSecureTag_TrustedWriterAddedAfterChildDoesNotFlipScan(t *testing.T) {
+	t.Parallel()
+
+	// Start with no outputs — scanSecure must stay false.
+	parent := New(WithNop())
+	child := parent.With(String("child", "yes"))
+
+	trustedSink := &safeBuffer{}
+	parent.AddWriter("trusted", NewJSONWriter(trustedSink), WriterTrusted())
+
+	// Neither parent nor child should have scanSecure enabled: the only writer is trusted.
+	if parent.writers.scanSecure.Load() {
+		t.Error("parent: scanSecure must be false when only writer is trusted")
+	}
+	_ = child // child shares the same writerSet — same assertion holds
 }

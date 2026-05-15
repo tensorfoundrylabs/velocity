@@ -12,13 +12,19 @@ import (
 	"time"
 )
 
-// writerSet is a shared container for the MultiWriter and its guard mutex.
-// Parent and child loggers hold the same *writerSet pointer so that a writer
-// added to the parent after a child is created is visible to both. AddWriter
-// initialises the inner MultiWriter on first use.
+// writerSet is a shared container for the MultiWriter, its guard mutex, and
+// the scanSecure flag. Parent and child loggers hold the same *writerSet pointer
+// so that a writer added to the parent after a child is created is visible to
+// all siblings — and the scanSecure flag update reaches them too.
+// AddWriter initialises the inner MultiWriter on first use.
 type writerSet struct {
 	mw *MultiWriter
 	mu sync.RWMutex
+
+	// scanSecure is true when at least one output path would redact secure data.
+	// Stored here (not on Logger) so AddWriter/RemoveWriter on any family member
+	// immediately propagates to all child loggers sharing the same writerSet.
+	scanSecure atomic.Bool
 }
 
 type Logger struct {
@@ -42,14 +48,8 @@ type Logger struct {
 	// regardless of FieldDisplayMode. Set via Detailed().
 	forceTreeDisplay bool
 
-	// scanSecure is true when at least one output path would redact secure data,
-	// i.e. any untrusted additional writer or a non-TTY console writer.
-	// Recomputed on AddWriter/RemoveWriter. When false, the IndexByte('<') scan
-	// is skipped entirely — dev sessions with only a TTY console pay zero scan cost.
-	scanSecure atomic.Bool
-
 	// secureScanEnabled is the user-facing gate. False when WithSecureTags(false) was
-	// applied; in that case scanSecure stays false regardless of the writer mix.
+	// applied; in that case writers.scanSecure stays false regardless of the writer mix.
 	secureScanEnabled atomic.Bool
 
 	level  atomic.Int32
@@ -219,7 +219,7 @@ func (l *Logger) With(fields ...Field) *Logger {
 	}
 	child.level.Store(l.level.Load())
 	child.secureScanEnabled.Store(l.secureScanEnabled.Load())
-	child.scanSecure.Store(l.scanSecure.Load())
+	// scanSecure lives on the shared writers — no copy needed.
 	newBase := make([]Field, len(l.baseFields)+len(fields))
 	copy(newBase, l.baseFields)
 	copy(newBase[len(l.baseFields):], fields)
@@ -228,7 +228,11 @@ func (l *Logger) With(fields ...Field) *Logger {
 }
 
 // recomputeScanSecure recalculates whether the <secure> tag scan must run on
-// every log call. Called at AddWriter/RemoveWriter time. The scan fires when:
+// every log call. The result is written to writers.scanSecure so all loggers
+// sharing the same writerSet (parent + every child created via With/Detailed)
+// see the updated flag immediately. Called at AddWriter/RemoveWriter time.
+//
+// The scan fires when:
 //   - scan is globally enabled (secureScanEnabled), AND
 //   - at least one output path is untrusted:
 //     a) the JSON writer is always untrusted, OR
@@ -238,19 +242,19 @@ func (l *Logger) With(fields ...Field) *Logger {
 // Must be called with writers.mu held (write lock) or before the logger is shared.
 func (l *Logger) recomputeScanSecure() {
 	if !l.secureScanEnabled.Load() {
-		l.scanSecure.Store(false)
+		l.writers.scanSecure.Store(false)
 		return
 	}
 
 	// JSON writer is always untrusted.
 	if l.jsonWriter != nil {
-		l.scanSecure.Store(true)
+		l.writers.scanSecure.Store(true)
 		return
 	}
 
 	// Non-TTY console writer is untrusted (writing to a pipe or file).
 	if l.consoleWriter != nil && !l.consoleWriter.isTTY {
-		l.scanSecure.Store(true)
+		l.writers.scanSecure.Store(true)
 		return
 	}
 
@@ -267,12 +271,12 @@ func (l *Logger) recomputeScanSecure() {
 		}
 		l.writers.mw.mu.Unlock()
 		if hasUntrusted {
-			l.scanSecure.Store(true)
+			l.writers.scanSecure.Store(true)
 			return
 		}
 	}
 
-	l.scanSecure.Store(false)
+	l.writers.scanSecure.Store(false)
 }
 
 // AddWriter registers a named writer to receive log entries.
@@ -481,7 +485,7 @@ func (l *Logger) Status(level Level, kind StatusKind, msg string, fields ...Fiel
 		// TTY (trusted) writers show the plaintext with delimiters stripped;
 		// non-TTY (untrusted, e.g. piped to a file) writers show the redaction mark.
 		consoleMsg := msg
-		if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
 			if l.consoleWriter.isTTY {
 				consoleMsg = stripSecureTags(msg)
 			} else {
@@ -523,7 +527,7 @@ func (l *Logger) logStatusStructuredWithFields(level Level, kind StatusKind, msg
 	entry.forceTreeDisplay = l.forceTreeDisplay
 	entry.statusKind = kind
 
-	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
 		entry.maybeSecure = true
 	}
 
@@ -590,7 +594,7 @@ func (l *Logger) logGroup(level Level, msg string, items []GroupItem) {
 	entry.SetTime(time.Now())
 	entry.forceTreeDisplay = l.forceTreeDisplay
 
-	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
 		entry.maybeSecure = true
 	}
 
@@ -701,7 +705,7 @@ func (l *Logger) LogEntry(e *Entry) {
 	}
 	// Apply the same <secure> tag scan as logInternal so entries routed through
 	// external adapters (e.g. slogbridge) benefit from message-level redaction.
-	if l.scanSecure.Load() && strings.IndexByte(e.Message, '<') >= 0 {
+	if l.writers.scanSecure.Load() && strings.IndexByte(e.Message, '<') >= 0 {
 		e.maybeSecure = true
 	}
 	if l.cfg != nil {
@@ -745,7 +749,7 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 	// zero-alloc on string input. The flag is read without a lock — worst case a
 	// concurrent AddWriter races and we miss one log line; acceptable for a
 	// best-effort security feature.
-	if l.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
 		entry.maybeSecure = true
 	}
 
@@ -906,7 +910,7 @@ func (l *Logger) Detailed() *Logger {
 	}
 	child.level.Store(l.level.Load())
 	child.secureScanEnabled.Store(l.secureScanEnabled.Load())
-	child.scanSecure.Store(l.scanSecure.Load())
+	// scanSecure lives on the shared writers — no copy needed.
 	if len(l.baseFields) > 0 {
 		newBase := make([]Field, len(l.baseFields))
 		copy(newBase, l.baseFields)
