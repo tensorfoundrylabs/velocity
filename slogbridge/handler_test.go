@@ -3,6 +3,7 @@ package slogbridge_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -211,6 +212,31 @@ func TestSlogHandler_ConcurrentHandle(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestSlogHandler_SecureTagsRedacted is a regression test for the bug where
+// messages routed through slogbridge bypassed the <secure> tag scanner. When the
+// output is untrusted (JSON writer), the tagged content must be redacted.
+func TestSlogHandler_SecureTagsRedacted(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	l := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+	)
+	sl := slogbridge.NewLogger(l)
+
+	// The token between the tags must not appear in the JSON output.
+	sl.Info("token <secure>supersecret</secure> logged")
+
+	out := jsonBuf.String()
+	if strings.Contains(out, "supersecret") {
+		t.Errorf("secure tag content leaked into JSON output: %q", out)
+	}
+	if !strings.Contains(out, "token") {
+		t.Errorf("expected message prefix 'token' in output, got: %q", out)
+	}
 }
 
 func BenchmarkSlogHandler_Info(b *testing.B) {
