@@ -12,9 +12,22 @@ import (
 	"golang.org/x/term"
 )
 
-// isTerminal reports whether w is a real terminal. Used to suppress control
-// sequences (\r, ANSI erase) when output is piped or redirected.
-func isTerminal(w io.Writer) bool {
+// shouldEmitColour reports whether ANSI control sequences should be written to w.
+// Priority order matches the root velocity package:
+//  1. NO_COLOR=<non-empty>  — always suppress (https://no-color.org)
+//  2. FORCE_COLOR=<non-empty> — always emit
+//  3. fd-level TTY detection via term.IsTerminal
+//
+// Using FORCE_COLOR=1 is the documented workaround for Windows terminal emulators
+// (VS Code, Git Bash, Windows Terminal) that proxy stdout through a named pipe,
+// causing term.IsTerminal to return false even on a colour-capable terminal.
+func shouldEmitColour(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if os.Getenv("FORCE_COLOR") != "" {
+		return true
+	}
 	if f, ok := w.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
 	}
@@ -62,7 +75,7 @@ func NewProgressBar(w io.Writer, total int64, label string) *ProgressBar {
 		width:   40,
 		started: time.Now(),
 		done:    make(chan struct{}),
-		isTTY:   isTerminal(w),
+		isTTY:   shouldEmitColour(w),
 	}
 	pb.active.Store(true)
 
@@ -253,7 +266,7 @@ func NewSpinner(w io.Writer, label string) *Spinner {
 		label:  label,
 		frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		done:   make(chan struct{}),
-		isTTY:  isTerminal(w),
+		isTTY:  shouldEmitColour(w),
 	}
 	s.active.Store(true)
 
@@ -447,7 +460,7 @@ func NewMultiProgress(w io.Writer) *MultiProgress {
 		writer: w,
 		items:  make([]ProgressItem, 0),
 		done:   make(chan struct{}),
-		isTTY:  isTerminal(w),
+		isTTY:  shouldEmitColour(w),
 	}
 	mp.active.Store(true)
 

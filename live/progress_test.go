@@ -145,3 +145,48 @@ func TestSpinner_NonTTY_StopWithMessage(t *testing.T) {
 		t.Errorf("expected message in output: %q", out)
 	}
 }
+
+// --- FORCE_COLOR / NO_COLOR env var handling ---
+
+// TestProgressBar_ForceColor_EnablesOnNonTTY is a regression test for the bug where
+// progress types ignored FORCE_COLOR, leaving them inactive on non-TTY writers even
+// when FORCE_COLOR=1 was set (e.g. Windows Terminal piping output to the shell).
+// We use io.Discard to avoid racing the render goroutine against the test goroutine
+// on a shared bytes.Buffer — the assertion is about the isTTY flag, not I/O content.
+func TestProgressBar_ForceColor_EnablesOnNonTTY(t *testing.T) {
+	// Cannot run in parallel — t.Setenv modifies process-wide env vars.
+	t.Setenv("FORCE_COLOR", "1")
+
+	pb := NewProgressBar(io.Discard, 10, "loading")
+
+	if !pb.isTTY {
+		t.Error("ProgressBar.isTTY should be true under FORCE_COLOR=1 regardless of fd type")
+	}
+	pb.Complete()
+}
+
+// TestSpinner_ForceColor_EnablesOnNonTTY verifies the same for Spinner.
+func TestSpinner_ForceColor_EnablesOnNonTTY(t *testing.T) {
+	t.Setenv("FORCE_COLOR", "1")
+
+	s := NewSpinner(io.Discard, "working")
+
+	if !s.isTTY {
+		t.Error("Spinner.isTTY should be true under FORCE_COLOR=1 regardless of fd type")
+	}
+	s.Stop()
+}
+
+// TestProgressBar_NoColor_Disables verifies that NO_COLOR=1 suppresses the isTTY flag
+// even when FORCE_COLOR is absent.
+func TestProgressBar_NoColor_Disables(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("FORCE_COLOR", "") // ensure FORCE_COLOR does not interfere
+
+	pb := NewProgressBar(io.Discard, 10, "loading")
+
+	if pb.isTTY {
+		t.Error("ProgressBar.isTTY should be false under NO_COLOR=1")
+	}
+	pb.Complete()
+}
