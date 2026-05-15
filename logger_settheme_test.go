@@ -38,14 +38,36 @@ func TestLogger_SetTheme(t *testing.T) {
 	}
 }
 
-// TestLogger_SetTheme_Nil verifies that a nil theme does not panic.
+// TestLogger_SetTheme_Nil verifies that a nil theme does not panic and that Theme(),
+// Style(), and cfg all agree on NightOwl afterwards. This is a regression guard for the
+// case where SetTheme(nil) silently left cfg nil while Style() fell back elsewhere,
+// causing ANSI output under FORCE_COLOR=1 even though the caller intended a reset.
 func TestLogger_SetTheme_Nil(t *testing.T) {
-	t.Parallel()
+	// Cannot run in parallel — t.Setenv modifies a process-wide env var.
+	t.Setenv("FORCE_COLOR", "1")
 
 	var buf bytes.Buffer
 	log := New(WithConsoleOutput(&buf))
+
 	// Must not panic.
 	log.SetTheme(nil)
+
+	// Theme(), cfg.ConsoleTheme, and Style() must all agree on NightOwl.
+	if got := log.Theme(); got != ThemeNightOwl {
+		t.Errorf("Theme() after SetTheme(nil): got %v, want ThemeNightOwl", got)
+	}
+	if log.cfg.ConsoleTheme != ThemeNightOwl {
+		t.Errorf("cfg.ConsoleTheme after SetTheme(nil): got %v, want ThemeNightOwl", log.cfg.ConsoleTheme)
+	}
+	// Style() must return a coloured theme (NightOwl) under FORCE_COLOR=1 after nil reset,
+	// not noColourTheme — the nil reset must not accidentally disable colour.
+	style := log.Style()
+	if style == noColourTheme {
+		t.Error("Style() returned noColourTheme after SetTheme(nil) with FORCE_COLOR=1 — nil should reset to NightOwl, not disable colour")
+	}
+	if style != ThemeNightOwl {
+		t.Errorf("Style() after SetTheme(nil): got %v, want ThemeNightOwl", style)
+	}
 }
 
 // TestLogger_SetTheme_NilLogger verifies nil receiver is safe.
