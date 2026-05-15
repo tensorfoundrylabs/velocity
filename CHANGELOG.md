@@ -14,6 +14,9 @@
 - `StatusItem`, `Group`, and `ContinuationBlock` now implement `TTYRenderable` and expose a `RenderTTY(w, isTTY)` method. Previously, when rendered via `Logger.Render`, `IsTerminalWriter` on the intermediate buffer always returned false, producing plain (uncoloured) badge/item output even on real terminals.
 - `template.useColours` is now gated on actual TTY state at writer construction, not just on whether the theme has colours. Previously, ANSI sequences were always emitted when the theme was non-mono, including when stdout was a pipe or file.
 - `ConsoleWriter.SetTheme` now updates `template.useColours` to reflect the new theme and current TTY state; previously it left `useColours=false` from initial construction when the writer was built on a non-TTY.
+- `ConsoleWriterRB` now uses TTY detection (`resolveColourForWriter`) to set its trust state, matching `ConsoleWriter`'s model. Previously, the template path always rendered Secure fields as plaintext regardless of whether the output was a terminal or a file/pipe.
+- `StatusItem.writeStatusFields` now applies the same TTY-as-trust model as `ConsoleWriter`: Secure fields show plaintext on terminal output and are redacted in plain (non-TTY) renders. Previously, Secure fields were always redacted in Status badge output even on trusted terminals.
+- `SetTheme(nil)` now documents and enforces "nil = reset to NightOwl" semantics; `Style()` and `cfg.ConsoleTheme` both reflect the reset. Previously, the nil behaviour was not regression-tested.
 
 ## v2.0.0 — 2026-05-15
 
