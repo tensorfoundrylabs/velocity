@@ -206,7 +206,8 @@ func renderStatusItemTTY(buf *bytes.Buffer, kind StatusKind, msg string, theme *
 	}
 
 	// Fields rendered inline with key/value colours from the theme.
-	writeStatusFields(buf, fields, theme, true)
+	// TTY console writers are trusted — Secure fields show plaintext on terminal.
+	writeStatusFields(buf, fields, theme, true, true)
 
 	buf.WriteByte('\n')
 }
@@ -220,14 +221,17 @@ func renderStatusItemPlain(buf *bytes.Buffer, kind StatusKind, msg string, field
 	buf.WriteByte(']')
 	buf.WriteString(statusBadgeSep)
 	buf.WriteString(msg)
-	writeStatusFields(buf, fields, nil, false)
+	// Non-TTY output is untrusted — Secure fields are redacted.
+	writeStatusFields(buf, fields, nil, false, false)
 	buf.WriteByte('\n')
 }
 
 // writeStatusFields appends inline key=value pairs to buf.
 // Strings and errors are quoted for readability; numerics are written raw.
 // When themed and useColours is true, field keys and values are coloured.
-func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColours bool) {
+// trusted controls whether Secure/SecureURL field plaintext is shown;
+// pass isTTY for console output (matches the trust model used by ConsoleWriter).
+func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColours bool, trusted bool) {
 	for _, f := range fields {
 		buf.WriteByte(' ')
 
@@ -257,11 +261,18 @@ func writeStatusFields(buf *bytes.Buffer, fields []Field, theme *Theme, useColou
 		}
 
 		// Quote string-like types to match the console writer convention.
+		// Secure fields use the trust-aware path: plaintext on TTY, redacted otherwise.
 		switch f.Type {
 		case FieldTypeString, FieldTypeError, FieldTypeStringer, FieldTypeTruncated:
 			buf.WriteByte('"')
 			f.writeFormatted(buf)
 			buf.WriteByte('"')
+		case FieldTypeSecure, FieldTypeSecureURL:
+			if trusted {
+				f.writeFormattedTrusted(buf)
+			} else {
+				f.writeFormatted(buf)
+			}
 		default:
 			f.writeFormatted(buf)
 		}

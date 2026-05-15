@@ -416,6 +416,36 @@ func TestLoggerStatus_BaseFieldsPropagated(t *testing.T) {
 	}
 }
 
+// TestStatusItem_SecureFieldRedactedOnNonTTY verifies that Secure fields passed to a
+// StatusItem are redacted when rendered via renderStatusItemPlain (non-TTY path),
+// and shown as plaintext via renderStatusItemTTY (trusted TTY path).
+// Regression guard for the bug where writeStatusFields always called writeFormatted
+// regardless of trust, causing Secure fields to be redacted on trusted TTY output too.
+func TestStatusItem_SecureFieldRedactedOnNonTTY(t *testing.T) {
+	t.Parallel()
+
+	item := NewStatusItem(StatusOK, "login", ThemeNightOwl, Secure("password", "hunter2"))
+
+	// Non-TTY (plain) path: Secure field must be redacted.
+	var plain strings.Builder
+	_ = item.RenderTTY(&plain, false)
+	plainOut := plain.String()
+	if strings.Contains(plainOut, "hunter2") {
+		t.Errorf("Secure field plaintext leaked in plain Status render: %q", plainOut)
+	}
+	if !strings.Contains(plainOut, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in plain Status render, got: %q", plainOut)
+	}
+
+	// TTY (trusted) path: Secure field must show plaintext.
+	var tty strings.Builder
+	_ = item.RenderTTY(&tty, true)
+	ttyOut := tty.String()
+	if !strings.Contains(ttyOut, "hunter2") {
+		t.Errorf("Secure field plaintext missing from trusted TTY Status render: %q", ttyOut)
+	}
+}
+
 // TestLoggerStatus_SecureTagRedactedOnNonTTY verifies that <secure> tags in the
 // Status message are redacted when the console writer is non-TTY (a bytes.Buffer).
 func TestLoggerStatus_SecureTagRedactedOnNonTTY(t *testing.T) {
