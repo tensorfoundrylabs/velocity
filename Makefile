@@ -12,7 +12,7 @@ endif
 
 .PHONY: all clean test test-race test-short test-cover lint fmt vet align tidy \
         install-tools check-tools ready ready-tools ci help \
-        bench bench-baseline bench-perf-gate \
+        bench bench-baseline perf-gate \
         bench-compare bench-compare-short
 
 # ── Test ─────────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ tidy:
 ready-tools: fmt align lint vet
 	@printf "\033[32mCode quality checks passed.\033[0m\n"
 
-ready: tidy fmt align lint vet test-race bench-perf-gate
+ready: tidy fmt align lint vet test-race
 	@printf "\033[32mReady for commit.\033[0m\n"
 
 # ── CI ───────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ check-tools:
 	@if command -v benchstat >/dev/null 2>&1; then \
 		printf "  benchstat:      installed\n"; \
 	else \
-		printf "  benchstat:      \033[33mnot installed (optional, needed for bench-perf-gate)\033[0m\n"; \
+		printf "  benchstat:      \033[33mnot installed (optional, needed for perf-gate)\033[0m\n"; \
 	fi
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
@@ -153,12 +153,13 @@ bench-baseline:
 	@go test -bench=. -benchmem -count=10 ./... > docs/bench-baseline.txt 2>&1
 	@echo "Baseline written to docs/bench-baseline.txt"
 
-# bench-perf-gate: gates on allocation counts vs docs/bench-baseline.txt.
+# perf-gate: gates on allocation counts vs docs/bench-baseline.txt.
 # Allocation counts are deterministic (unlike timing on Windows with short runs),
 # so any increase in allocs/op is a definitive regression regardless of count.
 # Timing regressions are logged informatively but do not fail the gate here —
 # use "make bench-baseline" + manual benchstat for timing verification at release.
-bench-perf-gate:
+# Not run by `make ready` — invoke manually before tagging or when changing hot paths.
+perf-gate:
 	@if [ ! -f docs/bench-baseline.txt ]; then \
 		printf "\033[33m  no baseline found at docs/bench-baseline.txt -- skipping perf gate\033[0m\n"; \
 		exit 0; \
@@ -217,7 +218,7 @@ help:
 	@echo "  make tidy                Run go mod tidy"
 	@echo ""
 	@echo "Ready (pre-commit):"
-	@echo "  make ready               Full quality gate: tidy, fmt, align, lint, vet, test-race, perf gate"
+	@echo "  make ready               Pre-commit gate: tidy, fmt, align, lint, vet, test-race"
 	@echo "  make ready-tools         Quick check: fmt, align, lint, vet (no tests)"
 	@echo ""
 	@echo "CI:"
@@ -226,7 +227,7 @@ help:
 	@echo "Benchmarks:"
 	@echo "  make bench               Quick bench run (count=3) with allocs"
 	@echo "  make bench-baseline      Capture count=10 run to docs/bench-baseline.txt"
-	@echo "  make bench-perf-gate     Compare allocs vs baseline; fail on any alloc/op regression"
+	@echo "  make perf-gate           Compare allocs vs baseline; fail on any alloc/op regression"
 	@echo "  make bench-compare       Compare against zap, zerolog, slog, charmbracelet, pterm"
 	@echo "  make bench-compare-short Quick single-run comparison"
 	@echo ""
