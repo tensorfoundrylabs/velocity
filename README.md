@@ -27,9 +27,9 @@ log.Info("server started", velocity.String("addr", ":8080"), velocity.Int("worke
 
 ```go
 import (
-    "github.com/tensorfoundrylabs/velocity/v2"                          // core logging, writers, renderables, themes
-    "github.com/tensorfoundrylabs/velocity/v2/live"                     // spinners and progress bars
-    slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"    // log/slog bridge
+    "github.com/tensorfoundrylabs/velocity/v2"           // core logging, writers, renderables, themes
+    "github.com/tensorfoundrylabs/velocity/v2/live"      // spinners and progress bars
+    "github.com/tensorfoundrylabs/velocity/v2/slogbridge" // log/slog bridge
 )
 ```
 
@@ -199,7 +199,7 @@ log.Continue(velocity.LevelInfo, "Server listening",
 ### log/slog bridge
 
 ```go
-import slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"
+import "github.com/tensorfoundrylabs/velocity/v2/slogbridge"
 
 vlog := velocity.New(velocity.WithDevelopment())
 slog.SetDefault(slogbridge.NewLogger(vlog))
