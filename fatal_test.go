@@ -14,9 +14,13 @@ func TestFatal_CustomHandler_CalledNotOsExit(t *testing.T) {
 	var buf bytes.Buffer
 	called := false
 
-	cfg := DefaultTestingConfig(&buf)
-	cfg.FatalHandler = func() { called = true }
-	l := NewWithConfig(cfg)
+	l := New(
+		WithConsoleOutput(&buf),
+		WithColour(false),
+		WithLevel(LevelDebug),
+		WithTimeFormat("15:04:05.000"),
+		WithFatalHandler(func() { called = true }),
+	)
 
 	l.Fatal("something went wrong", String("code", "E001"))
 
@@ -29,20 +33,23 @@ func TestFatal_CustomHandler_CalledNotOsExit(t *testing.T) {
 	}
 }
 
-func TestFatal_WithFatalHandler_Builder(t *testing.T) {
+func TestFatal_WithFatalHandler_Options(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	called := false
 
-	l := NewWithBuilder(
-		PresetTesting(&buf).WithFatalHandler(func() { called = true }),
+	l := New(
+		WithConsoleOutput(&buf),
+		WithColour(false),
+		WithLevel(LevelDebug),
+		WithFatalHandler(func() { called = true }),
 	)
 
-	l.Fatal("fatal via builder")
+	l.Fatal("fatal via options")
 
 	if !called {
-		t.Error("expected FatalHandler to be called via builder")
+		t.Error("expected FatalHandler to be called via options")
 	}
 }
 

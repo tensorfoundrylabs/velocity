@@ -13,10 +13,10 @@ func TestLogger_SetTheme(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	log.Info("before theme change")
 	before := buf.String()
@@ -38,14 +38,36 @@ func TestLogger_SetTheme(t *testing.T) {
 	}
 }
 
-// TestLogger_SetTheme_Nil verifies that a nil theme does not panic.
+// TestLogger_SetTheme_Nil verifies that a nil theme does not panic and that Theme(),
+// Style(), and cfg all agree on NightOwl afterwards. This is a regression guard for the
+// case where SetTheme(nil) silently left cfg nil while Style() fell back elsewhere,
+// causing ANSI output under FORCE_COLOR=1 even though the caller intended a reset.
 func TestLogger_SetTheme_Nil(t *testing.T) {
-	t.Parallel()
+	// Cannot run in parallel — t.Setenv modifies a process-wide env var.
+	t.Setenv("FORCE_COLOR", "1")
 
 	var buf bytes.Buffer
-	log := New(&buf)
+	log := New(WithConsoleOutput(&buf))
+
 	// Must not panic.
 	log.SetTheme(nil)
+
+	// Theme(), cfg.ConsoleTheme, and Style() must all agree on NightOwl.
+	if got := log.Theme(); got != ThemeNightOwl {
+		t.Errorf("Theme() after SetTheme(nil): got %v, want ThemeNightOwl", got)
+	}
+	if log.cfg.ConsoleTheme != ThemeNightOwl {
+		t.Errorf("cfg.ConsoleTheme after SetTheme(nil): got %v, want ThemeNightOwl", log.cfg.ConsoleTheme)
+	}
+	// Style() must return a coloured theme (NightOwl) under FORCE_COLOR=1 after nil reset,
+	// not noColourTheme — the nil reset must not accidentally disable colour.
+	style := log.Style()
+	if style == noColourTheme {
+		t.Error("Style() returned noColourTheme after SetTheme(nil) with FORCE_COLOR=1 — nil should reset to NightOwl, not disable colour")
+	}
+	if style != ThemeNightOwl {
+		t.Errorf("Style() after SetTheme(nil): got %v, want ThemeNightOwl", style)
+	}
 }
 
 // TestLogger_SetTheme_NilLogger verifies nil receiver is safe.
@@ -62,10 +84,10 @@ func TestLogger_Theme_Returns(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	if got := log.Theme(); got != ThemeNightOwl {
 		t.Errorf("Theme() returned unexpected theme: %v", got)
@@ -90,12 +112,12 @@ func TestLogger_SetTheme_PropagatestoAdditionalWriter(t *testing.T) {
 	var primaryBuf safeBuffer
 	var extraBuf safeBuffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &primaryBuf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	// Add a console writer as an additional writer — it implements SetTheme.
 	extra := NewConsoleWriter(&extraBuf, ThemeNightOwl)
@@ -130,12 +152,12 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = &buf
 	cfg.ConsoleTheme = ThemeNightOwl
 	cfg.StructuredOutput = nil
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 
 	log.SetTheme(ThemeSolarized)
 
@@ -157,15 +179,72 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 
 	buf.Reset()
 	// Build a NightOwl logger for comparison.
-	cfg2 := DefaultConfig()
+	cfg2 := defaultConfig()
 	cfg2.ConsoleOutput = &buf
 	cfg2.ConsoleTheme = ThemeNightOwl
 	cfg2.StructuredOutput = nil
-	owlLog := NewWithConfig(cfg2)
+	owlLog := newFromConfig(cfg2)
 	owlLog.With(String("child", "true")).Info("from child")
 	owlOut := buf.String()
 
 	if strings.EqualFold(childOut, owlOut) {
 		t.Log("note: themes produced identical byte sequences (unlikely but not a hard failure)")
+	}
+}
+
+// TestLogger_Style_ColourFollowsActiveTheme is a regression test for the bug where
+// Style() returned noColourTheme even when a console writer was active because
+// cfg.ConsoleTheme was nil (the nil-means-NightOwl convention).
+// WithDevelopment() leaves ConsoleTheme nil (uses the default), so Style() must
+// return a coloured theme when colour is enabled (FORCE_COLOR=1 or real TTY).
+func TestLogger_Style_ColourFollowsActiveTheme(t *testing.T) {
+	// Cannot run in parallel because t.Setenv modifies a process-wide env var.
+	// Style() is colour-aware: it returns mono for non-TTY writers and the
+	// themed palette for TTY writers. Use FORCE_COLOR=1 to test the colour
+	// path without requiring a real terminal in CI.
+	t.Setenv("FORCE_COLOR", "1")
+
+	log := New(WithDevelopment())
+	style := log.Style()
+
+	// A coloured theme must not be the no-colour sentinel under FORCE_COLOR.
+	if style == noColourTheme {
+		t.Error("Style() returned noColourTheme under FORCE_COLOR=1 for a development logger")
+	}
+
+	// Must not be nil.
+	if style == nil {
+		t.Error("Style() returned nil")
+	}
+
+	// Confirm at least one ANSI code is present (timestamp or level colour).
+	if style.cachedTimestampFgStr() == "" && style.cachedLevelCode(LevelInfo) == "" {
+		t.Error("Style() returned a theme with no ANSI codes under FORCE_COLOR=1 — expected coloured output")
+	}
+}
+
+// TestLogger_Style_NoConsoleWriter returns mono theme for JSON-only loggers.
+func TestLogger_Style_NoConsoleWriter(t *testing.T) {
+	t.Parallel()
+
+	// Production preset: JSON only, no console output.
+	log := New(WithProduction())
+	style := log.Style()
+
+	if style != noColourTheme {
+		t.Errorf("Style() on JSON-only logger should return noColourTheme, got %v", style)
+	}
+}
+
+// TestLogger_Style_DisableColour returns mono theme when colour is off.
+func TestLogger_Style_DisableColour(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithConsoleOutput(&buf), WithColour(false))
+	style := log.Style()
+
+	if style != noColourTheme {
+		t.Errorf("Style() with DisableColour should return noColourTheme, got %v", style)
 	}
 }

@@ -1,6 +1,5 @@
-// Custom theme example. Shows how to define your own colour palette
-// and have it flow through the entire velocity stack: log lines,
-// pretty output, status indicators, and tables.
+// Custom theme example. Shows how to define your own colour palette using NewTheme
+// and ThemeOption, then use Theme.Format(slot, s) to colour arbitrary output.
 //
 // This one is a cyberpunk theme. Hot pinks, electric blues, neon greens.
 package main
@@ -10,51 +9,42 @@ import (
 	"os"
 	"time"
 
-	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 // ThemeCyberpunk is a neon-on-dark palette inspired by Night City.
-var ThemeCyberpunk = cyberpunkTheme()
-
-func cyberpunkTheme() *velocity.Theme {
-	t := &velocity.Theme{
-		Name: "Cyberpunk",
-
-		// Log levels: each gets a distinct neon tone.
-		DebugColour: velocity.RGB(0x8B, 0x5C, 0xF6), // purple
-		InfoColour:  velocity.RGB(0x00, 0xD4, 0xFF), // electric blue
-		WarnColour:  velocity.RGB(0xFF, 0xE6, 0x00), // neon yellow
-		ErrorColour: velocity.RGB(0xFF, 0x00, 0x6E), // hot pink
-		FatalColour: velocity.RGB(0xFF, 0x00, 0x00), // red
-
-		// Chrome: the structural bits around your log messages.
-		TimestampColour: velocity.RGB(0x5A, 0x5A, 0x7A), // dim steel
-		MessageColour:   velocity.RGB(0xE0, 0xE0, 0xFF), // cool white
-		FieldKeyColour:  velocity.RGB(0x00, 0xFF, 0xAA), // neon green
-		FieldValColour:  velocity.RGB(0xCC, 0xCC, 0xEE), // soft lavender
-		ErrorValColour:  velocity.RGB(0xFF, 0x00, 0x6E), // hot pink (matches error)
-
-		// Status indicators for tables and operation results.
-		StatusOKColour:   velocity.RGB(0x00, 0xFF, 0xAA), // neon green
-		StatusFailColour: velocity.RGB(0xFF, 0x00, 0x6E), // hot pink
-		StatusWarnColour: velocity.RGB(0xFF, 0xE6, 0x00), // neon yellow
-		StatusInfoColour: velocity.RGB(0x00, 0xD4, 0xFF), // electric blue
-
-		// Table headers.
-		TableHeader: velocity.RGB(0xBB, 0x86, 0xFC), // bright purple
-	}
-
-	// Pre-compute ANSI escape sequences so they aren't generated per log line.
-	t.Cache()
-
-	return t
-}
+var ThemeCyberpunk = velocity.NewTheme("Cyberpunk",
+	// Log levels: each gets a distinct neon tone.
+	velocity.WithLevelColours(
+		velocity.RGB(0x8B, 0x5C, 0xF6), // debug: purple
+		velocity.RGB(0x00, 0xD4, 0xFF), // info: electric blue
+		velocity.RGB(0xFF, 0xE6, 0x00), // warn: neon yellow
+		velocity.RGB(0xFF, 0x00, 0x6E), // error: hot pink
+		velocity.RGB(0xFF, 0x00, 0x00), // fatal: red
+	),
+	// Chrome: the structural bits around your log messages.
+	velocity.WithTimestampColour(velocity.RGB(0x5A, 0x5A, 0x7A)), // dim steel
+	velocity.WithMessageColour(velocity.RGB(0xE0, 0xE0, 0xFF)),   // cool white
+	velocity.WithFieldColours(
+		velocity.RGB(0x00, 0xFF, 0xAA), // key: neon green
+		velocity.RGB(0xCC, 0xCC, 0xEE), // value: soft lavender
+		velocity.RGB(0xFF, 0x00, 0x6E), // error value: hot pink
+	),
+	// Status and semantic slots for use with Theme.Format.
+	velocity.WithStyleSlot(velocity.SlotStatusOK, velocity.RGB(0x00, 0xFF, 0xAA)),
+	velocity.WithStyleSlot(velocity.SlotStatusFail, velocity.RGB(0xFF, 0x00, 0x6E)),
+	velocity.WithStyleSlot(velocity.SlotStatusWarn, velocity.RGB(0xFF, 0xE6, 0x00)),
+	velocity.WithStyleSlot(velocity.SlotStatusInfo, velocity.RGB(0x00, 0xD4, 0xFF)),
+	velocity.WithStyleSlot(velocity.SlotTableHeader, velocity.RGB(0xBB, 0x86, 0xFC)),
+	velocity.WithStyleSlot(velocity.SlotGood, velocity.RGB(0x00, 0xFF, 0xAA)),
+	velocity.WithStyleSlot(velocity.SlotBad, velocity.RGB(0xFF, 0x00, 0x6E)),
+	velocity.WithStyleSlot(velocity.SlotMuted, velocity.RGB(0x5A, 0x5A, 0x7A)),
+)
 
 func main() {
 	// Wire up the theme through the logger. Every writer and formatter
 	// inherits it automatically.
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithTheme(ThemeCyberpunk),
 		velocity.WithLevel(velocity.LevelDebug),
@@ -71,8 +61,8 @@ func main() {
 
 	log.Newline()
 
-	// Detailed mode shows fields as a tree, same colours.
-	log.InfoDetailed("system status",
+	// Detailed() child forces tree mode, same colours as the parent theme.
+	log.Detailed().Info("system status",
 		velocity.String("cpu", "Arasaka X9-R"),
 		velocity.Int("cores", 128),
 		velocity.Float64("clock_ghz", 5.8),
@@ -84,7 +74,7 @@ func main() {
 
 	// Pretty output routes through the logger so it serialises under the same mutex
 	// and inherits the theme automatically.
-	p := pretty.NewFromLogger(log)
+	p := velocity.NewPrettyFromLogger(log)
 
 	p.Section("Mission Briefing")
 
@@ -99,28 +89,29 @@ func main() {
 
 	log.Newline()
 
-	// Status formatter picks up the theme for coloured OK/FAIL/WARN.
-	sf := velocity.NewStatusFormatter(ThemeCyberpunk, true)
-
+	// Theme.Format(slot, s) is the v2 way to colour cell content.
+	// No raw ANSI construction needed; the theme handles escape codes.
+	style := log.Style()
 	p.Table(
 		[]string{"Implant", "Status", "Integrity"},
 		[][]string{
-			{"Kiroshi Optics Mk.3", sf.Okay("ONLINE"), "98%"},
-			{"Mantis Blades", sf.Okay("ONLINE"), "100%"},
-			{"Sandevistan Mk.4", sf.Warn("DEGRADED"), "67%"},
-			{"Monowire", sf.Fail("OFFLINE"), "12%"},
+			{"Kiroshi Optics Mk.3", style.Format(velocity.SlotStatusOK, "ONLINE"), "98%"},
+			{"Mantis Blades", style.Format(velocity.SlotStatusOK, "ONLINE"), "100%"},
+			{"Sandevistan Mk.4", style.Format(velocity.SlotStatusWarn, "DEGRADED"), "67%"},
+			{"Monowire", style.Format(velocity.SlotStatusFail, "OFFLINE"), "12%"},
 		},
 	)
 
 	log.Newline()
 
-	// Tree display with the theme.
-	p.Tree([]pretty.TreeItem{
+	// Tree display with the theme. velocity.NewTree is the canonical constructor;
+	// p.Tree is sugar that calls Render immediately.
+	p.Tree([]velocity.TreeItem{
 		{
 			Key: "netrunner-loadout",
-			Children: []pretty.TreeItem{
+			Children: []velocity.TreeItem{
 				{Key: "deck", Value: "Tetratronic Rippler Mk.4"},
-				{Key: "quickhacks", Children: []pretty.TreeItem{
+				{Key: "quickhacks", Children: []velocity.TreeItem{
 					{Key: "contagion", Value: "legendary"},
 					{Key: "short circuit", Value: "epic"},
 					{Key: "system reset", Value: "rare"},

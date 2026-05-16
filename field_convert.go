@@ -76,6 +76,37 @@ func FieldValueToString(f Field) string {
 			return nilValueString
 		}
 		return fmt.Sprintf("%v", val)
+	case FieldTypeSecure, FieldTypeSecureURL:
+		// Return redacted form; callers that need plaintext use SecurePlain().
+		if f.value == nil {
+			return redactedMark
+		}
+		return (*secureValue)(f.value).redacted
+	case FieldTypeRedacted:
+		return redactedMark
+	case FieldTypeTruncated:
+		if f.value == nil {
+			return ""
+		}
+		return *(*string)(f.value)
+	case FieldTypeGroupItems:
+		// Return a human-readable hint; group-aware writers handle items directly.
+		if f.value == nil {
+			return "[0 items]"
+		}
+		items := *(*[]GroupItem)(f.value)
+		var tmp [20]byte
+		n := formatInt(tmp[:], int64(len(items)))
+		return "[" + UnsafeString(tmp[:n]) + " items]"
+	case FieldTypeContinuationLines:
+		// Return a human-readable hint; continuation-aware writers handle lines directly.
+		if f.value == nil {
+			return "[0 lines]"
+		}
+		lines := *(*[]string)(f.value)
+		var tmp [20]byte
+		n := formatInt(tmp[:], int64(len(lines)))
+		return "[" + UnsafeString(tmp[:n]) + " lines]"
 	case FieldTypeUnknown:
 		return ""
 	}

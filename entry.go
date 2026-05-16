@@ -34,6 +34,17 @@ type Entry struct {
 	// forceTreeDisplay indicates that fields should always be displayed in tree format
 	forceTreeDisplay bool
 
+	// maybeSecure is set when the message contains '<' and scanSecure is active.
+	// Writers check this to decide whether to run the <secure>...</secure> redaction pass.
+	// Kept on Entry (not inlined into every Field) because the common case is false.
+	maybeSecure bool
+
+	// statusKind carries the StatusKind for Logger.Status calls.
+	// statusKindNone (0xFF) means no status was set; this allows StatusOK (0) to be
+	// a valid value without ambiguity. One byte — measured to have zero hot-path cost
+	// on entries that never call Logger.Status.
+	statusKind StatusKind
+
 	// Reference count for pool safety
 	// Starts at 1 when acquired, decremented on Release
 	// Only returned to pool when count reaches 0
@@ -86,6 +97,8 @@ func (e *Entry) Reset() {
 
 	e.written.Store(0)
 	e.forceTreeDisplay = false
+	e.maybeSecure = false
+	e.statusKind = statusKindNone
 	e.refCount.Store(0)
 }
 
@@ -140,7 +153,7 @@ func (e *Entry) Release() {
 }
 
 func (e *Entry) WithField(key string, value any) *Entry {
-	e.Fields = append(e.Fields, F(key, value))
+	e.Fields = append(e.Fields, Any(key, value))
 	return e
 }
 

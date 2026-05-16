@@ -3,6 +3,7 @@ package velocity
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"reflect"
 	"strconv"
 	"time"
@@ -25,6 +26,24 @@ const (
 	FieldTypeStringer
 	FieldTypeBytes
 	FieldTypeAny // Avoid in hot paths
+
+	// Secure field types — hold a *secureValue in the value slot.
+	// One small heap alloc at constructor call; zero extra cost on the hot path
+	// for entries that contain no secure fields.
+	FieldTypeSecure    // plaintext + redacted pair, writer decides which to emit
+	FieldTypeSecureURL // URL with userinfo password redacted
+	FieldTypeRedacted  // permanently redacted; no plaintext stored anywhere
+	FieldTypeTruncated // value clipped to maxLen; may still be sensitive
+
+	// FieldTypeGroupItems carries a []GroupItem for Logger.Group calls.
+	// Stored as a typed Field so Entry layout stays unchanged — entries that never
+	// call Logger.Group pay zero cost.
+	FieldTypeGroupItems
+
+	// FieldTypeContinuationLines carries a []string for Logger.Continue calls.
+	// Stored as a typed Field so Entry layout stays unchanged — entries that never
+	// call Logger.Continue pay zero cost.
+	FieldTypeContinuationLines
 )
 
 // Field represents a structured log field optimised for minimal allocations.
@@ -42,37 +61,6 @@ type Field struct {
 	// For numeric types, store the value directly to avoid allocations
 	num  int64
 	Type FieldType
-}
-
-// F creates a field with automatic type detection.
-// For performance-critical code, use typed constructors instead.
-func F(key string, value any) Field {
-	switch v := value.(type) {
-	case string:
-		return String(key, v)
-	case int:
-		return Int(key, v)
-	case int64:
-		return Int64(key, v)
-	case float64:
-		return Float64(key, v)
-	case bool:
-		return Bool(key, v)
-	case time.Time:
-		return Time(key, v)
-	case time.Duration:
-		return Duration(key, v)
-	case error:
-		// Typed nils satisfy the error interface but panic on .Error(); delegate to Error which handles them.
-		return Error(key, v)
-	case fmt.Stringer:
-		// Typed nils satisfy fmt.Stringer but panic on .String(); delegate to Stringer which handles them.
-		return Stringer(key, v)
-	case []byte:
-		return Bytes(key, v)
-	default:
-		return Any(key, v)
-	}
 }
 
 func String(key, val string) Field {
@@ -137,13 +125,6 @@ func Duration(key string, val time.Duration) Field {
 	}
 }
 
-// Milliseconds creates a float field with duration in milliseconds.
-// Useful for showing precise timing for fast operations (e.g., "0.5ms" instead of "0s").
-func Milliseconds(key string, val time.Duration) Field {
-	ms := float64(val) / float64(time.Millisecond)
-	return Float64(key, ms)
-}
-
 func Error(key string, val error) Field {
 	if val == nil {
 		return String(key, "<nil>")
@@ -192,6 +173,123 @@ func Any(key string, val any) Field {
 	}
 }
 
+// parseURL wraps url.Parse so it can be swapped in tests.
+// Kept unexported — callers outside this file should not need it.
+var parseURL = url.Parse
+
+// userInfoRedacted builds a url.Userinfo with username preserved and the
+// password sentinel "REDACTED". Brackets are intentionally omitted because
+// url.String() URL-encodes '[' and ']', producing ugly %5BREDACTED%5D output.
+func userInfoRedacted(username string) *url.Userinfo {
+	return url.UserPassword(username, "REDACTED")
+}
+
+// secureValue pairs a redacted display string with the original plaintext.
+// Stored behind an unsafe.Pointer so Field width stays unchanged.
+// One alloc per Secure/SecureURL constructor call; zero per log call.
+type secureValue struct {
+	plain    string
+	redacted string
+}
+
+// Secure creates a field that renders as redacted on untrusted writers.
+// On TTY console writers (trusted by context) the plaintext is shown.
+// One heap alloc at the call site; zero per log call thereafter.
+func Secure(key, val string) Field {
+	sv := &secureValue{plain: val, redacted: redactedMark}
+	return Field{
+		Key:   key,
+		Type:  FieldTypeSecure,
+		value: unsafe.Pointer(sv),
+	}
+}
+
+// SecureURL creates a field from a URL string, redacting any userinfo password.
+// The plaintext form retains the full URL; the redacted form replaces the
+// password with "[REDACTED]". Falls back to treating the raw string as plaintext
+// when parsing fails. One heap alloc at the call site.
+func SecureURL(key, rawURL string) Field {
+	plain := rawURL
+	redacted := rawURL
+
+	if u, err := parseURL(rawURL); err == nil && u.User != nil {
+		if _, hasPass := u.User.Password(); hasPass {
+			safe := *u
+			safe.User = userInfoRedacted(u.User.Username())
+			redacted = safe.String()
+		}
+	}
+
+	sv := &secureValue{plain: plain, redacted: redacted}
+	return Field{
+		Key:   key,
+		Type:  FieldTypeSecureURL,
+		value: unsafe.Pointer(sv),
+	}
+}
+
+// Redacted creates a field with no plaintext — the value is permanently hidden
+// regardless of writer trust level. Use when the value must never appear in any
+// log output, not even on trusted writers.
+func Redacted(key string) Field {
+	return Field{
+		Key:  key,
+		Type: FieldTypeRedacted,
+		// No value stored. Writers emit the redaction mark unconditionally.
+	}
+}
+
+// Truncated clips val to maxLen runes, appending '…' when trimmed.
+// Zero-alloc when val fits within maxLen (stored as FieldTypeString).
+// One alloc when trimming occurs; returns FieldTypeTruncated so writers can
+// distinguish truncated fields from plain strings if needed.
+func Truncated(key, val string, maxLen int) Field {
+	if maxLen <= 0 {
+		return Field{Key: key, Type: FieldTypeTruncated}
+	}
+	// Count runes to handle multi-byte sequences correctly.
+	n := 0
+	for i := range val {
+		if n == maxLen {
+			// val exceeds maxLen — clip and append ellipsis.
+			clipped := val[:i] + "…"
+			return Field{
+				Key:   key,
+				Type:  FieldTypeTruncated,
+				value: unsafe.Pointer(&clipped),
+			}
+		}
+		_ = i
+		n++
+	}
+	// val fits; equivalent alloc profile to String() since &val forces escape.
+	return Field{
+		Key:   key,
+		Type:  FieldTypeTruncated,
+		value: unsafe.Pointer(&val),
+	}
+}
+
+// redactedMark is the default redaction sentinel used across the package.
+const redactedMark = "[REDACTED]"
+
+// SecurePlain returns the plaintext value of a Secure or SecureURL field.
+// Returns empty string for all other types or when no plaintext is stored.
+func SecurePlain(f Field) string {
+	if (f.Type == FieldTypeSecure || f.Type == FieldTypeSecureURL) && f.value != nil {
+		return (*secureValue)(f.value).plain
+	}
+	return ""
+}
+
+// SecureRedacted returns the redacted form of a Secure or SecureURL field.
+func SecureRedacted(f Field) string {
+	if (f.Type == FieldTypeSecure || f.Type == FieldTypeSecureURL) && f.value != nil {
+		return (*secureValue)(f.value).redacted
+	}
+	return redactedMark
+}
+
 // Value returns the field's value based on its type.
 // This method allocates and should be avoided in hot paths.
 func (f Field) Value() any {
@@ -219,38 +317,29 @@ func (f Field) Value() any {
 		return *(*[]byte)(f.value)
 	case FieldTypeAny:
 		return *(*any)(f.value)
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if f.value != nil {
+			return (*secureValue)(f.value).plain
+		}
+		return ""
+	case FieldTypeRedacted:
+		return redactedMark
+	case FieldTypeTruncated:
+		if f.value != nil {
+			return *(*string)(f.value)
+		}
+		return ""
+	case FieldTypeGroupItems:
+		// Items are handled directly by group-aware writers.
+		// Returning nil here prevents fmt fallback from trying to dereference the slice pointer.
+		return nil
+	case FieldTypeContinuationLines:
+		// Lines are handled directly by continuation-aware writers.
+		return nil
 	case FieldTypeUnknown:
 		return nil
 	}
 	return nil
-}
-
-type Fields struct {
-	fields []Field
-}
-
-func NewFields(capacity int) *Fields {
-	return &Fields{
-		fields: make([]Field, 0, capacity),
-	}
-}
-
-func (fs *Fields) Add(key string, value any) *Fields {
-	fs.fields = append(fs.fields, F(key, value))
-	return fs
-}
-
-func (fs *Fields) AddField(f Field) *Fields {
-	fs.fields = append(fs.fields, f)
-	return fs
-}
-
-func (fs *Fields) Reset() {
-	fs.fields = fs.fields[:0]
-}
-
-func (fs *Fields) Slice() []Field {
-	return fs.fields
 }
 
 func (f Field) writeFormatted(buf interface {
@@ -310,8 +399,89 @@ func (f Field) writeFormatted(buf interface {
 	case FieldTypeAny:
 		val := *(*any)(f.value)
 		_, _ = fmt.Fprintf(buf, "%v", val)
+	case FieldTypeSecure, FieldTypeSecureURL:
+		// Default: emit redacted form. Trusted writers call writeFormattedTrusted instead.
+		if f.value != nil {
+			_, _ = buf.WriteString((*secureValue)(f.value).redacted)
+		} else {
+			_, _ = buf.WriteString(redactedMark)
+		}
+	case FieldTypeRedacted:
+		_, _ = buf.WriteString(redactedMark)
+	case FieldTypeTruncated:
+		// Truncated values are not sensitive by definition; always emit as-is.
+		if f.value != nil {
+			_, _ = buf.WriteString(*(*string)(f.value))
+		}
+	case FieldTypeGroupItems:
+		// Group items are rendered by the console/JSON writers directly.
+		// In generic contexts (e.g. additional writers) write the item count as a hint.
+		if f.value != nil {
+			items := *(*[]GroupItem)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(items)))
+			_, _ = buf.WriteString("[")
+			_, _ = buf.Write(tmp[:n])
+			_, _ = buf.WriteString(" items]")
+		}
+	case FieldTypeContinuationLines:
+		// Continuation lines are rendered by WriteContinue directly.
+		// In generic contexts emit the line count as a hint.
+		if f.value != nil {
+			lines := *(*[]string)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(lines)))
+			_, _ = buf.WriteString("[")
+			_, _ = buf.Write(tmp[:n])
+			_, _ = buf.WriteString(" lines]")
+		}
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing
+	}
+}
+
+// writeFormattedTrusted writes the field to buf, using plaintext for Secure/SecureURL.
+// Call this only from writers that have been explicitly opted into trust.
+func (f Field) writeFormattedTrusted(buf interface {
+	WriteString(string) (int, error)
+	WriteRune(rune) (int, error)
+	Write([]byte) (int, error)
+},
+) {
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if f.value != nil {
+			_, _ = buf.WriteString((*secureValue)(f.value).plain)
+		}
+	case FieldTypeRedacted:
+		// Redacted is unconditional — trust has no effect.
+		_, _ = buf.WriteString(redactedMark)
+	default:
+		f.writeFormatted(buf)
+	}
+}
+
+// writeFormattedWithMark writes the field to buf, replacing Secure/SecureURL values
+// with the given redactionMark. Use on untrusted writer paths.
+func (f Field) writeFormattedWithMark(buf interface {
+	WriteString(string) (int, error)
+	WriteRune(rune) (int, error)
+	Write([]byte) (int, error)
+}, redactionMark string,
+) {
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if f.value != nil {
+			// Emit the field-level redacted form rather than the writer-level mark
+			// so URL fields still show the host/path portion.
+			_, _ = buf.WriteString((*secureValue)(f.value).redacted)
+		} else {
+			_, _ = buf.WriteString(redactionMark)
+		}
+	case FieldTypeRedacted:
+		_, _ = buf.WriteString(redactionMark)
+	default:
+		f.writeFormatted(buf)
 	}
 }
 

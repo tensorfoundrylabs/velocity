@@ -1,110 +1,188 @@
 package velocity
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+// writerSet is a shared container for the MultiWriter, its guard mutex, and
+// the scanSecure flag. Parent and child loggers hold the same *writerSet pointer
+// so that a writer added to the parent after a child is created is visible to
+// all siblings — and the scanSecure flag update reaches them too.
+// AddWriter initialises the inner MultiWriter on first use.
+type writerSet struct {
+	mw *MultiWriter
+	mu sync.RWMutex
+
+	// scanSecure is true when at least one output path would redact secure data.
+	// Stored here (not on Logger) so AddWriter/RemoveWriter on any family member
+	// immediately propagates to all child loggers sharing the same writerSet.
+	scanSecure atomic.Bool
+}
+
 type Logger struct {
 	sampler Sampler
 
-	cfg             *Config
-	bufPool         *BufferPool
-	consoleWriter   *ConsoleWriter
-	jsonWriter      *JSONWriter
-	statusFormatter *StatusFormatter
+	cfg           *config
+	bufPool       *BufferPool
+	consoleWriter *ConsoleWriter
+	jsonWriter    *JSONWriter
 
-	// Additional writers added post-initialisation for dynamic log routing
-	additionalWriters *MultiWriter
+	// writers is shared by reference between a logger and all children created
+	// via With / Detailed / WithComponent / WithRequest. AddWriter on any member
+	// of the family is immediately visible to all siblings.
+	writers *writerSet
 
 	// baseFields are prepended to every log entry on this logger.
 	// Set by With() and inherited by child loggers.
 	baseFields []Field
 
-	writersMu sync.RWMutex
-	level     atomic.Int32
+	// forceTreeDisplay makes every log call on this logger render fields as a tree,
+	// regardless of FieldDisplayMode. Set via Detailed().
+	forceTreeDisplay bool
+
+	// secureScanEnabled is the user-facing gate. False when WithSecureTags(false) was
+	// applied; in that case writers.scanSecure stays false regardless of the writer mix.
+	secureScanEnabled atomic.Bool
+
+	level  atomic.Int32
+	closed atomic.Bool
 }
 
-func New(w io.Writer) *Logger {
-	cfg := DefaultConfig()
-	cfg.ConsoleOutput = w
-	return NewWithConfig(cfg)
+// New constructs a Logger from the given options. Panics if the resolved
+// configuration is invalid (e.g. BufferSize < 256, sampler with both counts
+// zero). Apply preset options first, then override-specific ones:
+//
+//	log := velocity.New(velocity.WithDevelopment(), velocity.WithLevel(velocity.LevelWarn))
+func New(opts ...Option) *Logger {
+	l, err := TryNew(opts...)
+	if err != nil {
+		panic(fmt.Sprintf("velocity: invalid configuration: %v", err))
+	}
+	return l
 }
 
-func NewWithConfig(cfg *Config) *Logger {
-	// Respect the config's intention - nil output means disabled
+// NopLogger returns a Logger that discards all output. Intended for tests and
+// wiring paths where a non-nil logger is required but output is unwanted.
+func NopLogger() *Logger {
+	return New(WithNop())
+}
+
+// TryNew constructs a Logger from the given options, returning any validation
+// error rather than panicking.
+func TryNew(opts ...Option) (*Logger, error) {
+	cfg := defaultConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(cfg)
+		}
+	}
+
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	l := newFromConfig(cfg)
+
+	// WithTesting registers cleanup on the testing.T after the logger is built
+	// so that Close() flushes the async MultiWriter before the test ends.
+	for _, opt := range opts {
+		if tw, ok := extractTestingOpt(opt); ok {
+			tw.t.Cleanup(func() { _ = l.Close() })
+			break
+		}
+	}
+
+	return l, nil
+}
+
+// extractTestingOpt peeks at an option to see whether it wired a testingWriter.
+// We need the TestingT so we can register t.Cleanup on the logger after build.
+func extractTestingOpt(opt Option) (*testingWriter, bool) {
+	if opt == nil {
+		return nil, false
+	}
+	probe := &config{}
+	opt(probe)
+	if tw, ok := probe.ConsoleOutput.(*testingWriter); ok {
+		return tw, true
+	}
+	return nil, false
+}
+
+func newFromConfig(cfg *config) *Logger {
 	logger := &Logger{
 		cfg:     cfg,
 		bufPool: NewBufferPool(),
 		sampler: cfg.Sampler,
+		writers: &writerSet{},
 	}
+	// Default: secure tag scanning is enabled unless explicitly disabled.
+	logger.secureScanEnabled.Store(!cfg.DisableSecureTags)
 
-	// Using the most permissive level ensures logs aren't dropped when outputs have different thresholds
+	// Use the most permissive level so logs aren't dropped when outputs have
+	// different thresholds.
 	effectiveLevel := min(cfg.StructuredLevel, cfg.ConsoleLevel)
 	logger.level.Store(int32(effectiveLevel))
 
-	// Initialise console writer if configured
 	if cfg.ConsoleOutput != nil && cfg.ConsoleOutput != io.Discard {
-		logger.consoleWriter = NewConsoleWriterWithOptions(cfg.ConsoleOutput, cfg.ConsoleTheme, cfg.DisplayTimezone, cfg.FieldDisplayMode)
-		// Apply time format if specified. Recompute cached prefix widths so
-		// Logger.Render's indent matches the actual rendered timestamp width —
-		// otherwise a custom TimeFormat shorter than RFC3339 leaves the indent
-		// stale at the construction-time width.
+		// Resolve the theme before constructing the writer so it never needs to
+		// know about DisableColour. When colour is disabled we pass noColourTheme
+		// (all cached escapes are empty strings) instead of the user-supplied theme.
+		consoleTheme := cfg.ConsoleTheme
+		if cfg.DisableColour {
+			consoleTheme = noColourTheme
+		}
+		logger.consoleWriter = NewConsoleWriterWithOptions(cfg.ConsoleOutput, consoleTheme, cfg.DisplayTimezone, cfg.FieldDisplayMode)
+		// Recompute cached prefix widths after applying a custom TimeFormat so
+		// Logger.Render's indent matches the actual rendered timestamp width.
 		if cfg.TimeFormat != "" && logger.consoleWriter != nil {
 			logger.consoleWriter.template.timeFormat = cfg.TimeFormat
 			logger.consoleWriter.template.initCache()
 		}
-		// Status formatter respects terminal capability and colours
-		isTTY := logger.consoleWriter != nil && logger.consoleWriter.IsTTY()
-		theme := cfg.ConsoleTheme
-		if cfg.DisableColour {
-			theme = nil
-		}
-		logger.statusFormatter = NewStatusFormatter(theme, isTTY)
 	}
 
-	// Initialise JSON writer if configured
 	if cfg.StructuredOutput != nil && cfg.StructuredOutput != io.Discard {
 		logger.jsonWriter = NewJSONWriter(cfg.StructuredOutput)
 	}
 
-	// Ensure status formatter exists even without console writer
-	if logger.statusFormatter == nil {
-		logger.statusFormatter = NewStatusFormatter(nil, false)
-	}
+	// Compute initial scan flag based on writer mix at construction time.
+	logger.recomputeScanSecure()
 
 	return logger
 }
 
-func NewWithBuilder(builder *Builder) *Logger {
-	cfg := builder.MustBuild()
-	return NewWithConfig(cfg)
-}
+func validateConfig(cfg *config) error {
+	var errs []error
 
-func NewWithOptions(opts ...Option) *Logger {
-	builder := NewConfig()
-	for _, opt := range opts {
-		opt(builder)
+	if cfg.BufferSize < 256 {
+		errs = append(errs, fmt.Errorf("buffer size must be at least 256 bytes, got %d", cfg.BufferSize))
 	}
-	return NewWithBuilder(builder)
-}
+	if cfg.BufferSize > 1024*1024 {
+		errs = append(errs, fmt.Errorf("buffer size must not exceed 1MB, got %d", cfg.BufferSize))
+	}
+	if cfg.FieldPoolSize < 0 {
+		errs = append(errs, fmt.Errorf("field pool size must not be negative, got %d", cfg.FieldPoolSize))
+	}
+	if cfg.FieldPoolSize > 10000 {
+		errs = append(errs, fmt.Errorf("field pool size must not exceed 10000, got %d", cfg.FieldPoolSize))
+	}
+	if cfg.Sampler != nil {
+		if cs, ok := cfg.Sampler.(*CountSampler); ok {
+			if cs.Initial == 0 && cs.Thereafter == 0 {
+				errs = append(errs, errors.New("sampler initial and thereafter counts must not both be zero"))
+			}
+		}
+	}
 
-// NewDevelopment creates a logger optimised for development with colourful console output.
-func NewDevelopment() *Logger {
-	builder := PresetDevelopment()
-	cfg := builder.MustBuild()
-	return NewWithConfig(cfg)
-}
-
-func NewForTesting(w io.Writer) *Logger {
-	builder := PresetTesting(w)
-	cfg := builder.MustBuild()
-	return NewWithConfig(cfg)
+	return errors.Join(errs...)
 }
 
 func (l *Logger) SetLevel(level Level) {
@@ -122,25 +200,26 @@ func (l *Logger) Level() Level {
 }
 
 // With returns a child logger that prepends the given fields to every log entry.
-// The child shares writers, config, and sampler with the parent.
+// The child shares the writer topology (writers) with the parent, so writers
+// added to the parent after the child is created are immediately visible to both.
 // Level is snapshotted at the time of the call; dynamic parent level changes
 // do not propagate to the child after creation.
 func (l *Logger) With(fields ...Field) *Logger {
 	if l == nil || len(fields) == 0 {
 		return l
 	}
-	// additionalWriters is shared by reference. AddWriter on the child after
-	// creation diverges from the parent because writersMu is not shared.
 	child := &Logger{
-		cfg:               l.cfg,
-		bufPool:           l.bufPool,
-		consoleWriter:     l.consoleWriter,
-		jsonWriter:        l.jsonWriter,
-		statusFormatter:   l.statusFormatter,
-		sampler:           l.sampler,
-		additionalWriters: l.additionalWriters,
+		cfg:              l.cfg,
+		bufPool:          l.bufPool,
+		consoleWriter:    l.consoleWriter,
+		jsonWriter:       l.jsonWriter,
+		sampler:          l.sampler,
+		writers:          l.writers, // shared pointer — parent topology changes propagate
+		forceTreeDisplay: l.forceTreeDisplay,
 	}
 	child.level.Store(l.level.Load())
+	child.secureScanEnabled.Store(l.secureScanEnabled.Load())
+	// scanSecure lives on the shared writers — no copy needed.
 	newBase := make([]Field, len(l.baseFields)+len(fields))
 	copy(newBase, l.baseFields)
 	copy(newBase[len(l.baseFields):], fields)
@@ -148,53 +227,178 @@ func (l *Logger) With(fields ...Field) *Logger {
 	return child
 }
 
-// AddWriter adds a named writer to receive log entries.
-// Thread-safe for concurrent calls.
-// Writers process entries asynchronously via MultiWriter.
-func (l *Logger) AddWriter(name string, w Writer) {
+// recomputeScanSecure recalculates whether the <secure> tag scan must run on
+// every log call. The result is written to writers.scanSecure so all loggers
+// sharing the same writerSet (parent + every child created via With/Detailed)
+// see the updated flag immediately. Called at AddWriter/RemoveWriter time.
+//
+// The scan fires when:
+//   - scan is globally enabled (secureScanEnabled), AND
+//   - at least one output path is untrusted:
+//     a) the JSON writer is always untrusted, OR
+//     b) the console writer is on a non-TTY (pipe/file), OR
+//     c) any additional writer registered without WriterTrusted()
+//
+// Must be called with writers.mu held (write lock) or before the logger is shared.
+func (l *Logger) recomputeScanSecure() {
+	if !l.secureScanEnabled.Load() {
+		l.writers.scanSecure.Store(false)
+		return
+	}
+
+	// JSON writer is always untrusted.
+	if l.jsonWriter != nil {
+		l.writers.scanSecure.Store(true)
+		return
+	}
+
+	// Non-TTY console writer is untrusted (writing to a pipe or file).
+	if l.consoleWriter != nil && !l.consoleWriter.isTTY {
+		l.writers.scanSecure.Store(true)
+		return
+	}
+
+	// Any untrusted additional writer flips the flag.
+	// We hold l.writers.mu (write lock) here; mw.mu is separate, so take it briefly.
+	if l.writers != nil && l.writers.mw != nil {
+		l.writers.mw.mu.Lock()
+		hasUntrusted := false
+		for _, ws := range l.writers.mw.workers {
+			if !ws.isTrusted {
+				hasUntrusted = true
+				break
+			}
+		}
+		l.writers.mw.mu.Unlock()
+		if hasUntrusted {
+			l.writers.scanSecure.Store(true)
+			return
+		}
+	}
+
+	l.writers.scanSecure.Store(false)
+}
+
+// AddWriter registers a named writer to receive log entries.
+// Options control per-writer behaviour; see WriterTrusted.
+// Thread-safe; writers process entries asynchronously via MultiWriter.
+// Writers added to a parent logger are immediately visible to all child loggers
+// created via With, Detailed, WithComponent, or WithRequest.
+func (l *Logger) AddWriter(name string, w Writer, opts ...WriterOption) {
 	if l == nil {
 		return
 	}
 
-	l.writersMu.Lock()
-	defer l.writersMu.Unlock()
+	l.writers.mu.Lock()
+	defer l.writers.mu.Unlock()
 
-	if l.additionalWriters == nil {
-		l.additionalWriters = NewMultiWriter()
+	if l.writers.mw == nil {
+		l.writers.mw = NewMultiWriter()
 	}
-	l.additionalWriters.AddWriter(name, w)
+	l.writers.mw.AddWriter(name, w, opts...)
+
+	// Propagate trust to the writer itself when it exposes the hook.
+	// This keeps writer.IsTrusted() consistent with the MultiWriter worker state.
+	o := applyWriterOptions(opts)
+	if o.isTrusted {
+		if st, ok := w.(interface{ SetTrusted(bool) }); ok {
+			st.SetTrusted(true)
+		}
+	}
+
+	l.recomputeScanSecure()
 }
 
-// RemoveWriter removes a named writer.
-// Thread-safe for concurrent calls.
-func (l *Logger) RemoveWriter(name string) {
-	if l == nil {
-		return
-	}
-
-	l.writersMu.Lock()
-	defer l.writersMu.Unlock()
-
-	if l.additionalWriters != nil {
-		l.additionalWriters.RemoveWriter(name)
-	}
-}
-
-// Close closes any additional writers that were added to the logger.
-// Thread-safe and nil-safe - returns nil if logger is nil or has no additional writers.
-func (l *Logger) Close() error {
+// RemoveWriter removes the named writer and returns it for inspection or flush.
+// The MultiWriter worker drains and closes the writer asynchronously after removal —
+// do not call Close on the returned value, or you risk a double-close panic on writers
+// that aren't idempotent. Returns nil if no writer with that name exists.
+// Thread-safe.
+func (l *Logger) RemoveWriter(name string) Writer {
 	if l == nil {
 		return nil
 	}
 
-	l.writersMu.Lock()
-	defer l.writersMu.Unlock()
+	l.writers.mu.Lock()
+	defer l.writers.mu.Unlock()
 
-	if l.additionalWriters != nil {
-		return l.additionalWriters.Close()
+	if l.writers.mw == nil {
+		return nil
+	}
+	w := l.writers.mw.RemoveWriter(name)
+	l.recomputeScanSecure()
+	return w
+}
+
+// Writer returns the writer registered under name, or nil.
+// Useful for inspecting writer capabilities without removing it.
+// Thread-safe.
+func (l *Logger) Writer(name string) Writer {
+	if l == nil {
+		return nil
 	}
 
-	return nil
+	l.writers.mu.RLock()
+	defer l.writers.mu.RUnlock()
+
+	if l.writers.mw == nil {
+		return nil
+	}
+	return l.writers.mw.WriterByName(name)
+}
+
+// Close flushes and shuts down all writers owned by the logger.
+//
+// Specifically: the console writer is flushed (its output buffer drained), the
+// JSON writer is flushed, and all named writers added via AddWriter are drained
+// and closed. Caller-supplied io.Writers passed via WithConsoleOutput /
+// WithStructuredOutput are NOT closed — the logger does not own those handles.
+//
+// Close is idempotent: subsequent calls are no-ops. After Close returns, any
+// further log calls on this logger drop silently.
+//
+// Returns the first error encountered; remaining flushes still proceed.
+func (l *Logger) Close() error {
+	if l == nil {
+		return nil
+	}
+	// Already closed — nothing to do.
+	if !l.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	var firstErr error
+	setErr := func(e error) {
+		if firstErr == nil && e != nil {
+			firstErr = e
+		}
+	}
+
+	// Flush the console writer if it implements io.Closer (ring-buffer path does).
+	if l.consoleWriter != nil {
+		if c, ok := any(l.consoleWriter).(io.Closer); ok {
+			setErr(c.Close())
+		}
+	}
+
+	// Flush the JSON writer if it implements io.Closer.
+	if l.jsonWriter != nil {
+		if c, ok := any(l.jsonWriter).(io.Closer); ok {
+			setErr(c.Close())
+		}
+	}
+
+	l.writers.mu.Lock()
+	defer l.writers.mu.Unlock()
+
+	if l.writers.mw != nil {
+		setErr(l.writers.mw.Close())
+		// Nil out after close so sibling loggers (children sharing the same
+		// writerSet) don't attempt a second close on the already-drained MultiWriter.
+		l.writers.mw = nil
+	}
+
+	return firstErr
 }
 
 func (l *Logger) Debug(msg string, fields ...Field) {
@@ -202,7 +406,7 @@ func (l *Logger) Debug(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[!DBG] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelDebug) {
+	if l.closed.Load() || !l.isEnabled(LevelDebug) {
 		return
 	}
 	l.log(LevelDebug, msg, fields...)
@@ -213,7 +417,7 @@ func (l *Logger) Info(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[INFO] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelInfo) {
+	if l.closed.Load() || !l.isEnabled(LevelInfo) {
 		return
 	}
 	l.log(LevelInfo, msg, fields...)
@@ -224,7 +428,7 @@ func (l *Logger) Warn(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[WARN] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelWarn) {
+	if l.closed.Load() || !l.isEnabled(LevelWarn) {
 		return
 	}
 	l.log(LevelWarn, msg, fields...)
@@ -235,10 +439,202 @@ func (l *Logger) Error(msg string, fields ...Field) {
 		fmt.Fprintf(os.Stderr, "[ERR!] %s\n", msg)
 		return
 	}
-	if !l.isEnabled(LevelError) {
+	if l.closed.Load() || !l.isEnabled(LevelError) {
 		return
 	}
 	l.log(LevelError, msg, fields...)
+}
+
+// Status logs a message at the given level with a StatusKind badge.
+//
+// Console output: renders an inline indented badge ([OKAY] / [FAIL] etc.) with
+// no timestamp or level label — visually subordinate to the surrounding log lines.
+//
+// JSON / structured output: emits a full structured record with a "status" field
+// set to the lowercase kind string (ok, fail, warn, info, pending, skip), so log
+// queries continue to work.
+//
+// All standard log-call semantics apply: level filtering, sampling, base fields.
+func (l *Logger) Status(level Level, kind StatusKind, msg string, fields ...Field) {
+	if l == nil {
+		fmt.Fprintf(os.Stderr, "[%s] %s\n", kind.String(), msg)
+		return
+	}
+	if l.closed.Load() || !l.isEnabled(level) {
+		return
+	}
+
+	// Honour the sampler before doing any work — consistent with logInternal.
+	if l.sampler != nil && !l.sampler.Sample(level, msg) {
+		return
+	}
+
+	// Merge baseFields with call-site fields so child loggers stamp their
+	// context fields onto both the console badge and the structured record.
+	allFields := fields
+	if len(l.baseFields) > 0 {
+		merged := make([]Field, len(l.baseFields)+len(fields))
+		copy(merged, l.baseFields)
+		copy(merged[len(l.baseFields):], fields)
+		allFields = merged
+	}
+
+	// Console path: inline badge via Render, no timestamp or level label.
+	// Uses the logger's active theme and routes through the console writer mutex
+	// so status items cannot interleave with concurrent log lines.
+	if l.consoleWriter != nil && level >= l.cfg.ConsoleLevel {
+		// Apply secure-tag processing to the message before rendering to the console.
+		// TTY (trusted) writers show the plaintext with delimiters stripped;
+		// non-TTY (untrusted, e.g. piped to a file) writers show the redaction mark.
+		consoleMsg := msg
+		if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+			if l.consoleWriter.isTTY {
+				consoleMsg = stripSecureTags(msg)
+			} else {
+				consoleMsg = redactSecureTags(msg, "[REDACTED]")
+			}
+		}
+		item := NewStatusItem(kind, consoleMsg, l.Theme(), allFields...)
+		l.Render(item)
+	}
+
+	// Structured / additional-writer path: full record with statusKind set.
+	// The console writer is skipped here — it already rendered inline above.
+	// Pass allFields so structured output also includes baseFields.
+	l.logStatusStructuredWithFields(level, kind, msg, allFields)
+}
+
+// logStatusStructuredWithFields emits a structured log entry for Status calls.
+// Only JSON and additional writers receive this entry; the console writer is
+// intentionally skipped because Status renders inline via Render instead.
+// fields must already include baseFields — the caller is responsible for merging.
+func (l *Logger) logStatusStructuredWithFields(level Level, kind StatusKind, msg string, fields []Field) {
+	if l == nil {
+		return
+	}
+
+	// Nothing to do when there are no structured outputs.
+	hasStructured := (l.jsonWriter != nil && level >= l.cfg.StructuredLevel) ||
+		l.writers.mw != nil
+	if !hasStructured {
+		return
+	}
+
+	entry := GetEntry()
+	defer entry.Release()
+
+	entry.SetLevel(level)
+	entry.SetMessage(msg)
+	entry.SetTime(time.Now())
+	entry.forceTreeDisplay = l.forceTreeDisplay
+	entry.statusKind = kind
+
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		entry.maybeSecure = true
+	}
+
+	if len(fields) > 0 {
+		entry.WithFields(fields...)
+	}
+
+	l.captureCaller(entry, 0)
+
+	if l.jsonWriter != nil && level >= l.cfg.StructuredLevel {
+		if err := l.jsonWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+		}
+	}
+
+	entry.Write()
+
+	l.writers.mu.RLock()
+	if l.writers.mw != nil {
+		_ = l.writers.mw.Write(entry)
+	}
+	l.writers.mu.RUnlock()
+}
+
+// Group logs a count-headed block with one item per line.
+//
+// On a TTY console the output is:
+//
+//	2006-01-02T15:04:05+10:00 [INFO] Registering routes (3)
+//	                                   ├─ GET  /api/v1/users
+//	                                   ├─ POST /api/v1/users
+//	                                   └─ GET  /api/v1/users/:id
+//
+// The JSON writer emits a single entry with "count" and "items" fields.
+// Item markers are visual-only and are stripped from JSON output.
+// All standard log-call semantics apply: level filtering, sampling, base fields.
+func (l *Logger) Group(level Level, msg string, items ...GroupItem) {
+	if l == nil {
+		fmt.Fprintf(os.Stderr, "[%s] %s (%d)\n", level.ConciseLabel(), msg, len(items))
+		return
+	}
+	if l.closed.Load() || !l.isEnabled(level) {
+		return
+	}
+	l.logGroup(level, msg, items)
+}
+
+// logGroup is the internal implementation of Group.
+func (l *Logger) logGroup(level Level, msg string, items []GroupItem) {
+	if l == nil {
+		return
+	}
+
+	if l.sampler != nil && !l.sampler.Sample(level, msg) {
+		return
+	}
+
+	entry := GetEntry()
+	defer entry.Release()
+
+	// The composite "msg (N)" string is set as the entry message so the standard
+	// template path renders the count on non-TTY paths without special-casing.
+	entry.SetLevel(level)
+	entry.SetMessage(groupMsgWithCount(msg, len(items)))
+	entry.SetTime(time.Now())
+	entry.forceTreeDisplay = l.forceTreeDisplay
+
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		entry.maybeSecure = true
+	}
+
+	if len(l.baseFields) > 0 {
+		entry.WithFields(l.baseFields...)
+	}
+
+	l.captureCaller(entry, 0)
+
+	if l.cfg != nil {
+		// Console and JSON writers receive items directly — their dedicated Group
+		// methods handle rendering without adding a FieldTypeGroupItems field to
+		// the entry, which would cause the standard template to emit "[N items]".
+		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
+			if err := l.consoleWriter.WriteGroup(entry, items); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+			}
+		}
+
+		if level >= l.cfg.StructuredLevel && l.jsonWriter != nil {
+			if err := l.jsonWriter.WriteGroup(entry, items); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
+			}
+		}
+
+		entry.Write()
+
+		l.writers.mu.RLock()
+		if l.writers.mw != nil {
+			// Additional writers get the typed field so they can optionally
+			// render the items. Writers that don't understand FieldTypeGroupItems
+			// emit "[N items]" as a fallback hint (see writeFormatted).
+			entry.WithFields(groupItemsField(items))
+			_ = l.writers.mw.Write(entry)
+		}
+		l.writers.mu.RUnlock()
+		return
+	}
+
+	entry.Write()
 }
 
 func (l *Logger) Fatal(msg string, fields ...Field) {
@@ -254,60 +650,14 @@ func (l *Logger) Fatal(msg string, fields ...Field) {
 	os.Exit(1)
 }
 
-// DebugDetailed logs a debug message with fields always displayed in tree format
-func (l *Logger) DebugDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[DEBU] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelDebug) {
-		return
-	}
-	l.logDetailed(LevelDebug, msg, fields...)
-}
-
-// InfoDetailed logs an info message with fields always displayed in tree format
-func (l *Logger) InfoDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[INFO] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelInfo) {
-		return
-	}
-	l.logDetailed(LevelInfo, msg, fields...)
-}
-
-// WarnDetailed logs a warning message with fields always displayed in tree format
-func (l *Logger) WarnDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[WARN] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelWarn) {
-		return
-	}
-	l.logDetailed(LevelWarn, msg, fields...)
-}
-
-// ErrorDetailed logs an error message with fields always displayed in tree format
-func (l *Logger) ErrorDetailed(msg string, fields ...Field) {
-	if l == nil {
-		fmt.Fprintf(os.Stderr, "[ERR!] %s\n", msg)
-		return
-	}
-	if !l.isEnabled(LevelError) {
-		return
-	}
-	l.logDetailed(LevelError, msg, fields...)
-}
-
 func (l *Logger) isEnabled(level Level) bool {
 	return level >= Level(l.level.Load())
 }
 
 // captureCaller populates entry with caller information if configured.
-// extraSkip allows callers to account for additional frames in the call stack.
+// extraSkip lets callers that add extra frames (e.g. wrappers) adjust the skip depth.
+//
+//nolint:unparam // extraSkip is always 0 today but reserved for future use by non-direct call paths
 func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	if l.cfg == nil || !l.cfg.AddCaller {
 		return
@@ -322,8 +672,6 @@ func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 		return
 	}
 
-	// Extract just the filename from full path
-	// Use bit shift to find last separator for performance
 	shortFile := file
 	for i := len(file) - 1; i >= 0; i-- {
 		if file[i] == '/' || file[i] == '\\' {
@@ -335,19 +683,13 @@ func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	entry.Caller = shortFile
 	entry.Line = line
 
-	// Get function name if available
 	if fn := runtime.FuncForPC(pc); fn != nil {
 		entry.Function = fn.Name()
 	}
 }
 
 func (l *Logger) log(level Level, msg string, fields ...Field) {
-	l.logInternal(level, msg, false, fields...)
-}
-
-// logDetailed logs a message with fields forced to display in tree format.
-func (l *Logger) logDetailed(level Level, msg string, fields ...Field) {
-	l.logInternal(level, msg, true, fields...)
+	l.logInternal(level, msg, l.forceTreeDisplay, fields...)
 }
 
 // LogEntry dispatches a pre-populated entry to all configured writers.
@@ -357,12 +699,16 @@ func (l *Logger) LogEntry(e *Entry) {
 		return
 	}
 	// Prepend base fields from With() so child loggers propagate their fields.
-	// Reuse the existing slice when baseFields fit to avoid a fresh allocation.
 	if len(l.baseFields) > 0 {
 		existing := e.Fields
 		e.Fields = e.Fields[:0]
 		e.WithFields(l.baseFields...)
 		e.WithFields(existing...)
+	}
+	// Apply the same <secure> tag scan as logInternal so entries routed through
+	// external adapters (e.g. slogbridge) benefit from message-level redaction.
+	if l.writers.scanSecure.Load() && strings.IndexByte(e.Message, '<') >= 0 {
+		e.maybeSecure = true
 	}
 	if l.cfg != nil {
 		if e.Level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
@@ -372,29 +718,26 @@ func (l *Logger) LogEntry(e *Entry) {
 			_ = l.jsonWriter.Write(e)
 		}
 		e.Write()
-		l.writersMu.RLock()
-		if l.additionalWriters != nil {
-			_ = l.additionalWriters.Write(e)
+		l.writers.mu.RLock()
+		if l.writers.mw != nil {
+			_ = l.writers.mw.Write(e)
 		}
-		l.writersMu.RUnlock()
+		l.writers.mu.RUnlock()
 		return
 	}
 	e.Write()
 }
 
 // logInternal is the shared implementation for log and logDetailed.
-// forceTree controls whether the entry's forceTreeDisplay flag is set.
 func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...Field) {
 	if l == nil {
 		return
 	}
 
-	// Early sampling check to avoid allocation when entry will be dropped
 	if l.sampler != nil && !l.sampler.Sample(level, msg) {
 		return
 	}
 
-	// Pool reduces GC pressure in high-throughput scenarios by reusing Entry objects
 	entry := GetEntry()
 	defer entry.Release()
 
@@ -402,6 +745,16 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 	entry.SetMessage(msg)
 	entry.SetTime(time.Now())
 	entry.forceTreeDisplay = forceTree
+
+	// When any output path is untrusted, check whether the message contains a
+	// <secure> tag. strings.IndexByte is SIMD-accelerated in the Go runtime (~3-5ns),
+	// zero-alloc on string input. The flag is read without a lock — worst case a
+	// concurrent AddWriter races and we miss one log line; acceptable for a
+	// best-effort security feature.
+	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
+		entry.maybeSecure = true
+	}
+
 	if len(l.baseFields) > 0 {
 		entry.WithFields(l.baseFields...)
 	}
@@ -409,11 +762,9 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 		entry.WithFields(fields...)
 	}
 
-	// Capture caller information if enabled (no extra skip needed beyond the 4 already counted)
 	l.captureCaller(entry, 0)
 
 	if l.cfg != nil {
-		// Synchronous writers (console and JSON)
 		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {
 			if err := l.consoleWriter.Write(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
 			}
@@ -424,19 +775,17 @@ func (l *Logger) logInternal(level Level, msg string, forceTree bool, fields ...
 			}
 		}
 
-		// Additional writers (async via MultiWriter - handles Retain internally)
-		// NOTE: Must call entry.Write() BEFORE async writes to avoid race on written field
-		entry.Write() // Marks entry as written (required before Release can return to pool)
+		entry.Write()
 
-		l.writersMu.RLock()
-		if l.additionalWriters != nil {
-			_ = l.additionalWriters.Write(entry) // Non-blocking async write
+		l.writers.mu.RLock()
+		if l.writers.mw != nil {
+			_ = l.writers.mw.Write(entry)
 		}
-		l.writersMu.RUnlock()
+		l.writers.mu.RUnlock()
 		return
 	}
 
-	entry.Write() // Marks entry as written (required before Release can return to pool)
+	entry.Write()
 }
 
 // Theme returns the console theme configured for this logger.
@@ -449,77 +798,77 @@ func (l *Logger) Theme() *Theme {
 }
 
 // SetTheme updates the active theme on all writers that support it.
-// Updates cfg.ConsoleTheme so subsequent With() clones and WithTemplate calls inherit the new theme.
-// Nil theme is treated as explicit colour-disable; writers receive nil and handle it themselves.
-// User-defined themes are cached automatically: if the theme's ANSI sequences are not yet populated
-// a clone is cached and used, so the caller's original pointer is not mutated. Nil-safe.
+// Updates cfg.ConsoleTheme so subsequent With() clones inherit the new theme.
+// A nil theme resets to the default (ThemeNightOwl); it does not disable colour.
+// To disable colour use WithColour(false) or the NO_COLOR environment variable.
+// User-defined themes are cached automatically: if the theme's ANSI sequences are
+// not yet populated they are computed in-place. Nil-safe.
 func (l *Logger) SetTheme(theme *Theme) {
 	if l == nil {
 		return
 	}
 
-	// Ensure ANSI sequences are populated without mutating the caller's pointer.
-	theme = ensureCached(theme)
+	// Nil means "reset to default". Normalise here so cfg and all writers agree.
+	if theme == nil {
+		theme = ThemeNightOwl
+	}
 
 	if l.cfg != nil {
 		l.cfg.ConsoleTheme = theme
 	}
 
-	type themeSetter interface{ SetTheme(*Theme) }
-
-	if s, ok := any(l.consoleWriter).(themeSetter); ok && l.consoleWriter != nil {
+	if s, ok := any(l.consoleWriter).(ThemedWriter); ok && l.consoleWriter != nil {
 		s.SetTheme(theme)
 	}
 
-	l.writersMu.RLock()
-	defer l.writersMu.RUnlock()
+	l.writers.mu.RLock()
+	defer l.writers.mu.RUnlock()
 
-	if l.additionalWriters == nil {
+	if l.writers.mw == nil {
 		return
 	}
 
-	l.additionalWriters.mu.Lock()
-	defer l.additionalWriters.mu.Unlock()
+	l.writers.mw.mu.Lock()
+	defer l.writers.mw.mu.Unlock()
 
-	for _, w := range l.additionalWriters.writers {
-		if s, ok := w.(themeSetter); ok {
+	for _, ws := range l.writers.mw.workers {
+		if s, ok := ws.w.(ThemedWriter); ok {
 			s.SetTheme(theme)
 		}
 	}
 }
 
-// Status returns the StatusFormatter for coloured status indicators.
-// Safe to call even if logger is nil - returns a non-coloured formatter.
-func (l *Logger) Status() *StatusFormatter {
-	if l == nil || l.statusFormatter == nil {
-		return NewStatusFormatter(nil, false)
-	}
-	return l.statusFormatter
-}
-
-// Raw prints a message without any formatting, timestamp, or level.
-// The caller is responsible for including newlines if desired.
-func (l *Logger) Raw(message string) {
+// Style returns the active theme for use in manual ANSI formatting.
+// Follows the same fallback logic as Theme(): nil cfg.ConsoleTheme falls back
+// to ThemeNightOwl (matching the console writer), not to the no-colour sentinel.
+// noColourTheme is only returned when colour is explicitly disabled, or when the
+// logger has no console writer at all (JSON-only, nop, or production preset).
+func (l *Logger) Style() *Theme {
 	if l == nil {
-		_, _ = fmt.Fprint(os.Stdout, message)
-		return
+		return noColourTheme
 	}
-
-	switch {
-	case l.consoleWriter != nil && l.consoleWriter.out != nil:
-		l.consoleWriter.mu.Lock()
-		_, _ = io.WriteString(l.consoleWriter.out, message)
-		l.consoleWriter.mu.Unlock()
-	case l.cfg != nil && l.cfg.ConsoleOutput != nil:
-		_, _ = io.WriteString(l.cfg.ConsoleOutput, message)
-	default:
-		_, _ = fmt.Fprint(os.Stdout, message)
+	// Colour explicitly disabled — return a mono theme regardless of writer.
+	if l.cfg != nil && l.cfg.DisableColour {
+		return noColourTheme
 	}
+	// No console output configured — there is no styled channel to match.
+	if l.consoleWriter == nil {
+		return noColourTheme
+	}
+	// Colour resolved to off for this writer (NO_COLOR, piped, non-TTY) — return
+	// mono so callers using Style().Format() don't emit ANSI into pipes or files.
+	if !l.consoleWriter.isTTY {
+		return noColourTheme
+	}
+	// Console writer is active and colour-capable: return the themed palette.
+	return l.Theme()
 }
 
-// Banner prints multiple lines of text without formatting.
-// Newlines are automatically added after each line.
-func (l *Logger) Banner(lines ...string) {
+// BannerLines prints multiple lines of pre-formatted text to the console writer
+// without log timestamps, levels, or field formatting.
+// Named BannerLines to avoid collision with the Banner Renderable type.
+// Nil-safe.
+func (l *Logger) BannerLines(lines ...string) {
 	if l == nil {
 		for _, line := range lines {
 			_, _ = fmt.Fprintln(os.Stdout, line)
@@ -527,66 +876,72 @@ func (l *Logger) Banner(lines ...string) {
 		return
 	}
 
+	var out io.Writer
+	switch {
+	case l.consoleWriter != nil && l.consoleWriter.out != nil:
+		l.consoleWriter.mu.Lock()
+		defer l.consoleWriter.mu.Unlock()
+		out = l.consoleWriter.out
+	case l.cfg != nil && l.cfg.ConsoleOutput != nil:
+		out = l.cfg.ConsoleOutput
+	default:
+		out = os.Stdout
+	}
+
 	for _, line := range lines {
-		l.Raw(line + "\n")
+		_, _ = fmt.Fprintln(out, line)
 	}
 }
 
-func (l *Logger) SetTemplate(t *Template) {
-	if l == nil {
-		return
-	}
-
-	if l.consoleWriter != nil {
-		l.consoleWriter.SetTemplate(t)
-	}
-}
-
-// WithTemplate creates a child logger with a different output template.
-// The consoleWriter is intentionally recreated so the new template takes effect.
-func (l *Logger) WithTemplate(t *Template) *Logger {
+// Detailed returns a child logger that forces every log call to render fields
+// in tree format, regardless of the logger's FieldDisplayMode setting.
+// The child shares writers, config, sampler, and pool with the parent.
+// One alloc at the call site; zero extra cost per log call after that.
+func (l *Logger) Detailed() *Logger {
 	if l == nil {
 		return nil
 	}
-
-	newLogger := &Logger{
-		cfg:               l.cfg,
-		bufPool:           l.bufPool,
-		jsonWriter:        l.jsonWriter,
-		statusFormatter:   l.statusFormatter,
-		sampler:           l.sampler,
-		additionalWriters: l.additionalWriters,
+	child := &Logger{
+		cfg:              l.cfg,
+		bufPool:          l.bufPool,
+		consoleWriter:    l.consoleWriter,
+		jsonWriter:       l.jsonWriter,
+		sampler:          l.sampler,
+		writers:          l.writers, // shared pointer — parent topology changes propagate
+		forceTreeDisplay: true,
 	}
-	newLogger.level.Store(l.level.Load())
-
+	child.level.Store(l.level.Load())
+	child.secureScanEnabled.Store(l.secureScanEnabled.Load())
+	// scanSecure lives on the shared writers — no copy needed.
 	if len(l.baseFields) > 0 {
 		newBase := make([]Field, len(l.baseFields))
 		copy(newBase, l.baseFields)
-		newLogger.baseFields = newBase
+		child.baseFields = newBase
 	}
-
-	if l.cfg.ConsoleOutput != nil && l.cfg.ConsoleOutput != io.Discard {
-		newLogger.consoleWriter = NewConsoleWriterWithOptions(l.cfg.ConsoleOutput, l.cfg.ConsoleTheme, l.cfg.DisplayTimezone, l.cfg.FieldDisplayMode)
-		if t != nil {
-			newLogger.consoleWriter.SetTemplate(t)
-		}
-	}
-
-	return newLogger
+	return child
 }
 
-func NopLogger() *Logger {
-	cfg := DefaultConfig()
-	cfg.ConsoleOutput = io.Discard
-	cfg.StructuredOutput = io.Discard
-	cfg.ConsoleLevel = LevelOff
-	cfg.StructuredLevel = LevelOff
-	return NewWithConfig(cfg)
+// WithComponent returns a child logger that stamps every entry with a
+// "component" string field. Sugar for l.With(String("component", name)).
+func (l *Logger) WithComponent(name string) *Logger {
+	return l.With(String("component", name))
+}
+
+// WithRequest returns a child logger that stamps every entry with a
+// "request_id" string field. Sugar for l.With(String("request_id", id)).
+func (l *Logger) WithRequest(id string) *Logger {
+	return l.With(String("request_id", id))
 }
 
 // Render writes r to the console writer, indented to align with the message column.
 // Each line after the first is prefixed with spaces equal to the template prefix width
 // so the output sits flush with log messages in tree mode.
+//
+// When r implements TTYRenderable, RenderTTY is called with the console writer's
+// resolved TTY state (which accounts for FORCE_COLOR / NO_COLOR and fd detection),
+// so colour decisions match the rest of the log line. Types must implement TTYRenderable
+// if they use IsTerminalWriter internally — calling it on the intermediate buffer
+// passed by Render always yields false regardless of the actual output destination.
 //
 // JSON writers and MultiWriter silently ignore Render calls — indented rich output
 // is only meaningful on a terminal-backed console writer.
@@ -598,13 +953,19 @@ func (l *Logger) Render(r Renderable) {
 	}
 
 	indent := l.consoleWriter.template.CachedMessageIndentStr()
+	isTTY := l.consoleWriter.isTTY
 
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)
 
-	// Render into the temporary buffer, then indent and write under the lock.
-	if err := r.Render(tmp); err != nil {
-		return
+	if tr, ok := r.(TTYRenderable); ok {
+		if err := tr.RenderTTY(tmp, isTTY); err != nil {
+			return
+		}
+	} else {
+		if err := r.Render(tmp); err != nil {
+			return
+		}
 	}
 
 	out := indentLines(tmp.Bytes(), indent)
@@ -616,17 +977,26 @@ func (l *Logger) Render(r Renderable) {
 
 // RenderRaw writes r flush-left to the console writer, with no indentation.
 // Like Render, it is terminal-only and ignored by JSON/multi writers.
-// Nil-safe.
+// When r implements TTYRenderable, the console writer's TTY state is passed
+// rather than detecting it from the intermediate buffer. Nil-safe.
 func (l *Logger) RenderRaw(r Renderable) {
 	if l == nil || r == nil || l.consoleWriter == nil {
 		return
 	}
 
+	isTTY := l.consoleWriter.isTTY
+
 	tmp := GetTemplateBuffer()
 	defer PutTemplateBuffer(tmp)
 
-	if err := r.Render(tmp); err != nil {
-		return
+	if tr, ok := r.(TTYRenderable); ok {
+		if err := tr.RenderTTY(tmp, isTTY); err != nil {
+			return
+		}
+	} else {
+		if err := r.Render(tmp); err != nil {
+			return
+		}
 	}
 
 	l.consoleWriter.mu.Lock()
@@ -647,16 +1017,192 @@ func (l *Logger) Newline() {
 	l.consoleWriter.mu.Unlock()
 }
 
-// indentLines prefixes every non-empty line in b with indent. Render writes a
-// self-contained block at the message column, so the first line must also be
-// indented; otherwise multi-line output like table top borders lands flush-left
-// while subsequent lines align to the indent column.
+// notifyMu is the fallback mutex for Notify calls on loggers that have no console
+// writer. It prevents interleaving across loggers that share os.Stderr as their
+// notify destination but have no common mutex.
+var notifyMu sync.Mutex
+
+// notifyDest returns the writer and mutex to use for Notify output.
+// When a console writer is present it shares that writer's mutex so Notify and
+// log lines on a shared terminal cannot interleave. Otherwise the package-level
+// fallback is used with os.Stderr (or the configured override).
+func (l *Logger) notifyDest() (io.Writer, *sync.Mutex) {
+	if l.consoleWriter != nil {
+		// Share the console writer's mutex regardless of the notify output
+		// destination — this is the primary non-interleave guarantee.
+		out := l.cfg.NotifyOutput
+		if out == nil {
+			out = os.Stderr
+		}
+		return out, &l.consoleWriter.mu
+	}
+	out := l.cfg.NotifyOutput
+	if out == nil {
+		out = os.Stderr
+	}
+	return out, &notifyMu
+}
+
+// Notify writes a formatted message directly to the notify destination (default
+// os.Stderr), bypassing all writers, the level filter, the sampler, and the
+// structured pipeline. Intended for ephemeral operator-visible output such as
+// setup URLs and one-time bootstrap messages that must appear regardless of log
+// level or writer configuration.
+//
+// Uses the console writer mutex when present to prevent interleaving with
+// concurrent log output on shared terminals. Nil-safe.
+//
+//nolint:goprintffuncname // Notify is an intentional API name, not a generic printf wrapper.
+func (l *Logger) Notify(format string, args ...any) {
+	if l == nil || l.closed.Load() {
+		return
+	}
+	out, mu := l.notifyDest()
+	msg := fmt.Sprintf(format, args...)
+	mu.Lock()
+	_, _ = io.WriteString(out, msg)
+	mu.Unlock()
+}
+
+// NotifyLines writes each line to the notify destination separated by newlines.
+// Behaves identically to Notify with respect to writer bypass and mutex sharing.
+// Nil-safe.
+func (l *Logger) NotifyLines(lines ...string) {
+	if l == nil || l.closed.Load() || len(lines) == 0 {
+		return
+	}
+	out, mu := l.notifyDest()
+	mu.Lock()
+	for _, line := range lines {
+		_, _ = io.WriteString(out, line)
+		_, _ = io.WriteString(out, "\n")
+	}
+	mu.Unlock()
+}
+
+// NotifyBox renders a Box to the notify destination. Useful for visually-prominent
+// operator messages — the canonical use case is an onboarding URL that must stand
+// out regardless of whether structured logging is active.
+// Nil-safe; a nil Box is a no-op.
+func (l *Logger) NotifyBox(b *Box) {
+	if l == nil || l.closed.Load() || b == nil {
+		return
+	}
+	out, mu := l.notifyDest()
+	tmp := GetTemplateBuffer()
+	if err := b.Render(tmp); err != nil {
+		PutTemplateBuffer(tmp)
+		return
+	}
+	mu.Lock()
+	_, _ = out.Write(tmp.Bytes())
+	mu.Unlock()
+	PutTemplateBuffer(tmp)
+}
+
+// Box renders a bordered box with an optional title to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer.
+func (l *Logger) Box(title, body string) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	l.Render(NewBox(title, body, l.Style()))
+}
+
+// Table renders an aligned table with auto-sized columns to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer.
+func (l *Logger) Table(headers []string, rows [][]string) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	l.Render(NewTable(headers, rows, l.Style()))
+}
+
+// Tree renders a hierarchical tree of TreeItem nodes to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer.
+func (l *Logger) Tree(items []TreeItem) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	l.Render(NewTree(items, l.Style()))
+}
+
+// KeyValues renders a sequence of key-value pairs to the console writer,
+// indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer or pairs is empty.
+func (l *Logger) KeyValues(pairs []KeyValuePair) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil || len(pairs) == 0 {
+		return
+	}
+	// Render each pair under the same indent; they read as a continuation block.
+	theme := l.Style()
+	indent := l.consoleWriter.template.CachedMessageIndentStr()
+	tmp := GetTemplateBuffer()
+	defer PutTemplateBuffer(tmp)
+	for _, p := range pairs {
+		kv := NewKeyValue(p.Key, p.Value, theme)
+		if err := kv.Render(tmp); err != nil {
+			return
+		}
+	}
+	out := indentLines(tmp.Bytes(), indent)
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(out)
+	l.consoleWriter.mu.Unlock()
+}
+
+// SystemInfo renders a titled block of key-value system metadata to the console
+// writer, indented to align with the message column. Uses the logger's active theme.
+// Nil-safe; no-op when there is no console writer or info is nil.
+func (l *Logger) SystemInfo(info *SystemInfoData) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil || info == nil {
+		return
+	}
+	l.Render(NewSystemInfo(info, l.Style()))
+}
+
+// Bullet renders an indented bullet point at the given nesting level to the
+// console writer, aligned with the message column. Uses the logger's active theme.
+// Bullets cycle through •, ◦, ▪, ▫ with depth. Nil-safe; no-op without a console writer.
+func (l *Logger) Bullet(level int, text string) {
+	if l == nil || l.closed.Load() || l.consoleWriter == nil {
+		return
+	}
+	theme := l.Style()
+	indent := strings.Repeat("  ", level)
+	bullets := []string{"•", "◦", "▪", "▫"}
+	bullet := bullets[level%len(bullets)]
+
+	tmp := GetTemplateBuffer()
+	defer PutTemplateBuffer(tmp)
+
+	tmp.WriteString(indent)
+	tmp.WriteString(theme.CachedFieldKeyFg())
+	tmp.WriteString(bullet)
+	tmp.WriteString(Reset)
+	tmp.WriteString(" ")
+	tmp.WriteString(theme.CachedMessageFg())
+	tmp.WriteString(text)
+	tmp.WriteString(Reset)
+	tmp.WriteString("\n")
+
+	msgIndent := l.consoleWriter.template.CachedMessageIndentStr()
+	out := indentLines(tmp.Bytes(), msgIndent)
+
+	l.consoleWriter.mu.Lock()
+	_, _ = l.consoleWriter.out.Write(out)
+	l.consoleWriter.mu.Unlock()
+}
+
+// indentLines prefixes every non-empty line in b with indent.
 func indentLines(b []byte, indent string) []byte {
 	if len(b) == 0 || indent == "" {
 		return b
 	}
 
-	// Count newlines to size the output buffer without reallocation.
 	nlCount := 0
 	for _, c := range b {
 		if c == '\n' {
@@ -672,14 +1218,12 @@ func indentLines(b []byte, indent string) []byte {
 		if c == '\n' {
 			out = append(out, b[start:i+1]...)
 			start = i + 1
-			// Prefix the next line only if it has content.
 			if start < len(b) {
 				out = append(out, indent...)
 			}
 		}
 	}
 
-	// Append any trailing content without a newline.
 	if start < len(b) {
 		out = append(out, b[start:]...)
 	}

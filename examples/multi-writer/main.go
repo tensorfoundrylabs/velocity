@@ -1,7 +1,8 @@
 // Multi-writer example. Shows how to route log entries to different
 // destinations at runtime: a human-readable console, a JSON stream, and a
 // filtered sink that only captures errors. We also demonstrate WriterFunc
-// as a lightweight adapter for custom processing.
+// as a lightweight adapter for custom processing, and WriterTrusted() to
+// opt a writer into receiving unredacted Secure fields.
 package main
 
 import (
@@ -11,23 +12,25 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {
 	// Main logger writes to stdout for human-readable output.
-	log := velocity.New(os.Stdout)
+	log := velocity.New(velocity.WithDevelopment(), velocity.WithConsoleOutput(os.Stdout))
 	log.Info("Logger ready, adding dynamic writers")
 
 	// A JSON buffer lets us inspect what the JSON writer received after logging.
 	// In a real service this would be a file or a network socket.
+	// Marked trusted: this writer receives unredacted Secure fields.
 	jsonBuf := &bytes.Buffer{}
 	jsonWriter := velocity.NewJSONWriter(jsonBuf)
-	log.AddWriter("json", jsonWriter)
+	log.AddWriter("json", jsonWriter, velocity.WriterTrusted())
 
 	// FilteredWriter wraps another writer and only forwards entries that pass
 	// the predicate. Here we capture anything at Error or above into a separate
 	// buffer so we can ship it to an alerting system later.
+	// Not trusted: this sink is for alerting, Secure values should be redacted.
 	errorBuf := &bytes.Buffer{}
 	errorSink := velocity.NewFilteredWriter(
 		velocity.NewJSONWriter(errorBuf),
@@ -52,9 +55,19 @@ func main() {
 	log.Error("Payment gateway timeout", velocity.String("gateway", "stripe"), velocity.Int("attempt", 3))
 	log.Info("Background job completed", velocity.String("job", "email-digest"))
 
-	// Remove the counter writer now that we've logged what we need.
-	log.RemoveWriter("counter")
+	// RemoveWriter returns the writer so the caller can flush or close it.
+	removed := log.RemoveWriter("counter")
+	if removed != nil {
+		_ = removed.Close()
+	}
 	log.Info("Counter writer removed, this line won't be counted")
+
+	// Logger.Writer lets you inspect a registered writer without removing it.
+	if w := log.Writer("json"); w != nil {
+		if fw, ok := w.(velocity.FlushableWriter); ok {
+			_ = fw.Flush()
+		}
+	}
 
 	// Flush async writers before reading the buffers.
 	if err := log.Close(); err != nil {

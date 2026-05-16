@@ -15,11 +15,11 @@ func NewContext(ctx context.Context, l *Logger) context.Context {
 // FromContext retrieves the logger from ctx.
 // If ctx carries additional fields via ContextWithFields, they are prepended
 // via With() before returning.
-// Returns NopLogger() if no logger is stored — never returns nil.
+// Returns New(WithNop()) if no logger is stored — never returns nil.
 func FromContext(ctx context.Context) *Logger {
 	l, ok := ctx.Value(contextKey{}).(*Logger)
 	if !ok || l == nil {
-		return NopLogger()
+		return New(WithNop())
 	}
 	if fields, ok := ctx.Value(contextFieldsKey{}).([]Field); ok && len(fields) > 0 {
 		return l.With(fields...)

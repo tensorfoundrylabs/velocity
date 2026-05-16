@@ -59,13 +59,13 @@ func TestJSONWriter_NilStringerField(t *testing.T) {
 func TestJSONWriter_AddCaller(t *testing.T) {
 	var buf bytes.Buffer
 
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = nil
 	cfg.StructuredOutput = &buf
 	cfg.StructuredLevel = LevelDebug
 	cfg.AddCaller = true
 
-	log := NewWithConfig(cfg)
+	log := newFromConfig(cfg)
 	log.Info("caller test")
 
 	output := buf.String()

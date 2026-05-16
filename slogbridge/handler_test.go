@@ -1,27 +1,32 @@
-package velocityslog_test
+package slogbridge_test
 
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	velocity "github.com/tensorfoundrylabs/velocity"
-	velocityslog "github.com/tensorfoundrylabs/velocity/slog"
+	velocity "github.com/tensorfoundrylabs/velocity/v2"
+	slogbridge "github.com/tensorfoundrylabs/velocity/v2/slogbridge"
 )
 
-// newTestLogger creates a logger writing JSON to buf for easy assertion.
+// newTestLogger creates a logger writing to buf with colour disabled for easy assertion.
 func newTestLogger(buf *bytes.Buffer) *velocity.Logger {
-	return velocity.NewForTesting(buf)
+	return velocity.New(
+		velocity.WithConsoleOutput(buf),
+		velocity.WithColour(false),
+		velocity.WithLevel(velocity.LevelDebug),
+	)
 }
 
 func TestSlogHandler_NilLogger(t *testing.T) {
 	t.Parallel()
 
-	h := velocityslog.NewHandler(nil)
+	h := slogbridge.NewHandler(nil)
 
 	ctx := context.Background()
 	if h.Enabled(ctx, slog.LevelInfo) {
@@ -42,7 +47,7 @@ func TestSlogHandler_BasicLogging(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl.Info("hello world")
 	out := buf.String()
@@ -55,7 +60,7 @@ func TestSlogHandler_WithAttrs(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl = sl.With("component", "auth", "version", 3)
 	sl.Info("login")
@@ -73,7 +78,7 @@ func TestSlogHandler_WithGroup(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl = sl.WithGroup("server").With("host", "localhost")
 	sl.Info("starting")
@@ -92,7 +97,7 @@ func TestSlogHandler_LevelFiltering(t *testing.T) {
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
 	l.SetLevel(velocity.LevelInfo)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl.Debug("should be filtered")
 
@@ -110,7 +115,7 @@ func TestSlogHandler_FieldTypes(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	now := time.Now()
 	sl.Info("typed fields",
@@ -132,9 +137,9 @@ func TestSlogHandler_FieldTypes(t *testing.T) {
 
 func TestSlogHandler_Enabled(t *testing.T) {
 	t.Parallel()
-	l := velocity.New(nil)
+	l := velocity.New(velocity.WithNop())
 	l.SetLevel(velocity.LevelWarn)
-	h := velocityslog.NewHandler(l)
+	h := slogbridge.NewHandler(l)
 
 	ctx := context.Background()
 	if h.Enabled(ctx, slog.LevelDebug) {
@@ -155,7 +160,7 @@ func TestSlogHandler_NestedGroups(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	sl = sl.WithGroup("a").WithGroup("b")
 	sl.Info("nested", slog.String("key", "val"))
@@ -170,7 +175,7 @@ func TestSlogHandler_EmptyAttr(t *testing.T) {
 	t.Parallel()
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	h := velocityslog.NewHandler(l)
+	h := slogbridge.NewHandler(l)
 
 	// WithAttrs with empty slice should return same handler.
 	h2 := h.WithAttrs(nil)
@@ -196,7 +201,7 @@ func TestSlogHandler_ConcurrentHandle(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	l := newTestLogger(buf)
-	sl := velocityslog.NewLogger(l)
+	sl := slogbridge.NewLogger(l)
 
 	var wg sync.WaitGroup
 	for range 100 {
@@ -209,9 +214,35 @@ func TestSlogHandler_ConcurrentHandle(t *testing.T) {
 	wg.Wait()
 }
 
+// TestSlogHandler_SecureTagsRedacted is a regression test for the bug where
+// messages routed through slogbridge bypassed the <secure> tag scanner. When the
+// output is untrusted (JSON writer), the tagged content must be redacted.
+func TestSlogHandler_SecureTagsRedacted(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	l := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+	)
+	sl := slogbridge.NewLogger(l)
+
+	// The token between the tags must not appear in the JSON output.
+	sl.Info("token <secure>supersecret</secure> logged")
+
+	out := jsonBuf.String()
+	if strings.Contains(out, "supersecret") {
+		t.Errorf("secure tag content leaked into JSON output: %q", out)
+	}
+	if !strings.Contains(out, "token") {
+		t.Errorf("expected message prefix 'token' in output, got: %q", out)
+	}
+}
+
 func BenchmarkSlogHandler_Info(b *testing.B) {
-	l := velocity.New(nil) // nil discards console output
-	sl := velocityslog.NewLogger(l)
+	// WithNop discards all output so I/O cost doesn't dominate the measurement.
+	l := velocity.New(velocity.WithNop())
+	sl := slogbridge.NewLogger(l)
 
 	b.ReportAllocs()
 	b.ResetTimer()

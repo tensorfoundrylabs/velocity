@@ -77,7 +77,7 @@ func TestRingBuffer_WriterPreemptedBeforeClaim(t *testing.T) {
 	t.Parallel()
 
 	// Restore the hook after this test so parallel tests are unaffected.
-	t.Cleanup(func() { afterSequenceSpinHook = nil })
+	t.Cleanup(func() { afterSequenceSpinHook.Store(nil) })
 
 	buf := &safeBuffer{}
 
@@ -90,11 +90,12 @@ func TestRingBuffer_WriterPreemptedBeforeClaim(t *testing.T) {
 	hookFired := make(chan struct{})
 	releaseA := make(chan struct{})
 
-	afterSequenceSpinHook = func() {
-		afterSequenceSpinHook = nil // fire exactly once
+	fn := func() {
+		afterSequenceSpinHook.Store(nil) // fire exactly once
 		close(hookFired)
 		<-releaseA
 	}
+	afterSequenceSpinHook.Store(&fn)
 
 	var writerAOK atomic.Bool
 	writerADone := make(chan struct{})

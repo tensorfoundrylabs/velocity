@@ -1,16 +1,45 @@
-package pretty
+package live
 
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/term"
 )
+
+// shouldEmitColour reports whether ANSI control sequences should be written to w.
+// Priority order matches the root velocity package:
+//  1. NO_COLOR=<non-empty>  — always suppress (https://no-color.org)
+//  2. FORCE_COLOR=<non-empty> — always emit
+//  3. fd-level TTY detection via term.IsTerminal
+//
+// Using FORCE_COLOR=1 is the documented workaround for Windows terminal emulators
+// (VS Code, Git Bash, Windows Terminal) that proxy stdout through a named pipe,
+// causing term.IsTerminal to return false even on a colour-capable terminal.
+func shouldEmitColour(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if os.Getenv("FORCE_COLOR") != "" {
+		return true
+	}
+	if f, ok := w.(*os.File); ok {
+		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
+	}
+	return false
+}
 
 // ProgressBar displays progress for long-running operations.
 // Thread-safe for concurrent updates while logging continues.
+//
+// When the writer is not a terminal (piped output, CI, log files), per-tick
+// renders are suppressed to avoid emitting \r and ANSI erase sequences.
+// A single summary line is written on Complete().
 type ProgressBar struct {
 	started  time.Time
 	lastDraw time.Time
@@ -23,6 +52,7 @@ type ProgressBar struct {
 	mu       sync.Mutex
 	active   atomic.Bool
 	noOp     bool
+	isTTY    bool
 }
 
 func NewProgressBar(w io.Writer, total int64, label string) *ProgressBar {
@@ -45,6 +75,7 @@ func NewProgressBar(w io.Writer, total int64, label string) *ProgressBar {
 		width:   40,
 		started: time.Now(),
 		done:    make(chan struct{}),
+		isTTY:   shouldEmitColour(w),
 	}
 	pb.active.Store(true)
 
@@ -114,7 +145,10 @@ func (pb *ProgressBar) Complete() {
 
 	close(pb.done)
 
-	if pb.writer != nil {
+	// Finalise the output line. On TTY the render() call left the cursor at
+	// end-of-bar; a newline finishes the line. On non-TTY render() emits a
+	// summary already, so nothing extra is needed.
+	if pb.writer != nil && pb.isTTY {
 		_, _ = fmt.Fprintln(pb.writer)
 	}
 }
@@ -128,9 +162,22 @@ func (pb *ProgressBar) render() {
 		percent = float64(pb.current) / float64(pb.total) * 100
 	}
 
-	filled := min(int(float64(pb.width)*percent/100), pb.width)
-
 	elapsed := time.Since(pb.started)
+
+	// Non-TTY: only emit a summary line on completion; skip in-progress ticks
+	// so \r and ANSI erase sequences don't appear in pipes or log files.
+	if !pb.isTTY {
+		if pb.current >= pb.total {
+			if pb.label != "" {
+				_, _ = fmt.Fprintf(pb.writer, "%s: completed in %s\n", pb.label, formatDuration(elapsed))
+			} else {
+				_, _ = fmt.Fprintf(pb.writer, "completed in %s\n", formatDuration(elapsed))
+			}
+		}
+		return
+	}
+
+	filled := min(int(float64(pb.width)*percent/100), pb.width)
 
 	var eta time.Duration
 	if pb.current > 0 && pb.current < pb.total {
@@ -190,6 +237,10 @@ func (pb *ProgressBar) renderLoop() {
 
 // Spinner displays an animated spinner for indeterminate progress.
 // Thread-safe and works concurrently with logging.
+//
+// When the writer is not a terminal (piped output, CI, log files), frame
+// renders are suppressed to avoid emitting \r and ANSI erase sequences.
+// Stop/StopWithMessage still emit their final line.
 type Spinner struct {
 	writer  io.Writer
 	done    chan struct{}
@@ -199,6 +250,7 @@ type Spinner struct {
 	mu      sync.Mutex
 	active  atomic.Bool
 	noOp    bool
+	isTTY   bool
 }
 
 func NewSpinner(w io.Writer, label string) *Spinner {
@@ -214,6 +266,7 @@ func NewSpinner(w io.Writer, label string) *Spinner {
 		label:  label,
 		frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 		done:   make(chan struct{}),
+		isTTY:  shouldEmitColour(w),
 	}
 	s.active.Store(true)
 
@@ -244,7 +297,8 @@ func (s *Spinner) Stop() {
 
 	close(s.done)
 
-	if s.writer != nil {
+	// Only erase the spinner line on TTY; non-TTY never drew anything.
+	if s.writer != nil && s.isTTY {
 		_, _ = fmt.Fprint(s.writer, "\r\033[K")
 	}
 }
@@ -301,6 +355,11 @@ func (s *Spinner) render() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Suppress control sequences on non-TTY writers (pipes, files, CI).
+	if !s.isTTY {
+		return
+	}
+
 	_, _ = fmt.Fprint(s.writer, "\r\033[K")
 	_, _ = fmt.Fprintf(s.writer, "%s %s", s.frames[s.current], s.label)
 
@@ -327,6 +386,7 @@ func (s *Spinner) start() {
 	}()
 }
 
+// SpinnerStyle selects the animation frame set.
 type SpinnerStyle int
 
 const (
@@ -377,6 +437,9 @@ func formatDuration(d time.Duration) string {
 }
 
 // MultiProgress manages multiple progress bars or spinners simultaneously.
+//
+// When the writer is not a terminal, frame renders are suppressed to avoid
+// emitting cursor movement and ANSI erase sequences into pipes or log files.
 type MultiProgress struct {
 	lastDraw time.Time
 	writer   io.Writer
@@ -384,6 +447,7 @@ type MultiProgress struct {
 	items    []ProgressItem
 	mu       sync.Mutex
 	active   atomic.Bool
+	isTTY    bool
 }
 
 // ProgressItem is implemented by types that can render themselves as a progress line.
@@ -396,6 +460,7 @@ func NewMultiProgress(w io.Writer) *MultiProgress {
 		writer: w,
 		items:  make([]ProgressItem, 0),
 		done:   make(chan struct{}),
+		isTTY:  shouldEmitColour(w),
 	}
 	mp.active.Store(true)
 
@@ -430,18 +495,22 @@ func (mp *MultiProgress) Stop() {
 
 	close(mp.done)
 
-	mp.mu.Lock()
-	for range mp.items {
-		_, _ = fmt.Fprint(mp.writer, "\r\033[K\n")
+	// Only erase progress lines on TTY; non-TTY never drew any.
+	if mp.isTTY {
+		mp.mu.Lock()
+		for range mp.items {
+			_, _ = fmt.Fprint(mp.writer, "\r\033[K\n")
+		}
+		mp.mu.Unlock()
 	}
-	mp.mu.Unlock()
 }
 
 func (mp *MultiProgress) render() {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
 
-	if len(mp.items) == 0 {
+	// Suppress control sequences on non-TTY writers (pipes, files, CI).
+	if !mp.isTTY || len(mp.items) == 0 {
 		return
 	}
 

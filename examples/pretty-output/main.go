@@ -7,18 +7,19 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelDebug),
 		velocity.WithTheme(velocity.ThemeNightOwl),
 	)
 
-	p := pretty.New(os.Stdout, velocity.ThemeNightOwl)
+	// NewPrettyFromLogger routes Pretty writes through the logger's console writer
+	// mutex, so log lines and pretty output cannot interleave.
+	p := velocity.NewPrettyFromLogger(log)
 
 	// Banner shows the tool name using the double-border box built into the logger.
 	// Great for the splash screen at startup.
@@ -30,29 +31,32 @@ func main() {
 		" |____/ \\___| .__/|_|\\___/ \\__, |",
 		"            |_|            |___/ ",
 	}
-	banner := pretty.CreateBanner("Deploy", "4.2.0", "https://deploy.example.com", ascii)
+	banner := velocity.CreateBanner("Deploy", "4.2.0", "https://deploy.example.com", ascii)
 	fmt.Print(banner)
 
 	// Section headers make it easy to scan a long run's output.
 	p.Section("Pre-flight Checks")
 
-	// StatusFormatter gives you coloured OK/FAIL/WARN/INFO tokens.
-	// Useful for checklist-style output where the status is the key signal.
-	sf := log.Status()
-	fmt.Printf("  %-30s %s\n", "Docker daemon reachable:", sf.Okay("OK"))
-	fmt.Printf("  %-30s %s\n", "Registry credentials:", sf.Okay("OK"))
-	fmt.Printf("  %-30s %s\n", "Kubernetes context:", sf.Warn("WARN (non-prod)"))
-	fmt.Printf("  %-30s %s\n", "Staging namespace exists:", sf.Okay("OK"))
-	fmt.Printf("  %-30s %s\n", "Production namespace:", sf.Fail("FAIL"))
+	// Theme.Format(slot, s) colours cell content using semantic slots.
+	// The theme handles all ANSI construction; call sites stay readable.
+	style := log.Style()
+	statusOK := style.Format(velocity.SlotStatusOK, "OK")
+	statusWarn := style.Format(velocity.SlotStatusWarn, "WARN (non-prod)")
+	statusFail := style.Format(velocity.SlotStatusFail, "FAIL")
+	fmt.Printf("  %-30s %s\n", "Docker daemon reachable:", statusOK)
+	fmt.Printf("  %-30s %s\n", "Registry credentials:", statusOK)
+	fmt.Printf("  %-30s %s\n", "Kubernetes context:", statusWarn)
+	fmt.Printf("  %-30s %s\n", "Staging namespace exists:", statusOK)
+	fmt.Printf("  %-30s %s\n", "Production namespace:", statusFail)
 
 	p.Section("Environment Info")
 
 	// SystemInfo is a compact block for key-value pairs under a title.
 	// Perfect for printing build metadata or runtime configuration at startup.
-	p.SystemInfo(&pretty.SystemInfo{
+	p.SystemInfo(&velocity.SystemInfoData{
 		Title:   "Deploy Tool",
 		Version: "4.2.0",
-		Fields: []pretty.KeyValuePair{
+		Fields: []velocity.KeyValuePair{
 			{Key: "Target cluster", Value: "k8s-staging-au-east-1"},
 			{Key: "Namespace", Value: "app-staging"},
 			{Key: "Image", Value: "registry.example.com/app:v4.2.0"},
@@ -112,27 +116,27 @@ func main() {
 
 	// Tree shows hierarchical relationships. Each TreeItem can have children,
 	// and velocity draws the connecting lines automatically.
-	p.Tree([]pretty.TreeItem{
+	p.Tree([]velocity.TreeItem{
 		{
 			Key: "app (v4.2.0)",
-			Children: []pretty.TreeItem{
+			Children: []velocity.TreeItem{
 				{
 					Key: "postgres (primary)",
-					Children: []pretty.TreeItem{
+					Children: []velocity.TreeItem{
 						{Key: "max_connections", Value: 200},
 						{Key: "pool_size", Value: 20},
 					},
 				},
 				{
 					Key: "redis (cache)",
-					Children: []pretty.TreeItem{
+					Children: []velocity.TreeItem{
 						{Key: "eviction_policy", Value: "allkeys-lru"},
 						{Key: "max_memory", Value: "256mb"},
 					},
 				},
 				{
 					Key: "payments-api (external)",
-					Children: []pretty.TreeItem{
+					Children: []velocity.TreeItem{
 						{Key: "timeout", Value: "5s"},
 						{Key: "retries", Value: 3},
 					},

@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 	// Build a logger with console output to stdout and JSON to the temp file.
 	// WithCaller adds the source file and line number to every JSON entry,
 	// which is invaluable when tailing logs in production.
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelDebug),
 		velocity.WithStructuredOutput(jsonFile),

@@ -103,8 +103,8 @@ func initTemplate(t *Template) *Template {
 	return t
 }
 
-// buildWithTimezone converts UTC timestamps to the display timezone before rendering.
-func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location) {
+// buildWithTimezoneSecure is the trust-aware template rendering path.
+func (t *Template) buildWithTimezoneSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location, trusted bool, redactionMark string) {
 	if t.showTime && !entry.Time.IsZero() {
 		t.writeTimestampWithTimezone(buf, entry, theme, displayTimezone)
 	}
@@ -117,13 +117,13 @@ func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *The
 		if buf.Len() > 0 {
 			_ = buf.WriteByte(' ')
 		}
-		t.writeMessage(buf, entry, theme)
+		t.writeMessageSecure(buf, entry, theme, trusted, redactionMark)
 	}
 
 	if entry.Caller != "" {
 		_ = buf.WriteByte(' ')
 		if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedTimestampFg)
+			buf.WriteString(theme.cachedTimestampFgStr())
 		}
 		buf.WriteString(entry.Caller)
 		_ = buf.WriteByte(':')
@@ -138,7 +138,7 @@ func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *The
 		if buf.Len() > 0 {
 			_ = buf.WriteByte(' ')
 		}
-		t.writeFields(buf, entry, theme)
+		t.writeFieldsSecure(buf, entry, theme, trusted, redactionMark)
 	}
 
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
@@ -148,7 +148,7 @@ func (t *Template) buildWithTimezone(buf *bytes.Buffer, entry *Entry, theme *The
 
 func (t *Template) writeTimestampWithTimezone(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location) {
 	if t.useColours && theme != nil {
-		buf.WriteString(theme.cachedTimestampFg)
+		buf.WriteString(theme.cachedTimestampFgStr())
 	}
 
 	displayTime := entry.Time.In(displayTimezone)
@@ -166,10 +166,7 @@ func (t *Template) writeLevel(buf *bytes.Buffer, entry *Entry, theme *Theme) {
 
 	var levelCode string
 	if t.useColours && theme != nil {
-		lvl := entry.Level
-		if lvl >= 0 && int(lvl) < len(theme.cachedLevelFg) {
-			levelCode = theme.cachedLevelFg[lvl]
-		}
+		levelCode = theme.cachedLevelCode(entry.Level)
 	}
 
 	switch t.levelStyle {
@@ -204,35 +201,43 @@ func (t *Template) writeLevel(buf *bytes.Buffer, entry *Entry, theme *Theme) {
 	}
 }
 
-func (t *Template) writeMessage(buf *bytes.Buffer, entry *Entry, theme *Theme) {
+func (t *Template) writeMessageSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string) {
 	if t.useColours && theme != nil {
-		buf.WriteString(theme.cachedMessageFg)
+		buf.WriteString(theme.cachedMessageFgStr())
 	}
 
-	buf.WriteString(entry.Message)
+	msg := entry.Message
+	if entry.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	buf.WriteString(msg)
 
 	if t.useColours && theme != nil {
 		buf.WriteString(Reset)
 	}
 }
 
-func (t *Template) writeFields(buf *bytes.Buffer, entry *Entry, theme *Theme) {
+func (t *Template) writeFieldsSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string) {
 	// Check if tree display is forced on the entry, otherwise use template's mode
 	if entry.forceTreeDisplay || t.fieldDisplayMode == FieldDisplayTree {
-		t.writeFieldsTree(buf, entry, theme)
+		t.writeFieldsTreeSecure(buf, entry, theme, trusted, redactionMark)
 	} else {
-		t.writeFieldsInline(buf, entry, theme)
+		t.writeFieldsInlineSecure(buf, entry, theme, trusted, redactionMark)
 	}
 }
 
-func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *Theme) {
+func (t *Template) writeFieldsInlineSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string) {
 	for i, field := range entry.Fields {
 		if i > 0 {
 			buf.WriteString(t.fieldSep)
 		}
 
 		if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldKeyFg)
+			buf.WriteString(theme.cachedFieldKeyFgStr())
 		}
 		buf.WriteString(field.Key)
 		if t.useColours && theme != nil {
@@ -242,12 +247,16 @@ func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *The
 		buf.WriteString(t.fieldPairSep)
 
 		if t.useColours && field.Type == FieldTypeError && theme != nil {
-			buf.WriteString(theme.cachedErrorValFg)
+			buf.WriteString(theme.cachedErrorValFgStr())
 		} else if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldValFg)
+			buf.WriteString(theme.cachedFieldValFgStr())
 		}
 
-		field.writeFormatted(buf)
+		if trusted {
+			field.writeFormattedTrusted(buf)
+		} else {
+			field.writeFormattedWithMark(buf, redactionMark)
+		}
 
 		if t.useColours && theme != nil {
 			buf.WriteString(Reset)
@@ -255,8 +264,7 @@ func (t *Template) writeFieldsInline(buf *bytes.Buffer, entry *Entry, theme *The
 	}
 }
 
-// writeFieldsTree renders fields in a tree structure aligned with the message.
-func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme) {
+func (t *Template) writeFieldsTreeSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string) {
 	// Badge style has a fixed prefix width regardless of level, so we use the
 	// pre-built indent string. Other styles vary by level and must compute per call.
 	var indentStr string
@@ -280,7 +288,7 @@ func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme
 		buf.WriteString(treeChar)
 
 		if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldKeyFg)
+			buf.WriteString(theme.cachedFieldKeyFgStr())
 		}
 		buf.WriteString(field.Key)
 		if t.useColours && theme != nil {
@@ -290,12 +298,16 @@ func (t *Template) writeFieldsTree(buf *bytes.Buffer, entry *Entry, theme *Theme
 		buf.WriteString(t.fieldPairSep)
 
 		if t.useColours && field.Type == FieldTypeError && theme != nil {
-			buf.WriteString(theme.cachedErrorValFg)
+			buf.WriteString(theme.cachedErrorValFgStr())
 		} else if t.useColours && theme != nil {
-			buf.WriteString(theme.cachedFieldValFg)
+			buf.WriteString(theme.cachedFieldValFgStr())
 		}
 
-		field.writeFormatted(buf)
+		if trusted {
+			field.writeFormattedTrusted(buf)
+		} else {
+			field.writeFormattedWithMark(buf, redactionMark)
+		}
 
 		if t.useColours && theme != nil {
 			buf.WriteString(Reset)

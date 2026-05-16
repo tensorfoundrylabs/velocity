@@ -1,0 +1,182 @@
+package velocity
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
+
+func TestClose_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	log := New(WithConsoleOutput(bytes.NewBuffer(nil)))
+
+	if err := log.Close(); err != nil {
+		t.Fatalf("first Close() error: %v", err)
+	}
+	// Second call must not panic or return an error.
+	if err := log.Close(); err != nil {
+		t.Fatalf("second Close() error: %v", err)
+	}
+}
+
+func TestClose_PostCloseDropsSilently(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithConsoleOutput(&buf))
+
+	_ = log.Close()
+	before := buf.Len()
+
+	// Log calls after Close must not write anything.
+	log.Info("should be dropped")
+	log.Warn("also dropped")
+
+	if buf.Len() != before {
+		t.Errorf("expected no output after Close, got %d extra bytes", buf.Len()-before)
+	}
+}
+
+func TestClose_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	var l *Logger
+	if err := l.Close(); err != nil {
+		t.Errorf("nil logger Close() should return nil, got: %v", err)
+	}
+}
+
+func TestClose_WithAdditionalWriter(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithConsoleOutput(&buf))
+	log.AddWriter("test", WriterFunc(func(_ *Entry) error { return nil }))
+
+	log.Info("before close")
+
+	// Close must not block indefinitely; MultiWriter drains its channel.
+	if err := log.Close(); err != nil {
+		t.Fatalf("Close() with additional writer: %v", err)
+	}
+}
+
+func TestStyle_ReturnsTheme(t *testing.T) {
+	// Cannot run in parallel because t.Setenv modifies a process-wide env var.
+	// Style() returns mono for non-TTY writers; use FORCE_COLOR to test the
+	// colour path without requiring a real terminal in CI.
+	t.Setenv("FORCE_COLOR", "1")
+
+	log := New(
+		WithConsoleOutput(bytes.NewBuffer(nil)),
+		WithTheme(ThemeNightOwl),
+	)
+
+	theme := log.Style()
+	if theme == nil {
+		t.Fatal("Style() returned nil")
+	}
+	if theme == noColourTheme {
+		t.Error("expected themed logger to return its theme under FORCE_COLOR=1, not noColourTheme")
+	}
+}
+
+func TestStyle_NoConsoleWriter_ReturnsNoColour(t *testing.T) {
+	t.Parallel()
+
+	// WithNop produces a logger with no console writer.
+	log := New(WithNop())
+	theme := log.Style()
+	if theme == nil {
+		t.Fatal("Style() returned nil even for nop logger")
+	}
+	// The no-colour theme has an empty Name or all-zero ANSI codes.
+	// We only verify it's non-nil and doesn't panic when its methods are called.
+	_ = theme.CachedMessageFg()
+}
+
+func TestStyle_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	var l *Logger
+	theme := l.Style()
+	if theme == nil {
+		t.Fatal("nil logger Style() returned nil")
+	}
+}
+
+func TestNopLogger_NonNil(t *testing.T) {
+	t.Parallel()
+
+	l := NopLogger()
+	if l == nil {
+		t.Fatal("NopLogger() returned nil")
+	}
+}
+
+func TestNopLogger_NoOutput(t *testing.T) {
+	t.Parallel()
+
+	// NopLogger must accept log calls without panicking and write nothing to stderr.
+	// We verify by exercising all severity levels — none should panic.
+	l := NopLogger()
+	l.Debug("debug")
+	l.Info("info")
+	l.Warn("warn")
+	l.Error("error")
+}
+
+func TestNopLogger_CloseSafe(t *testing.T) {
+	t.Parallel()
+
+	l := NopLogger()
+	if err := l.Close(); err != nil {
+		t.Fatalf("NopLogger Close() returned error: %v", err)
+	}
+}
+
+// TestWithProduction_ProducesOutput is a regression test for the bug where
+// WithProduction set StructuredOutput to nil, producing no output at all.
+// The preset must route JSON entries to stderr (captured here via a buffer).
+func TestWithProduction_ProducesOutput(t *testing.T) {
+	t.Parallel()
+
+	var buf safeBuffer
+
+	log := New(
+		WithProduction(),
+		// Redirect the structured output to a buffer so we can inspect it.
+		WithStructuredOutput(&buf),
+	)
+	defer func() { _ = log.Close() }()
+
+	log.Info("hello")
+
+	out := buf.String()
+	if out == "" {
+		t.Fatal("WithProduction() produced no output — StructuredOutput was likely nil")
+	}
+	if !strings.Contains(out, "hello") {
+		t.Errorf("expected 'hello' in JSON output, got: %q", out)
+	}
+}
+
+// TestSetTheme_NilResetsToDefault verifies that SetTheme(nil) resets to NightOwl
+// rather than silently disabling colour. The documented way to disable colour is
+// WithColour(false), not passing nil to SetTheme.
+func TestSetTheme_NilResetsToDefault(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(WithConsoleOutput(&buf), WithTheme(ThemeSolarized))
+
+	log.SetTheme(nil)
+
+	if log.Theme() != ThemeNightOwl {
+		t.Errorf("SetTheme(nil): Theme() returned %v, want ThemeNightOwl", log.Theme())
+	}
+	if log.cfg.ConsoleTheme != ThemeNightOwl {
+		t.Errorf("SetTheme(nil): cfg.ConsoleTheme = %v, want ThemeNightOwl", log.cfg.ConsoleTheme)
+	}
+}

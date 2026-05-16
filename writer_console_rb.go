@@ -19,6 +19,11 @@ type ConsoleWriterRB struct {
 	ringBuffer      *RingBuffer
 	closed          atomic.Bool
 
+	// isTTY mirrors ConsoleWriter's trust model: TTY = trusted (human terminal),
+	// non-TTY = untrusted (pipe or file). The template is rendered via the secure
+	// path so Secure fields are redacted when piping to a file or non-TTY sink.
+	isTTY bool
+
 	mu     sync.Mutex // Protects theme and template
 	writes atomic.Uint64
 	errors atomic.Uint64
@@ -35,15 +40,14 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 		displayTimezone = time.Local
 	}
 
-	// Ensure ANSI sequences are populated. ensureCached populates in-place via sync.Once,
-	// so it is safe to call concurrently and returns the same pointer.
-	theme = ensureCached(theme)
+	// Themes are immutable from NewTheme — ANSI codes already populated.
 
 	w := &ConsoleWriterRB{
 		out:             actualOut,
 		theme:           theme,
 		bufPool:         NewBufferPool(),
 		displayTimezone: displayTimezone,
+		isTTY:           resolveColourForWriter(actualOut),
 	}
 
 	w.ringBuffer = NewRingBuffer(actualOut, DefaultRingBufferSize)
@@ -88,7 +92,10 @@ func (w *ConsoleWriterRB) Write(e *Entry) error {
 	if hasTemplate {
 		tempBuf := GetTemplateBuffer()
 		defer PutTemplateBuffer(tempBuf)
-		template.buildWithTimezone(tempBuf, e, theme, w.displayTimezone)
+		// Use the trust-aware path so Secure fields are redacted on non-TTY output
+		// (e.g. piped to a file). TTY writers are treated as trusted — same model
+		// as ConsoleWriter which passes isTTY as the trusted flag.
+		template.buildWithTimezoneSecure(tempBuf, e, theme, w.displayTimezone, w.isTTY, "[REDACTED]")
 		formattedData = tempBuf.Bytes()
 	} else {
 		buf := NewBytesBuffer(rawBuf)

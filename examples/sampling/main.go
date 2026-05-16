@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/tensorfoundrylabs/velocity"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {
@@ -24,7 +24,8 @@ func main() {
 	// This is a common pattern: capture the burst at startup, then sample steady-state noise.
 	sampler := velocity.NewCountSampler(5, 100)
 
-	log := velocity.NewWithOptions(
+	log := velocity.New(
+		velocity.WithDevelopment(),
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithLevel(velocity.LevelInfo),
 		velocity.WithSampler(sampler),

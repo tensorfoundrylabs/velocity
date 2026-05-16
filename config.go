@@ -1,8 +1,6 @@
 package velocity
 
 import (
-	"errors"
-	"fmt"
 	"io"
 	"os"
 	"time"
@@ -10,6 +8,7 @@ import (
 	"golang.org/x/term"
 )
 
+// Format is the output format for structured (JSON) writers.
 type Format int
 
 const (
@@ -25,6 +24,7 @@ func (f Format) String() string {
 	}
 }
 
+// FieldDisplayMode controls whether fields render inline or as a tree.
 type FieldDisplayMode int
 
 const (
@@ -47,43 +47,48 @@ func (m FieldDisplayMode) String() string {
 // Default behaviour is os.Exit(1). Override in tests to prevent process exit.
 type FatalHandler func()
 
-type Config struct {
+// config holds all logger configuration. Unexported — callers configure via Options.
+type config struct {
 	ConsoleOutput io.Writer
 
-	// FatalHandler overrides the default os.Exit(1) called after Fatal().
-	// Useful in tests. If nil, defaults to os.Exit(1).
-	FatalHandler FatalHandler
-
 	StructuredOutput io.Writer
-	ConsoleTheme     *Theme
 	Sampler          Sampler
 
-	// Logs are always stored in UTC, but can be displayed in a different timezone
+	// NotifyOutput is the destination for Notify/NotifyLines/NotifyBox calls.
+	// Defaults to os.Stderr. Override via WithNotifyOutput — useful in tests
+	// where stderr is not captured by the test runner.
+	NotifyOutput io.Writer
+
+	FatalHandler FatalHandler
+
+	ConsoleTheme    *Theme
 	DisplayTimezone *time.Location
 
-	TimeFormat string
-
+	TimeFormat       string
 	StructuredFormat Format
 
 	BufferSize    int
 	FieldPoolSize int
 
 	FieldDisplayMode FieldDisplayMode
-	ConsoleLevel     Level
+	// CallerSkip is extra frames to skip beyond the standard 4; use for wrapper functions.
+	CallerSkip int
 
+	ConsoleLevel    Level
 	StructuredLevel Level
 
 	DisableColour bool
+	AddCaller     bool
 
-	// AddCaller enables capturing file:line and function name for each log entry
-	AddCaller bool
-	// CallerSkip is the number of stack frames to skip when capturing caller information
-	// Default is 0, increase for wrapper functions
-	CallerSkip int
+	// DisableSecureTags permanently disables the <secure>...</secure> message scanner.
+	// Set via WithSecureTags(false). When true, no IndexByte scan runs on any log call
+	// regardless of which writers are attached. Use for extreme-perf consumers that
+	// never embed sensitive data in message strings.
+	DisableSecureTags bool
 }
 
-func DefaultConfig() *Config {
-	return &Config{
+func defaultConfig() *config {
+	return &config{
 		ConsoleOutput:    os.Stdout,
 		ConsoleLevel:     LevelDebug,
 		StructuredOutput: nil,
@@ -94,241 +99,6 @@ func DefaultConfig() *Config {
 		TimeFormat:       "2006-01-02T15:04:05Z07:00",
 		DisplayTimezone:  time.Local,
 		FieldDisplayMode: FieldDisplayInline,
-	}
-}
-
-type Builder struct {
-	config *Config
-}
-
-func NewConfig() *Builder {
-	return &Builder{
-		config: DefaultConfig(),
-	}
-}
-
-func (b *Builder) WithLevel(level Level) *Builder {
-	b.config.ConsoleLevel = level
-	return b
-}
-
-func (b *Builder) WithFormat(format Format) *Builder {
-	b.config.StructuredFormat = format
-	return b
-}
-
-func (b *Builder) WithOutput(w io.Writer) *Builder {
-	b.config.ConsoleOutput = w
-	return b
-}
-
-func (b *Builder) WithStructuredOutput(w io.Writer) *Builder {
-	b.config.StructuredOutput = w
-	return b
-}
-
-func (b *Builder) WithStructuredLevel(level Level) *Builder {
-	b.config.StructuredLevel = level
-	return b
-}
-
-func (b *Builder) WithTheme(theme *Theme) *Builder {
-	b.config.ConsoleTheme = theme
-	return b
-}
-
-func (b *Builder) WithTimeFormat(format string) *Builder {
-	b.config.TimeFormat = format
-	return b
-}
-
-func (b *Builder) WithBufferSize(size int) *Builder {
-	b.config.BufferSize = size
-	return b
-}
-
-func (b *Builder) WithFieldPoolSize(size int) *Builder {
-	b.config.FieldPoolSize = size
-	return b
-}
-
-func (b *Builder) WithColour(enabled bool) *Builder {
-	b.config.DisableColour = !enabled
-	return b
-}
-
-func (b *Builder) DisableColour() *Builder {
-	b.config.DisableColour = true
-	return b
-}
-
-func (b *Builder) WithSampling(initial, thereafter uint32) *Builder {
-	b.config.Sampler = NewCountSampler(uint64(initial), uint64(thereafter))
-	return b
-}
-
-// WithDisplayTimezone sets the timezone for displaying timestamps in console output.
-// Logs are always stored in UTC internally, but this controls how they're displayed.
-func (b *Builder) WithDisplayTimezone(tz string) (*Builder, error) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return b, fmt.Errorf("invalid timezone %q: %w", tz, err)
-	}
-	b.config.DisplayTimezone = loc
-	return b, nil
-}
-
-func (b *Builder) MustWithDisplayTimezone(tz string) *Builder {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		panic(fmt.Sprintf("velocity: invalid timezone %q: %v", tz, err))
-	}
-	b.config.DisplayTimezone = loc
-	return b
-}
-
-func (b *Builder) WithFieldDisplayMode(mode FieldDisplayMode) *Builder {
-	b.config.FieldDisplayMode = mode
-	return b
-}
-
-func (b *Builder) WithFatalHandler(fn FatalHandler) *Builder {
-	b.config.FatalHandler = fn
-	return b
-}
-
-func (b *Builder) Build() (*Config, error) {
-	if err := b.validate(); err != nil {
-		return nil, err
-	}
-	return b.config, nil
-}
-
-func (b *Builder) MustBuild() *Config {
-	cfg, err := b.Build()
-	if err != nil {
-		panic(fmt.Sprintf("velocity: invalid configuration: %v", err))
-	}
-	return cfg
-}
-
-func (b *Builder) validate() error {
-	if b.config.BufferSize < 256 {
-		return fmt.Errorf("buffer size must be at least 256 bytes, got %d", b.config.BufferSize)
-	}
-	if b.config.BufferSize > 1024*1024 {
-		return fmt.Errorf("buffer size must not exceed 1MB, got %d", b.config.BufferSize)
-	}
-
-	if b.config.FieldPoolSize < 0 {
-		return fmt.Errorf("field pool size must not be negative, got %d", b.config.FieldPoolSize)
-	}
-	if b.config.FieldPoolSize > 10000 {
-		return fmt.Errorf("field pool size must not exceed 10000, got %d", b.config.FieldPoolSize)
-	}
-
-	if b.config.Sampler != nil {
-		// CountSampler validation (check if it's our concrete type)
-		if cs, ok := b.config.Sampler.(*CountSampler); ok {
-			if cs.Initial == 0 && cs.Thereafter == 0 {
-				return errors.New("sampling initial and thereafter counts must not both be zero")
-			}
-		}
-	}
-
-	return nil
-}
-
-func (b *Builder) Clone() *Builder {
-	cfgCopy := *b.config
-	// Sampler is copied by value - interface reference is shared
-	// If deep copy is needed for custom samplers, implement Clone() on sampler
-	return &Builder{
-		config: &cfgCopy,
-	}
-}
-
-// DefaultDevelopmentConfig creates a config for development: coloured console, debug level, no structured output.
-func DefaultDevelopmentConfig() *Config {
-	return &Config{
-		ConsoleOutput:    os.Stdout,
-		ConsoleTheme:     nil,
-		ConsoleLevel:     LevelDebug,
-		StructuredOutput: nil,
-		StructuredFormat: FormatJSON,
-		StructuredLevel:  LevelOff,
-		BufferSize:       1024,
-		FieldPoolSize:    50,
-		DisableColour:    false,
-		TimeFormat:       "2006-01-02 15:04:05",
-		DisplayTimezone:  time.Local,
-	}
-}
-
-// DefaultProductionConfig creates a config for production: JSON output, info level, no console.
-func DefaultProductionConfig() *Config {
-	return &Config{
-		ConsoleOutput:    io.Discard,
-		ConsoleTheme:     nil,
-		ConsoleLevel:     LevelOff,
-		StructuredOutput: nil,
-		StructuredFormat: FormatJSON,
-		StructuredLevel:  LevelInfo,
-		BufferSize:       4096,
-		FieldPoolSize:    200,
-		DisableColour:    true,
-		TimeFormat:       "2006-01-02T15:04:05Z07:00",
-	}
-}
-
-// DefaultContainerConfig creates a config for containerised environments: JSON to stdout, info level.
-func DefaultContainerConfig() *Config {
-	disableColour := !isTerminal(os.Stdout)
-
-	return &Config{
-		ConsoleOutput:    nil,
-		ConsoleTheme:     nil,
-		ConsoleLevel:     LevelOff,
-		StructuredOutput: os.Stdout,
-		StructuredFormat: FormatJSON,
-		StructuredLevel:  LevelInfo,
-		BufferSize:       2048,
-		FieldPoolSize:    100,
-		DisableColour:    disableColour,
-		TimeFormat:       "2006-01-02T15:04:05Z07:00",
-	}
-}
-
-// DefaultTestingConfig creates a config for tests: writes to w, debug level, colours off.
-func DefaultTestingConfig(w io.Writer) *Config {
-	return &Config{
-		ConsoleOutput:    w,
-		ConsoleTheme:     nil,
-		ConsoleLevel:     LevelDebug,
-		StructuredOutput: nil,
-		StructuredFormat: FormatJSON,
-		StructuredLevel:  LevelOff,
-		BufferSize:       512,
-		FieldPoolSize:    25,
-		DisableColour:    true,
-		TimeFormat:       "15:04:05.000",
-	}
-}
-
-// DefaultHighPerformanceConfig creates a config for high throughput: minimal output, sampling enabled.
-func DefaultHighPerformanceConfig() *Config {
-	return &Config{
-		ConsoleOutput:    io.Discard,
-		ConsoleTheme:     nil,
-		ConsoleLevel:     LevelOff,
-		StructuredOutput: os.Stderr,
-		StructuredFormat: FormatJSON,
-		StructuredLevel:  LevelInfo,
-		BufferSize:       8192,
-		FieldPoolSize:    500,
-		DisableColour:    true,
-		TimeFormat:       "2006-01-02T15:04:05Z07:00",
-		Sampler:          NewCountSampler(uint64(1000), uint64(100)),
 	}
 }
 
@@ -351,31 +121,41 @@ func isTerminal(f *os.File) bool {
 	}
 }
 
+// resolveColourForWriter reports whether ANSI colour should be emitted to w,
+// applying the standard environment overrides in priority order:
+//
+//  1. NO_COLOR=<non-empty>  — always disable (https://no-color.org)
+//  2. FORCE_COLOR=<non-empty> — always enable
+//  3. term.IsTerminal        — auto-detect from the file descriptor
+//
+// Windows terminal emulators (VS Code, Git Bash, Windows Terminal) often
+// present stdout as a named pipe rather than a console handle, which causes
+// term.IsTerminal to return false even on a real terminal. FORCE_COLOR=1 is
+// the documented escape hatch for those environments.
+func resolveColourForWriter(w io.Writer) bool {
+	// NO_COLOR has highest priority — explicit opt-out.
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	// FORCE_COLOR overrides TTY detection — explicit opt-in.
+	if os.Getenv("FORCE_COLOR") != "" {
+		return true
+	}
+	// Fall back to fd-level detection.
+	return IsTerminalWriter(w)
+}
+
 // IsTerminalWriter reports whether w is a terminal, using term.IsTerminal when possible.
 // Used to auto-detect colour support.
+//
+// Note: on Windows, terminal emulators that run shells as child processes (VS Code,
+// Git Bash, Windows Terminal) may proxy stdout through a pipe, causing this to return
+// false even when the output is visible in a colour-capable terminal. In that case,
+// set FORCE_COLOR=1 to override detection, or use resolveColourForWriter which
+// handles both env vars and fd detection.
 func IsTerminalWriter(w io.Writer) bool {
 	if f, ok := w.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
 	}
 	return false
-}
-
-func PresetDevelopment() *Builder {
-	return &Builder{config: DefaultDevelopmentConfig()}
-}
-
-func PresetProduction() *Builder {
-	return &Builder{config: DefaultProductionConfig()}
-}
-
-func PresetContainer() *Builder {
-	return &Builder{config: DefaultContainerConfig()}
-}
-
-func PresetTesting(w io.Writer) *Builder {
-	return &Builder{config: DefaultTestingConfig(w)}
-}
-
-func PresetHighPerformance() *Builder {
-	return &Builder{config: DefaultHighPerformanceConfig()}
 }

@@ -9,13 +9,13 @@ import (
 // newDiscardLogger builds a real logger that formats output but discards it,
 // so we measure formatting cost rather than I/O cost.
 func newDiscardLogger() *Logger {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = io.Discard
 	cfg.StructuredOutput = io.Discard
 	// Force both writers active so we measure full formatting overhead.
 	cfg.ConsoleLevel = LevelDebug
 	cfg.StructuredLevel = LevelDebug
-	return NewWithConfig(cfg)
+	return newFromConfig(cfg)
 }
 
 // fiveFields returns a representative slice of mixed-type fields.
@@ -139,23 +139,23 @@ func BenchmarkFloat64Field(b *testing.B) {
 	_ = f
 }
 
-// BenchmarkF_String measures the type-switch overhead in the generic constructor.
-func BenchmarkF_String(b *testing.B) {
+// BenchmarkAny_String measures the Any() generic constructor overhead.
+func BenchmarkAny_String(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var f Field
 	for b.Loop() {
-		f = F("key", "value")
+		f = Any("key", "value")
 	}
 	_ = f
 }
 
-func BenchmarkF_Int(b *testing.B) {
+func BenchmarkAny_Int(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var f Field
 	for b.Loop() {
-		f = F("port", 8080)
+		f = Any("port", 8080)
 	}
 	_ = f
 }
@@ -280,12 +280,12 @@ func BenchmarkJSONWriter_Parallel(b *testing.B) {
 // BenchmarkInfo_TreeMode measures the badge-style tree-mode path where the
 // cachedIndentStr is used in place of strings.Repeat on every field.
 func BenchmarkInfo_TreeMode(b *testing.B) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = io.Discard
 	cfg.StructuredOutput = nil
 	cfg.ConsoleLevel = LevelDebug
 	cfg.FieldDisplayMode = FieldDisplayTree
-	l := NewWithConfig(cfg)
+	l := newFromConfig(cfg)
 	fields := fiveFields()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -296,12 +296,12 @@ func BenchmarkInfo_TreeMode(b *testing.B) {
 
 // BenchmarkInfo_TreeMode_Parallel measures concurrent tree-mode throughput.
 func BenchmarkInfo_TreeMode_Parallel(b *testing.B) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig()
 	cfg.ConsoleOutput = io.Discard
 	cfg.StructuredOutput = nil
 	cfg.ConsoleLevel = LevelDebug
 	cfg.FieldDisplayMode = FieldDisplayTree
-	l := NewWithConfig(cfg)
+	l := newFromConfig(cfg)
 	fields := fiveFields()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -312,15 +312,15 @@ func BenchmarkInfo_TreeMode_Parallel(b *testing.B) {
 	})
 }
 
-// BenchmarkInfoDetailed_TreeMode measures the InfoDetailed path which always forces
+// BenchmarkDetailed_TreeMode measures the Detailed() child path which forces
 // tree display regardless of the configured FieldDisplayMode.
-func BenchmarkInfoDetailed_TreeMode(b *testing.B) {
-	l := newDiscardLogger()
+func BenchmarkDetailed_TreeMode(b *testing.B) {
+	l := newDiscardLogger().Detailed()
 	fields := fiveFields()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		l.InfoDetailed("detailed entry", fields...)
+		l.Info("detailed entry", fields...)
 	}
 }
 
@@ -340,7 +340,7 @@ func BenchmarkBufferPool_GetPut(b *testing.B) {
 // ---- Render API benchmarks --------------------------------------------------
 
 // BenchmarkLogger_Render measures the cost of one Logger.Render call with a
-// small pre-built TableResult (3 rows, 2 columns). Construction is excluded
+// small pre-built Table (3 rows, 2 columns). Construction is excluded
 // from the timer so we isolate the indentation + write path.
 func BenchmarkLogger_Render(b *testing.B) {
 	l := newDiscardLogger()
@@ -388,4 +388,48 @@ type bytesRenderable struct {
 func (r *bytesRenderable) Render(w io.Writer) error {
 	_, err := w.Write(r.data)
 	return err
+}
+
+// ---- v2 budget stubs --------------------------------------------------------
+// These benchmarks establish the v1 baselines against which v2 targets are measured.
+// See docs/bench-v1.1.3.txt for the captured numbers.
+
+// BenchmarkWithComponent_Equivalent measures the v1 cost of producing a child
+// logger with a component field via With(). v2 replaces this with WithComponent().
+func BenchmarkWithComponent_Equivalent(b *testing.B) {
+	l := newDiscardLogger()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		child := l.With(String("component", "auth-service"))
+		_ = child
+	}
+}
+
+// BenchmarkSecureScan_NoMatch is the v1 baseline for the v2 <secure>-tag scan path.
+// In v2 an IndexByte scan runs before field formatting when untrusted writers are
+// present; this bench establishes the pre-scan cost for a message containing no '<'.
+func BenchmarkSecureScan_NoMatch(b *testing.B) {
+	l := newDiscardLogger()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("request completed successfully with no sensitive data in message", fields...)
+	}
+}
+
+// BenchmarkSecureField_UntrustedWriter documents the cost of a Secure field
+// hitting an untrusted JSON writer. Documents one redacted string alloc per
+// affected (entry × untrusted writer) pair. The Secure() call itself is one
+// alloc at construction; the alloc here is for string allocation on format path.
+func BenchmarkSecureField_UntrustedWriter(b *testing.B) {
+	l := newDiscardLogger()
+	// Attach an untrusted JSON writer so scanSecure=true and redaction fires.
+	l.AddWriter("json", NewJSONWriter(io.Discard))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("request completed", Secure("session", "abc123def456"))
+	}
 }

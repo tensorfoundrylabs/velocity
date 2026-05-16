@@ -21,36 +21,48 @@ go run ./examples/terminal-velocity
 
 ## Examples
 
-### Getting Started
+### Foundation
 
 | Example | What it shows | Run |
 |---------|--------------|-----|
-| [basic](basic/) | Logger creation, log levels, typed fields, child loggers, `SetLevel`, `InfoDetailed`, presets | `make run-basic` |
-| [json-logging](json-logging/) | Dual output (console + JSON file), `WithCaller`, custom time format, structured JSON | `make run-json` |
-| [themes](themes/) | All four built-in colour themes (Night Owl, Solarized, Dracula, Nord) with the same log entries | `make run-themes` |
-| [custom-theme](custom-theme/) | Define your own colour palette (Cyberpunk neon). Shows how custom themes flow through loggers, pretty output, tables, and status indicators | `make run-custom-theme` |
+| [basic](basic/) | Logger creation, log levels, typed fields, child loggers, `SetLevel`, `Detailed()`, `WithDevelopment()` | `make run-basic` |
+| [themes](themes/) | All five built-in themes (Night Owl, Solarized, Dracula, Nord, Mono) with `Theme.Format` and `Theme.Wrap` for semantic style slots | `make run-themes` |
+| [custom-theme](custom-theme/) | Define your own colour palette with `NewTheme` + `ThemeOption`, custom `StyleSlot` values, theme flowing through loggers, tables, and status output | `make run-custom-theme` |
 
-### Output and Display
-
-| Example | What it shows | Run |
-|---------|--------------|-----|
-| [pretty-output](pretty-output/) | Section, Box, Panel, Banner, Bullet, KeyValue, Table, Tree, SystemInfo, StatusFormatter | `make run-pretty` |
-| [tables](tables/) | Table rendering with headers, rows, and ANSI-coloured cells (StatusFormatter) | `make run-tables` |
-| [progress](progress/) | ProgressBar, all 5 Spinner styles, label changes, success/error stop messages | `make run-progress` |
-
-### Integration
+### Output Formats
 
 | Example | What it shows | Run |
 |---------|--------------|-----|
-| [slog-bridge](slog-bridge/) | `NewSlogLogger`, `slog.SetDefault`, `WithGroup`, `WithAttrs`, level filtering | `make run-slog` |
-| [multi-writer](multi-writer/) | `AddWriter`/`RemoveWriter`, `FilteredWriter`, `WriterFunc` adapter | `make run-multi-writer` |
-| [sampling](sampling/) | `CountSampler` for high-volume log reduction, before/after stats | `make run-sampling` |
+| [json-logging](json-logging/) | Dual output: coloured console for humans, newline-delimited JSON for aggregators; `WithCaller`, custom time format | `make run-json` |
+| [multi-writer](multi-writer/) | `AddWriter`/`RemoveWriter`, `FilteredWriter`, `WriterFunc`, `WriterTrusted()` for the Phase 4 trust model | `make run-multi-writer` |
 
-### Showcase
+### Pretty Output
 
 | Example | What it shows | Run |
 |---------|--------------|-----|
-| [terminal-velocity](terminal-velocity/) | Full GPU cluster deployment simulator using banner, spinners, progress bars, trees, tables, child loggers, structured fields, error recovery | `make run-terminal-velocity` |
+| [pretty-output](pretty-output/) | Section, Box, Panel, Banner, Bullet, KeyValue, Table, Tree, SystemInfo via the `Pretty` facade | `make run-pretty` |
+| [tables](tables/) | `NewTable` with ANSI-coloured cells, `log.Table()` convenience for indented rendering, auto-sized columns | `make run-tables` |
+| [progress](progress/) | `live.NewProgressBar`, all five `SpinnerStyle` variants, label changes, success and error stop messages | `make run-progress` |
+| [terminal-velocity](terminal-velocity/) | Hero example: GPU cluster deployment simulator using banners, spinners, progress bars, trees, tables, child loggers, error recovery | `make run-terminal-velocity` |
+
+### Structured Features
+
+| Example | What it shows | Run |
+|---------|--------------|-----|
+| [sampling](sampling/) | `CountSampler` for high-volume log reduction; first-N pass-through then every-Mth sampling | `make run-sampling` |
+| [slog-bridge](slog-bridge/) | `slogbridge.NewLogger`, `slog.SetDefault`, `WithGroup`, level filtering; incremental adoption path | `make run-slog` |
+
+### v2 New
+
+| Example | What it shows | Run |
+|---------|--------------|-----|
+| [notify](notify/) | `Logger.Notify`, `NotifyLines`, `NotifyBox` for ephemeral operator output bypassing the structured pipeline | `make run-notify` |
+| [secure](secure/) | `Secure`, `SecureURL`, `Redacted`, `Truncated` field constructors; `<secure>` tag scanning; TTY vs JSON divergence; trusted writers for audit logs | `make run-secure` |
+| [ring-buffer](ring-buffer/) | `RingBufferWriter` for in-process log capture: `Snapshot` (HTTP debug endpoint pattern) and `Subscribe` (live tail pattern) | `make run-ring-buffer` |
+| [status-items](status-items/) | `Logger.Status` with all six `StatusKind` values (`OK`, `Fail`, `Warn`, `Info`, `Pending`, `Skipped`); standalone `NewStatusItem` with `log.Render` | `make run-status-items` |
+| [groups](groups/) | `Logger.Group` for count-headed indented blocks; explicit markers; empty group | `make run-groups` |
+| [continuation](continuation/) | `Logger.Continue` for multi-line output anchored to one structured entry; hyperlinks inside continuation lines | `make run-continuation` |
+| [hyperlinks](hyperlinks/) | `Hyperlink` OSC 8 helper; `HyperlinksSupported` detection; all three fallback modes; composing with `Theme.Format`; embedding in Box, Table, and ContinuationBlock | `make run-hyperlinks` |
 
 ## Building
 

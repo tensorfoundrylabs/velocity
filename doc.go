@@ -1,31 +1,24 @@
 // Package velocity is a high-performance structured logging library for Go CLI applications.
 //
 // Velocity provides rich terminal output with themed colours, structured fields,
-// tree displays, tables, progress indicators, and JSON output — all with
-// zero-allocation field encoding on hot paths.
+// tables, status items, group blocks, continuation output, hyperlinks, and JSON —
+// all with zero-allocation field encoding on hot paths.
 //
 // Quick start:
 //
-//	log := velocity.New(os.Stdout)
+//	log := velocity.New(velocity.WithDevelopment())
 //	log.Info("server started", velocity.String("addr", ":8080"))
 //
-// For more control, use the builder or functional options:
+// Preset options cover the common scenarios:
 //
-//	log := velocity.NewWithOptions(
-//	    velocity.WithLevel(velocity.LevelDebug),
-//	    velocity.WithTheme(velocity.ThemeDracula),
-//	)
+//	log := velocity.New(velocity.WithDevelopment())   // coloured console, debug level
+//	log := velocity.New(velocity.WithProduction())    // JSON to stderr, info level
+//	log := velocity.New(velocity.WithContainer())     // JSON to stdout, info level
+//	log := velocity.New(velocity.WithTesting(t))      // writes via t.Log; cleans up on exit
+//	log := velocity.New(velocity.WithNop())           // discards all output
 //
-// Velocity includes five presets for common scenarios:
-//
-//   - PresetDevelopment: verbose, coloured console output
-//   - PresetProduction: structured JSON, info level and above
-//   - PresetContainer: JSON with container-friendly defaults
-//   - PresetTesting: minimal output for test harnesses
-//   - PresetHighPerformance: sampling and ring-buffer batching
-//
-// Rich terminal output from velocity/pretty can be mixed with log lines via
-// the Renderable interface. Logger.Render writes indented output aligned with
-// the message column; Logger.RenderRaw writes flush-left. Logger.Newline inserts
-// a blank line under the same mutex as log calls to prevent interleaving.
+// Renderables (Box, Table, Tree, Banner, KeyValue, SystemInfo) live in the root
+// package and are rendered via Logger convenience methods or the standalone Pretty facade.
+// Stateful animated types (Spinner, ProgressBar) live in velocity/live.
+// The slog bridge lives in velocity/slogbridge.
 package velocity

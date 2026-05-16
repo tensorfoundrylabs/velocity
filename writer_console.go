@@ -1,14 +1,14 @@
 package velocity
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 type ConsoleWriter struct {
@@ -37,21 +37,27 @@ func NewConsoleWriterWithTimezone(out io.Writer, theme *Theme, displayTimezone *
 }
 
 func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *time.Location, fieldDisplayMode FieldDisplayMode) *ConsoleWriter {
-	// Track if theme was explicitly nil for disabling colors
-	useColours := true
+	// nil theme means "use the default" — not "disable colour".
+	// Colour is disabled by passing noColourTheme explicitly (see newFromConfig).
 	if theme == nil {
 		theme = ThemeNightOwl
-		useColours = false // Explicitly disable colors when theme is nil
-	} else {
-		// Ensure ANSI sequences are populated for user-defined themes constructed via struct
-		// literal. ensureCached populates in-place via sync.Once, so it is safe to call
-		// concurrently and always returns the same pointer.
-		theme = ensureCached(theme)
 	}
+	themeHasColour := !theme.noColour
 
 	if displayTimezone == nil {
 		displayTimezone = time.Local
 	}
+
+	// Resolve whether this writer should emit ANSI sequences. This checks
+	// NO_COLOR / FORCE_COLOR first, then falls back to fd-level detection.
+	// On Windows, terminal emulators often proxy stdout as a named pipe;
+	// FORCE_COLOR=1 is the escape hatch for those environments.
+	isTTY := resolveColourForWriter(out)
+
+	// useColours is true only when both the writer can render colour AND the
+	// theme actually carries colour slots. A no-colour theme (noColourTheme,
+	// ThemeMono) always produces plain output regardless of TTY state.
+	useColours := isTTY && themeHasColour
 
 	templateCopy := *TemplateDefault
 	templateCopy.fieldDisplayMode = fieldDisplayMode
@@ -68,20 +74,18 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 		timeFunc:        time.Now,
 		bufPool:         NewBufferPool(),
 		displayTimezone: displayTimezone,
+		isTTY:           isTTY,
 	}
 
-	if f, ok := out.(interface{ Fd() uintptr }); ok {
-		w.isTTY = term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
-	}
-
-	if w.isTTY && useColours {
+	if useColours {
 		w.cacheLevelColours()
 	}
 
 	return w
 }
 
-// cacheLevelColours pre-computes ANSI codes to avoid allocation during log writes
+// cacheLevelColours pre-computes ANSI codes to avoid allocation during log writes.
+// The theme carries pre-cached strings from construction, so this is a straight copy.
 func (w *ConsoleWriter) cacheLevelColours() {
 	if w.theme == nil {
 		return
@@ -89,9 +93,156 @@ func (w *ConsoleWriter) cacheLevelColours() {
 
 	levels := []Level{LevelDebug, LevelInfo, LevelWarn, LevelError, LevelFatal}
 	for _, lvl := range levels {
-		c := w.theme.GetColourForLevel(lvl)
-		w.levelColours[lvl] = c.ANSI(true)
+		w.levelColours[lvl] = w.theme.cachedLevelCode(lvl)
 	}
+}
+
+// WriteStatus renders a status-badged log line for entries produced by Logger.Status.
+// The badge replaces the normal level label on TTY; on non-TTY it falls back to the
+// standard formatEntrySecure path so the output remains readable without ANSI.
+func (w *ConsoleWriter) WriteStatus(e *Entry) error {
+	return w.WriteStatusSecure(e, w.isTTY, "[REDACTED]")
+}
+
+// WriteStatusSecure is the trust-aware status write path, mirroring WriteSecure.
+func (w *ConsoleWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark string) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ErrWriterClosed
+	}
+	tmpl := w.template
+	theme := w.theme
+	tz := w.displayTimezone
+	isTTY := w.isTTY
+	w.mu.Unlock()
+
+	tempBuf := GetTemplateBuffer()
+	defer PutTemplateBuffer(tempBuf)
+
+	switch {
+	case isTTY && tmpl != nil:
+		buildStatusLine(tempBuf, e, theme, tz, trusted, redactionMark)
+	case tmpl != nil:
+		// Non-TTY: use the standard path so the output is undecorated but complete.
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+	default:
+		// Fallback: no template, produce a minimal status line.
+		fmt.Fprintf(tempBuf, "[%s] %s\n", e.statusKind.String(), e.Message)
+	}
+
+	w.mu.Lock()
+	_, err := w.out.Write(tempBuf.Bytes())
+	w.mu.Unlock()
+	return err
+}
+
+// buildStatusLine builds the TTY status line into buf:
+// timestamp + " " + badge + "   " + message + fields + "\n"
+// The badge format is '[' + coloured-padded-token + ']' at fixed width.
+func buildStatusLine(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Location, trusted bool, redactionMark string) {
+	// Timestamp (reuses AppendFormat to avoid intermediate string alloc).
+	if !e.Time.IsZero() {
+		if theme != nil {
+			buf.WriteString(theme.cachedTimestampFgStr())
+		}
+		displayTime := e.Time.In(tz)
+		buf.Write(displayTime.AppendFormat(buf.AvailableBuffer(), time.RFC3339))
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		_ = buf.WriteByte(' ')
+	}
+
+	// Status badge: '[' + coloured token + ']' — variable width, no padding.
+	token := e.statusKind.String()
+	slot := e.statusKind.Slot()
+	_ = buf.WriteByte('[')
+	if theme != nil {
+		prefix, suffix := theme.Wrap(slot)
+		buf.WriteString(prefix)
+		buf.WriteString(token)
+		buf.WriteString(suffix)
+	} else {
+		buf.WriteString(token)
+	}
+	_ = buf.WriteByte(']')
+	buf.WriteString(statusBadgeSep)
+
+	// Message (with secure-tag handling).
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	if theme != nil {
+		buf.WriteString(theme.cachedMessageFgStr())
+	}
+	buf.WriteString(msg)
+	if theme != nil {
+		buf.WriteString(Reset)
+	}
+
+	// Caller (if present).
+	if e.Caller != "" {
+		_ = buf.WriteByte(' ')
+		_ = buf.WriteByte('(')
+		buf.WriteString(e.Caller)
+		_ = buf.WriteByte(':')
+		buf.Write(strconv.AppendInt(nil, int64(e.Line), 10))
+		_ = buf.WriteByte(')')
+	}
+
+	// Fields rendered key=value inline.
+	for _, f := range e.Fields {
+		_ = buf.WriteByte(' ')
+		keyCode := ""
+		valCode := ""
+		if theme != nil {
+			keyCode = theme.CachedFieldKeyFg()
+			if f.Type == FieldTypeError {
+				valCode = theme.cachedErrorValFgStr()
+			} else {
+				valCode = theme.CachedFieldValFg()
+			}
+		}
+		if keyCode != "" {
+			buf.WriteString(keyCode)
+		}
+		buf.WriteString(f.Key)
+		if keyCode != "" {
+			buf.WriteString(Reset)
+		}
+		_ = buf.WriteByte('=')
+		if valCode != "" {
+			buf.WriteString(valCode)
+		}
+		// Quote string-like types to match console writer convention.
+		switch f.Type {
+		case FieldTypeString, FieldTypeError, FieldTypeStringer, FieldTypeTruncated:
+			_ = buf.WriteByte('"')
+			if trusted {
+				f.writeFormattedTrusted(buf)
+			} else {
+				f.writeFormattedWithMark(buf, redactionMark)
+			}
+			_ = buf.WriteByte('"')
+		default:
+			if trusted {
+				f.writeFormattedTrusted(buf)
+			} else {
+				f.writeFormattedWithMark(buf, redactionMark)
+			}
+		}
+		if valCode != "" {
+			buf.WriteString(Reset)
+		}
+	}
+
+	_ = buf.WriteByte('\n')
 }
 
 func (w *ConsoleWriter) SetTemplate(t *Template) {
@@ -106,6 +257,15 @@ func (w *ConsoleWriter) SetTemplate(t *Template) {
 }
 
 func (w *ConsoleWriter) Write(e *Entry) error {
+	// TTY console writers are trusted by context — they render to a human-facing
+	// terminal session, not a file or pipeline. Non-TTY consoles are untrusted.
+	return w.WriteSecure(e, w.isTTY, "[REDACTED]")
+}
+
+// WriteSecure implements SecureWriter. When trusted is true, Secure field
+// plaintext is shown and <secure> markers are stripped. When false, both are
+// replaced with redactionMark.
+func (w *ConsoleWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) error {
 	// Snapshot mutable state under a brief lock so formatting runs unlocked.
 	w.mu.Lock()
 	if w.closed {
@@ -116,12 +276,11 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 	theme := w.theme
 	tz := w.displayTimezone
 	lvlColours := w.levelColours
-	isTTY := w.isTTY
 	w.mu.Unlock()
 
 	if tmpl != nil {
 		tempBuf := GetTemplateBuffer()
-		tmpl.buildWithTimezone(tempBuf, e, theme, tz)
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
 
 		w.mu.Lock()
 		_, err := w.out.Write(tempBuf.Bytes())
@@ -133,7 +292,7 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 
 	rawBuf := w.bufPool.Get(HintConsoleLog)
 	buf := NewBytesBuffer(rawBuf)
-	w.formatEntryWithSnap(buf, e, theme, tz, lvlColours, isTTY)
+	w.formatEntrySecure(buf, e, theme, tz, lvlColours, trusted, redactionMark) //nolint:staticcheck // intentional: lvlColours unused when not TTY
 
 	w.mu.Lock()
 	_, err := w.out.Write(buf.Bytes())
@@ -149,25 +308,35 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 	return nil
 }
 
-// formatEntryWithSnap formats using snapshotted state, safe to call without the mutex.
-func (w *ConsoleWriter) formatEntryWithSnap(buf *BytesBuffer, e *Entry, theme *Theme, tz *time.Location, lvlColours [6]string, isTTY bool) {
+// formatEntrySecure formats an entry using snapshotted state, applying redaction
+// when trusted is false. Safe to call without the mutex.
+func (w *ConsoleWriter) formatEntrySecure(buf *BytesBuffer, e *Entry, theme *Theme, tz *time.Location, lvlColours [6]string, trusted bool, redactionMark string) {
 	buf.WriteString("[")
 	displayTime := e.Time.In(tz)
 	buf.AppendTime(displayTime, time.RFC3339)
 	buf.WriteString("] ")
 
 	_ = buf.WriteByte('[')
-	if isTTY && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
+	if trusted && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
 		buf.WriteString(lvlColours[e.Level])
 	}
 	buf.WriteString(e.Level.ConciseLabel())
-	if isTTY && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
+	if trusted && theme != nil && e.Level >= 0 && int(e.Level) < len(lvlColours) {
 		buf.WriteString(Reset)
 	}
 	_ = buf.WriteByte(']')
 
 	buf.WriteString(" ")
-	buf.WriteString(e.Message)
+
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+	buf.WriteString(msg)
 
 	if e.Caller != "" {
 		buf.WriteString(" (")
@@ -178,7 +347,7 @@ func (w *ConsoleWriter) formatEntryWithSnap(buf *BytesBuffer, e *Entry, theme *T
 	}
 
 	if len(e.Fields) > 0 {
-		w.formatFields(buf, e.Fields)
+		w.formatFieldsSecure(buf, e.Fields, trusted, redactionMark)
 	}
 }
 
@@ -198,16 +367,50 @@ func (w *ConsoleWriter) formatLevel(buf *BytesBuffer, level Level) {
 	_ = buf.WriteByte(']')
 }
 
-func (w *ConsoleWriter) formatFields(buf *BytesBuffer, fields []Field) {
+func (w *ConsoleWriter) formatFieldsSecure(buf *BytesBuffer, fields []Field, trusted bool, redactionMark string) {
 	for _, f := range fields {
 		_ = buf.WriteByte(' ')
 		buf.WriteString(f.Key)
 		buf.WriteString(": ")
-		w.formatValue(buf, f)
+		w.formatValueSecure(buf, f, trusted, redactionMark)
 	}
 }
 
-func (*ConsoleWriter) formatValue(buf *BytesBuffer, f Field) {
+func (*ConsoleWriter) formatValueSecure(buf *BytesBuffer, f Field, trusted bool, redactionMark string) {
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL:
+		if trusted && f.value != nil {
+			_ = buf.WriteByte('"')
+			buf.WriteString((*secureValue)(f.value).plain)
+			_ = buf.WriteByte('"')
+		} else {
+			// Emit field-level redacted form (e.g. URL with password replaced)
+			// rather than the generic writer mark, so structured context is preserved.
+			if f.value != nil {
+				_ = buf.WriteByte('"')
+				buf.WriteString((*secureValue)(f.value).redacted)
+				_ = buf.WriteByte('"')
+			} else {
+				buf.WriteString(redactionMark)
+			}
+		}
+		return
+	case FieldTypeRedacted:
+		buf.WriteString(redactionMark)
+		return
+	case FieldTypeTruncated:
+		if f.value != nil {
+			_ = buf.WriteByte('"')
+			buf.WriteString(*(*string)(f.value))
+			_ = buf.WriteByte('"')
+		}
+		return
+	default:
+		consoleFormatValueCore(buf, f)
+	}
+}
+
+func consoleFormatValueCore(buf *BytesBuffer, f Field) {
 	switch f.Type {
 	case FieldTypeString:
 		v := *(*string)(f.value)
@@ -287,8 +490,242 @@ func (*ConsoleWriter) formatValue(buf *BytesBuffer, f Field) {
 		// that fmt.Sprintf("%v", v) would produce.
 		_, _ = fmt.Fprintf(buf, "%v", v)
 
+	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
+		// Handled upstream by formatValueSecure before consoleFormatValueCore is called.
+
+	case FieldTypeGroupItems:
+		// Group items are rendered by WriteGroup; in generic paths emit a hint.
+		if f.value != nil {
+			items := *(*[]GroupItem)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(items)))
+			_ = buf.WriteByte('[')
+			_, _ = buf.Write(tmp[:n])
+			buf.WriteString(" items]")
+		}
+
+	case FieldTypeContinuationLines:
+		// Continuation lines are rendered by WriteContinue; in generic paths emit a hint.
+		if f.value != nil {
+			lines := *(*[]string)(f.value)
+			var tmp [20]byte
+			n := formatInt(tmp[:], int64(len(lines)))
+			_ = buf.WriteByte('[')
+			_, _ = buf.Write(tmp[:n])
+			buf.WriteString(" lines]")
+		}
+
 	case FieldTypeUnknown:
 		// Unknown field type - write nothing
+	}
+}
+
+// WriteGroup renders a Group log entry. On TTY it emits the coloured count header
+// followed by indented item lines; on non-TTY it falls back to the standard
+// template path for the header and appends plain item lines.
+func (w *ConsoleWriter) WriteGroup(e *Entry, items []GroupItem) error {
+	return w.WriteGroupSecure(e, items, w.isTTY, "[REDACTED]")
+}
+
+// WriteGroupSecure is the trust-aware group write path.
+func (w *ConsoleWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool, redactionMark string) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ErrWriterClosed
+	}
+	tmpl := w.template
+	theme := w.theme
+	tz := w.displayTimezone
+	isTTY := w.isTTY
+	w.mu.Unlock()
+
+	tempBuf := GetTemplateBuffer()
+	defer PutTemplateBuffer(tempBuf)
+
+	switch {
+	case isTTY && tmpl != nil:
+		// On TTY: coloured level + count-coloured message header, then indented item lines.
+		buildGroupLineTTY(tempBuf, e, theme, tz, trusted, redactionMark, items, tmpl)
+	case tmpl != nil:
+		// Non-TTY: standard template for the header (level + plain message with count),
+		// then plain item lines appended directly.
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		// The template appends a trailing '\n'; item lines follow without extra spacing.
+		writeGroupConsoleItems(tempBuf, items)
+	default:
+		fmt.Fprintf(tempBuf, "%s\n", e.Message)
+		writeGroupConsoleItems(tempBuf, items)
+	}
+
+	w.mu.Lock()
+	_, err := w.out.Write(tempBuf.Bytes())
+	w.mu.Unlock()
+	return err
+}
+
+// buildGroupLineTTY builds the full TTY group block: timestamp + level + coloured
+// message+count header, then indented+coloured item lines.
+func buildGroupLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Location, trusted bool, redactionMark string, items []GroupItem, tmpl *Template) {
+	// Timestamp.
+	if !e.Time.IsZero() {
+		if theme != nil {
+			buf.WriteString(theme.cachedTimestampFgStr())
+		}
+		displayTime := e.Time.In(tz)
+		buf.Write(displayTime.AppendFormat(buf.AvailableBuffer(), time.RFC3339))
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		buf.WriteByte(' ')
+	}
+
+	// Level badge "[INFO]".
+	if theme != nil {
+		buf.WriteString(theme.cachedLevelCode(e.Level))
+	}
+	buf.WriteByte('[')
+	buf.WriteString(e.Level.ConciseLabel())
+	buf.WriteByte(']')
+	if theme != nil {
+		buf.WriteString(Reset)
+	}
+	buf.WriteByte(' ')
+
+	// Message (secure-aware, with count rendered in SlotCount colour).
+	msg := e.Message
+	if e.maybeSecure {
+		if trusted {
+			msg = stripSecureTags(msg)
+		} else {
+			msg = redactSecureTags(msg, redactionMark)
+		}
+	}
+
+	// msg here is already "text (N)" — we need to split out the " (N)" suffix and
+	// re-render it with the SlotCount colour. Find the last " (" which we inserted.
+	// This is safe because groupMsgWithCount always appends " (N)".
+	if idx := strings.LastIndex(msg, " ("); idx >= 0 {
+		head := msg[:idx]
+		tail := msg[idx+2 : len(msg)-1] // extract the count digits only
+		if theme != nil {
+			buf.WriteString(theme.CachedMessageFg())
+		}
+		buf.WriteString(head)
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		buf.WriteString(" (")
+		countPrefix, countSuffix := theme.Wrap(SlotCount)
+		buf.WriteString(countPrefix)
+		buf.WriteString(tail)
+		buf.WriteString(countSuffix)
+		buf.WriteByte(')')
+	} else {
+		if theme != nil {
+			buf.WriteString(theme.CachedMessageFg())
+		}
+		buf.WriteString(msg)
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+	}
+	buf.WriteByte('\n')
+
+	// Item lines indented to the message column so they sit flush under the header.
+	indent := tmpl.CachedMessageIndentStr()
+	for i, item := range items {
+		marker := resolvedMarker(item.Marker, i, len(items))
+		buf.WriteString(indent)
+		buf.WriteString(groupItemIndent)
+		if theme != nil {
+			buf.WriteString(theme.CachedFieldKeyFg())
+		}
+		buf.WriteString(marker)
+		buf.WriteByte(' ')
+		if theme != nil {
+			buf.WriteString(Reset)
+			buf.WriteString(theme.CachedMessageFg())
+		}
+		buf.WriteString(item.Text)
+		if theme != nil {
+			buf.WriteString(Reset)
+		}
+		buf.WriteByte('\n')
+	}
+}
+
+// WriteContinue renders a ContinuationBlock log entry. The header line is the
+// standard log line; continuation lines follow with the │ glyph prefix indented
+// to the message column so they land flush under the header text.
+func (w *ConsoleWriter) WriteContinue(e *Entry, lines []string) error {
+	return w.WriteContinueSecure(e, lines, w.isTTY, "[REDACTED]")
+}
+
+// WriteContinueSecure is the trust-aware continuation write path.
+func (w *ConsoleWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool, redactionMark string) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ErrWriterClosed
+	}
+	tmpl := w.template
+	theme := w.theme
+	tz := w.displayTimezone
+	isTTY := w.isTTY
+	w.mu.Unlock()
+
+	tempBuf := GetTemplateBuffer()
+	defer PutTemplateBuffer(tempBuf)
+
+	switch {
+	case isTTY && tmpl != nil:
+		buildContinueLineTTY(tempBuf, e, theme, tz, trusted, redactionMark, lines, tmpl)
+	case tmpl != nil:
+		// Non-TTY: standard template for the header, then plain continuation lines.
+		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		writeContinuationLines(tempBuf, lines, tmpl.CachedMessageIndentStr(), false, nil)
+	default:
+		fmt.Fprintf(tempBuf, "%s\n", e.Message)
+		writeContinuationLines(tempBuf, lines, "", false, nil)
+	}
+
+	w.mu.Lock()
+	_, err := w.out.Write(tempBuf.Bytes())
+	w.mu.Unlock()
+	return err
+}
+
+// buildContinueLineTTY builds the full TTY continuation block: the standard log
+// header (timestamp + level badge + message) then each continuation line indented
+// to the message column with a SlotContinuation-coloured │ glyph.
+func buildContinueLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Location, trusted bool, redactionMark string, lines []string, tmpl *Template) {
+	// Header: identical to the standard TTY log line.
+	tmpl.buildWithTimezoneSecure(buf, e, theme, tz, trusted, redactionMark)
+	// buildWithTimezoneSecure appends '\n'; continuation lines follow directly.
+	writeContinuationLines(buf, lines, tmpl.CachedMessageIndentStr(), true, theme)
+}
+
+// writeContinuationLines appends each line prefixed with the message-column indent
+// and the │ glyph. When styled is true and theme is non-nil, the glyph is wrapped
+// with SlotContinuation ANSI codes.
+func writeContinuationLines(buf *bytes.Buffer, lines []string, indent string, styled bool, theme *Theme) {
+	var glyphPrefix, glyphSuffix string
+	if styled && theme != nil {
+		glyphPrefix, glyphSuffix = theme.Wrap(SlotContinuation)
+	}
+
+	for _, line := range lines {
+		buf.WriteString(indent)
+		if glyphPrefix != "" {
+			buf.WriteString(glyphPrefix)
+		}
+		buf.WriteString(continuationGlyphSep)
+		if glyphSuffix != "" {
+			buf.WriteString(glyphSuffix)
+		}
+		buf.WriteString(line)
+		buf.WriteByte('\n')
 	}
 }
 
@@ -301,17 +738,25 @@ func (w *ConsoleWriter) Close() error {
 	}
 
 	w.closed = true
+	// Sync is best-effort: pipes and redirected streams reject it on Windows.
 	if s, ok := w.out.(interface{ Sync() error }); ok {
-		return s.Sync()
+		_ = s.Sync()
 	}
 	return nil
 }
 
+// SetTheme replaces the active theme. When colour was disabled at construction
+// (e.g. no-colour theme or non-TTY writer) it stays disabled — switching to a
+// coloured theme on a non-TTY writer does not re-enable ANSI output.
+// When the writer is a TTY and the new theme has colour, colour is re-enabled.
 func (w *ConsoleWriter) SetTheme(theme *Theme) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	w.theme = theme
+	// Re-derive useColours from current isTTY and new theme state.
+	themeHasColour := theme != nil && !theme.noColour
+	w.template.useColours = w.isTTY && themeHasColour
 	w.cacheLevelColours()
 }
 

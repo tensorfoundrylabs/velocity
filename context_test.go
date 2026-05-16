@@ -11,7 +11,7 @@ func TestNewContext_FromContext_RoundTrip(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	l := NewForTesting(&buf)
+	l := newForTesting(&buf)
 
 	ctx := NewContext(context.Background(), l)
 	got := FromContext(ctx)
@@ -37,7 +37,7 @@ func TestContextWithFields_Accumulates(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	parent := NewForTesting(&buf)
+	parent := newForTesting(&buf)
 
 	ctx := NewContext(context.Background(), parent)
 	ctx = ContextWithFields(ctx, String("layer", "middleware"))

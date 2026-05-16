@@ -1,60 +1,61 @@
 // Package main demonstrates velocity's table rendering for structured
 // terminal output. Tables auto-size columns and handle ANSI colour codes
-// in cell content (e.g. from StatusFormatter) without breaking alignment.
+// in cell content without breaking alignment.
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/tensorfoundrylabs/velocity"
-	"github.com/tensorfoundrylabs/velocity/pretty"
+	"github.com/tensorfoundrylabs/velocity/v2"
 )
 
 func main() {
-	log := velocity.NewWithOptions(
+	log := velocity.New(
 		velocity.WithConsoleOutput(os.Stdout),
 		velocity.WithTheme(velocity.ThemeNightOwl),
 		velocity.WithLevel(velocity.LevelDebug),
 	)
 
-	sf := log.Status()
-	p := pretty.NewFromLogger(log)
+	// Theme.Format(slot, s) is the canonical way to colour cell content in v2.
+	// The theme handles all ANSI construction; callers just pick a semantic slot.
+	// log.Style() returns a mono theme when colour is disabled (piped, NO_COLOR).
+	style := log.Style()
 
 	fmt.Println("=== Pretty Table ===")
 	fmt.Println()
 	log.Info("service health check results")
-	log.RenderRaw(p.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"Service", "Status", "Latency", "Region"},
 		[][]string{
-			{"auth-api", sf.Okay("HEALTHY"), "12ms", "us-east-1"},
-			{"payments", sf.Okay("HEALTHY"), "45ms", "us-east-1"},
-			{"search", sf.Warn("DEGRADED"), "380ms", "eu-west-1"},
-			{"notifications", sf.Fail("DOWN"), "-", "ap-southeast-2"},
-			{"analytics", sf.Okay("HEALTHY"), "28ms", "us-west-2"},
+			{"auth-api", style.Format(velocity.SlotStatusOK, "HEALTHY"), "12ms", "us-east-1"},
+			{"payments", style.Format(velocity.SlotStatusOK, "HEALTHY"), "45ms", "us-east-1"},
+			{"search", style.Format(velocity.SlotStatusWarn, "DEGRADED"), "380ms", "eu-west-1"},
+			{"notifications", style.Format(velocity.SlotStatusFail, "DOWN"), "-", "ap-southeast-2"},
+			{"analytics", style.Format(velocity.SlotStatusOK, "HEALTHY"), "28ms", "us-west-2"},
 		},
+		style,
 	))
 	log.Newline()
 
 	fmt.Println("=== GPU Node Table ===")
 	fmt.Println()
-	log.RenderRaw(p.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"Node", "GPU", "Memory", "Utilisation", "Temperature"},
 		[][]string{
-			{"node-0", "A100 80GB", "72.3 / 80.0 GB", sf.Okay("89%"), "68C"},
-			{"node-1", "A100 80GB", "65.1 / 80.0 GB", sf.Okay("81%"), "65C"},
-			{"node-2", "A100 80GB", "78.9 / 80.0 GB", sf.Warn("98%"), "82C"},
-			{"node-3", "A100 80GB", "0.0 / 80.0 GB", sf.Fail("0%"), "34C"},
+			{"node-0", "A100 80GB", "72.3 / 80.0 GB", style.Format(velocity.SlotStatusOK, "89%"), "68C"},
+			{"node-1", "A100 80GB", "65.1 / 80.0 GB", style.Format(velocity.SlotStatusOK, "81%"), "65C"},
+			{"node-2", "A100 80GB", "78.9 / 80.0 GB", style.Format(velocity.SlotStatusWarn, "98%"), "82C"},
+			{"node-3", "A100 80GB", "0.0 / 80.0 GB", style.Format(velocity.SlotStatusFail, "0%"), "34C"},
 		},
+		style,
 	))
 	log.Newline()
 
-	// Tables work without colour too. pretty.New(os.Stdout, nil) demonstrates
-	// the standalone constructor without a logger or theme.
+	// Tables work without colour too — log.Style() is already mono when piped.
 	fmt.Println("=== Plain Table (no theme, no colour) ===")
 	fmt.Println()
-	plain := pretty.New(os.Stdout, nil)
-	log.RenderRaw(plain.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"Endpoint", "Method", "Calls/sec", "P99"},
 		[][]string{
 			{"/v1/chat/completions", "POST", "1,240", "89ms"},
@@ -62,13 +63,14 @@ func main() {
 			{"/v1/models", "GET", "450", "3ms"},
 			{"/health", "GET", "10,000", "1ms"},
 		},
+		style,
 	))
 	log.Newline()
 
 	// Wide table with many columns. Columns auto-size to content.
 	fmt.Println("=== Wide Table (auto-sized columns) ===")
 	fmt.Println()
-	log.RenderRaw(p.NewTable(
+	log.RenderRaw(velocity.NewTable(
 		[]string{"PID", "User", "CPU%", "Mem%", "VSZ", "RSS", "TTY", "Stat", "Command"},
 		[][]string{
 			{"1", "root", "0.0", "0.1", "168k", "12k", "?", "Ss", "/sbin/init"},
@@ -76,21 +78,22 @@ func main() {
 			{"1204", "nginx", "0.3", "0.2", "32M", "8M", "?", "S", "nginx: worker process"},
 			{"1891", "prometheus", "1.2", "0.8", "256M", "64M", "?", "Sl", "/usr/bin/prometheus"},
 		},
+		style,
 	))
 	log.Newline()
 
-	// Use log.Render to nest a small table under a related log line. The table
-	// indents to the message column, visually grouping with the entry above.
-	// Best for narrow tables; wide tables still want RenderRaw to avoid wrapping.
-	fmt.Println("=== Indented Table (under a log line via log.Render) ===")
+	// log.Table is the convenience form: it calls log.Style() for the theme and
+	// routes through Logger.Render, so the table indents to the message column.
+	// Equivalent to log.Render(velocity.NewTable(..., log.Style())) but shorter.
+	fmt.Println("=== Indented Table (under a log line via log.Table) ===")
 	fmt.Println()
 	log.Info("migrations applied", velocity.Int("count", 3))
-	log.Render(p.NewTable(
+	log.Table(
 		[]string{"Migration", "Duration", "Status"},
 		[][]string{
-			{"001_initial_schema.sql", "5ms", sf.Okay("OK")},
-			{"002_webhooks.sql", "2ms", sf.Okay("OK")},
-			{"003_model_access.sql", "3ms", sf.Okay("OK")},
+			{"001_initial_schema.sql", "5ms", style.Format(velocity.SlotStatusOK, "OK")},
+			{"002_webhooks.sql", "2ms", style.Format(velocity.SlotStatusOK, "OK")},
+			{"003_model_access.sql", "3ms", style.Format(velocity.SlotStatusOK, "OK")},
 		},
-	))
+	)
 }
