@@ -309,8 +309,10 @@ func (l *Logger) AddWriter(name string, w Writer, opts ...WriterOption) {
 	l.recomputeScanSecure()
 }
 
-// RemoveWriter removes the named writer and returns it so the caller can
-// flush or close it as appropriate. Returns nil if no writer with that name exists.
+// RemoveWriter removes the named writer and returns it for inspection or flush.
+// The MultiWriter worker drains and closes the writer asynchronously after removal —
+// do not call Close on the returned value, or you risk a double-close panic on writers
+// that aren't idempotent. Returns nil if no writer with that name exists.
 // Thread-safe.
 func (l *Logger) RemoveWriter(name string) Writer {
 	if l == nil {
