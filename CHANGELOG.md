@@ -18,7 +18,13 @@
 - `StatusItem.writeStatusFields` now applies the same TTY-as-trust model as `ConsoleWriter`: Secure fields show plaintext on terminal output and are redacted in plain (non-TTY) renders. Previously, Secure fields were always redacted in Status badge output even on trusted terminals.
 - `SetTheme(nil)` now documents and enforces "nil = reset to NightOwl" semantics; `Style()` and `cfg.ConsoleTheme` both reflect the reset. Previously, the nil behaviour was not regression-tested.
 
-## v2.0.1 — pending
+## v2.0.2 — 2026-05-30
+
+### Bug fixes
+
+- Pin the display timezone in the inline-indicator tests so the golden-output test is deterministic across host timezones. It asserted a fixed local timestamp and failed CI on UTC runners. Library code is identical to v2.0.1; this release only fixes the test so CI and the release build pass.
+
+## v2.0.1 — 2026-05-30
 
 ### New features
 

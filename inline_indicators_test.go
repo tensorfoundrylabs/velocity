@@ -24,6 +24,10 @@ func renderEntry(t *testing.T, cfg *config, e *Entry) string {
 	cfg.ConsoleOutput = &buf
 	cfg.DisableColour = true
 	cfg.TimeFormat = "2006-01-02 15:04:05"
+	// Pin the display timezone to the fixture's zone so golden timestamps are
+	// deterministic regardless of the host or CI local timezone (the console writer
+	// otherwise renders in time.Local, which differs between dev machines and CI).
+	cfg.DisplayTimezone = fixedTime.Location()
 	cfg.StructuredOutput = nil
 	cfg.StructuredLevel = LevelOff
 	cfg.ConsoleLevel = LevelDebug
