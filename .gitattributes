@@ -1,0 +1,26 @@
+# Normalise line endings. Text is stored as LF in the repository and checked out as
+# LF on every platform, so clones stay byte-consistent and Git stops warning about
+# CRLF conversion (this overrides a global core.autocrlf=true). LF suits the Go
+# toolchain, gofmt and the Makefile.
+* text=auto eol=lf
+
+# Be explicit for the common text types in this repo.
+*.go    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+Makefile text eol=lf
+
+# Binary assets: never normalise line endings or treat as text in diffs.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.gz   binary
+*.zip  binary
