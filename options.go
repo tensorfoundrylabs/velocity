@@ -291,6 +291,93 @@ func WithSecureTags(enabled bool) Option {
 	}
 }
 
+// WithComponentStyling enables the compact inline-indicator feature with sensible
+// defaults: component field name "component", column width 8, count field "count",
+// state-transition pairs old/new and prev/next, glyph auto-detection. Timing fields
+// are deliberately excluded — their names are application-specific.
+// Call WithTimingFields separately to enable timing promotion.
+func WithComponentStyling() Option {
+	return func(c *config) {
+		c.Indicators.component = true
+		c.Indicators.componentField = "component"
+		if c.Indicators.componentWidth == 0 {
+			c.Indicators.componentWidth = 8
+		}
+		c.Indicators.countFields = []string{"count"}
+		c.Indicators.statePairs = [][2]string{
+			{"old_state", "new_state"},
+			{"prev_state", "next_state"},
+		}
+		c.Indicators.removeFromTree = true
+		// Glyph detection defers to the runtime check; leave showGlyphs as false
+		// (the render path will call glyphsSupported() at Phase 4 — for now the
+		// field is scaffolding only).
+	}
+}
+
+// WithComponentField enables the component prefix indicator and sets the field name
+// to look up on each entry. Column width defaults to 8 if not already set.
+func WithComponentField(name string) Option {
+	return func(c *config) {
+		c.Indicators.component = true
+		c.Indicators.componentField = name
+		if c.Indicators.componentWidth == 0 {
+			c.Indicators.componentWidth = 8
+		}
+		c.Indicators.removeFromTree = true
+	}
+}
+
+// WithComponentColumnWidth sets the fixed column width used to pad (or truncate)
+// the component name in the header prefix. Has no effect when the component
+// indicator is disabled.
+func WithComponentColumnWidth(n int) Option {
+	return func(c *config) {
+		if n > 0 {
+			c.Indicators.componentWidth = n
+		}
+	}
+}
+
+// WithCountFields registers field names whose integer values are promoted to a
+// "(N)" suffix after the message. The first matching field wins; the rest remain
+// in the tree. Pass multiple names for apps that use different field names
+// across components.
+func WithCountFields(names ...string) Option {
+	return func(c *config) {
+		c.Indicators.countFields = append(c.Indicators.countFields, names...)
+	}
+}
+
+// WithTimingFields registers field names whose values are promoted to a timing
+// suffix after the message. Order is preserved; all matching fields appear inside
+// one bracket. Timing fields are intentionally not included in WithComponentStyling
+// because their names are application-specific.
+func WithTimingFields(names ...string) Option {
+	return func(c *config) {
+		c.Indicators.timingFields = append(c.Indicators.timingFields, names...)
+	}
+}
+
+// WithStateTransitionPairs registers pairs of field names that together represent
+// a state transition. When both fields of a pair are present on an entry, they are
+// collapsed into a "from → to" suffix in the header. Pairs are checked in order;
+// the first complete pair wins.
+func WithStateTransitionPairs(pairs ...[2]string) Option {
+	return func(c *config) {
+		c.Indicators.statePairs = append(c.Indicators.statePairs, pairs...)
+	}
+}
+
+// WithInlineGlyphs overrides automatic glyph detection (VELOCITY_GLYPHS env var).
+// When enabled is false, Unicode glyphs in timing and state indicators are replaced
+// with ASCII fallbacks.
+func WithInlineGlyphs(enabled bool) Option {
+	return func(c *config) {
+		c.Indicators.showGlyphs = enabled
+	}
+}
+
 // MustLocation parses an IANA timezone name and panics on failure.
 // Intended for package-level variable initialisation.
 func MustLocation(name string) *time.Location {

@@ -66,6 +66,8 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 	// prefix widths today, but initCache is cheap and prevents stale caches if future
 	// mutations here are width-affecting.
 	templateCopy.initCache()
+	// indicators is intentionally left as zero value here; callers that have a full
+	// config (i.e. newFromConfig) apply it separately after construction.
 
 	w := &ConsoleWriter{
 		out:             out,

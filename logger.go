@@ -147,6 +147,11 @@ func newFromConfig(cfg *config) *Logger {
 			logger.consoleWriter.template.timeFormat = cfg.TimeFormat
 			logger.consoleWriter.template.initCache()
 		}
+		// Thread inline-indicator config onto the template so render paths can
+		// access it without needing a reference back to config.
+		if logger.consoleWriter != nil {
+			logger.consoleWriter.template.indicators = cfg.Indicators
+		}
 	}
 
 	if cfg.StructuredOutput != nil && cfg.StructuredOutput != io.Discard {

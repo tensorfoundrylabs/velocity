@@ -1,6 +1,10 @@
 package velocity
 
-import "io"
+import (
+	"hash/fnv"
+	"io"
+	"sync"
+)
 
 // Colour represents an ANSI terminal colour, either 256-colour or true-colour RGB.
 type Colour struct {
@@ -74,8 +78,14 @@ type ThemeOption func(*themeBuilder)
 
 // themeBuilder accumulates colours before the Theme is constructed.
 type themeBuilder struct {
+	// componentPins maps specific component names to pinned colours, overriding the hash.
+	componentPins map[string]Colour
+
+	// componentPalette is the ordered set of colours used for auto-hashing component names.
+	componentPalette []Colour
+	slotColours      [slotCount]Colour
+
 	levelColours [6]Colour
-	slotColours  [slotCount]Colour
 
 	// Core log-line slots map to named fields for clarity.
 	timestampColour Colour
@@ -152,10 +162,56 @@ func WithBracketColour(c Colour) ThemeOption {
 	return func(b *themeBuilder) { b.fieldKeyColour = c; b.hasAnyColour = true }
 }
 
+// WithComponentPalette sets the ordered palette used to colour component names via FNV-1a
+// hashing. Each component name hashes to a stable index into this slice. Pass at least two
+// colours for meaningful visual distinction. Replaces any previously set palette.
+func WithComponentPalette(colours ...Colour) ThemeOption {
+	return func(b *themeBuilder) {
+		if len(colours) == 0 {
+			return
+		}
+		b.componentPalette = make([]Colour, len(colours))
+		copy(b.componentPalette, colours)
+		b.hasAnyColour = true
+	}
+}
+
+// WithComponentColour pins a specific component name to a fixed colour, bypassing the
+// hash. Useful when a critical component (e.g. "Scout") must always appear in a
+// specific colour regardless of palette ordering.
+func WithComponentColour(name string, c Colour) ThemeOption {
+	return func(b *themeBuilder) {
+		if name == "" {
+			return
+		}
+		if b.componentPins == nil {
+			b.componentPins = make(map[string]Colour)
+		}
+		b.componentPins[name] = c
+		b.hasAnyColour = true
+	}
+}
+
 // Theme is an immutable colour palette constructed via NewTheme.
 // All ANSI escape codes are pre-computed at construction — there is no lazy caching.
-// After NewTheme returns, no field on Theme is ever mutated.
+// After NewTheme returns, no field on Theme is ever mutated, with the exception of
+// componentCache which is lazily populated under a sync.Map (safe for concurrent use).
 type Theme struct {
+	// componentPins maps exact component names to their pinned ANSI codes.
+	// Built once at construction; immutable after that.
+	componentPins map[string]string
+
+	// Pre-computed per-slot foreground codes.
+	cachedSlotFg [slotCount]string
+
+	// Per-level foreground codes, indexed by Level constant.
+	cachedLevelFg [6]string
+
+	// componentCache memoises componentColourCode results so FNV hashing and map
+	// lookups run at most once per unique component name. safe.Map handles concurrent
+	// access; values are strings so there is no further synchronisation needed.
+	componentCache sync.Map
+
 	name string
 
 	// Pre-computed ANSI sequences for the hot-path log line renderer.
@@ -165,11 +221,9 @@ type Theme struct {
 	cachedFieldValFg  string
 	cachedErrorValFg  string
 
-	// Per-level foreground codes, indexed by Level constant.
-	cachedLevelFg [6]string
-
-	// Pre-computed per-slot foreground codes.
-	cachedSlotFg [slotCount]string
+	// componentPalette holds the pre-computed ANSI foreground codes for component
+	// colour hashing. Populated at construction; immutable after that.
+	componentPalette []string
 
 	// noColour is true when all slots are intentionally empty (ThemeMono).
 	noColour bool
@@ -225,6 +279,26 @@ func buildTheme(name string, b *themeBuilder) *Theme {
 	for i, c := range b.slotColours {
 		if !c.isZero() {
 			t.cachedSlotFg[i] = c.ANSI(true)
+		}
+	}
+
+	// Pre-compute component palette ANSI codes so componentColourCode is zero-alloc
+	// after the first lookup per name.
+	if len(b.componentPalette) > 0 {
+		t.componentPalette = make([]string, len(b.componentPalette))
+		for i, c := range b.componentPalette {
+			if !c.isZero() {
+				t.componentPalette[i] = c.ANSI(true)
+			}
+		}
+	}
+
+	if len(b.componentPins) > 0 {
+		t.componentPins = make(map[string]string, len(b.componentPins))
+		for name, c := range b.componentPins {
+			if !c.isZero() {
+				t.componentPins[name] = c.ANSI(true)
+			}
 		}
 	}
 
@@ -385,6 +459,45 @@ func (t *Theme) ResetStr() string {
 	return Reset
 }
 
+// componentColourCode returns the ANSI foreground code for the given component name.
+// Pin overrides win; otherwise FNV-1a hash maps the name to a palette index.
+// The result is memoised in componentCache so FNV runs at most once per unique name.
+// Returns "" when the theme has no palette (noColour or palette not configured).
+func (t *Theme) componentColourCode(name string) string {
+	if t == nil || t.noColour || len(t.componentPalette) == 0 {
+		return ""
+	}
+
+	// Fast path: already memoised.
+	if v, ok := t.componentCache.Load(name); ok {
+		return v.(string) //nolint:forcetypeassert // sync.Map only holds strings here
+	}
+
+	// Check pin overrides before hashing.
+	var code string
+	if len(t.componentPins) > 0 {
+		if pinned, ok := t.componentPins[name]; ok {
+			code = pinned
+		}
+	}
+
+	if code == "" {
+		// FNV-1a: deterministic, fast, good distribution for short strings.
+		// Reduce modulo in uint32 space and index directly (a slice accepts any
+		// integer type), avoiding an int(uint32) conversion that could wrap
+		// negative on 32-bit platforms and panic on the slice index.
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(name))                       //nolint:errcheck // hash.Hash32.Write never errors
+		idx := h.Sum32() % uint32(len(t.componentPalette)) //nolint:gosec // palette length is small and positive; no overflow
+		code = t.componentPalette[idx]
+	}
+
+	// Store and return. If two goroutines race here the value is identical, so
+	// the later Store is a no-op in practice (same string).
+	t.componentCache.Store(name, code)
+	return code
+}
+
 // --- Built-in themes ---
 
 // ThemeNightOwl is a dark, high-contrast palette inspired by the Night Owl VS Code theme.
@@ -420,6 +533,20 @@ var ThemeNightOwl = NewTheme("Night Owl",
 	WithStyleSlot(SlotStatusWarn, RGB(0xFF, 0xCB, 0x6B)),
 	WithStyleSlot(SlotStatusInfo, RGB(0x82, 0xAA, 0xFF)),
 	WithStyleSlot(SlotTableHeader, RGB(0x7F, 0xD3, 0xFF)),
+	// Component palette: 10 warm-to-cool hues legible on the dark NightOwl background.
+	// Chosen to differ from level colours (purple/blue/amber/red) and muted steel.
+	WithComponentPalette(
+		RGB(0x80, 0xD4, 0xAA), // mint green
+		RGB(0x7F, 0xD3, 0xFF), // sky cyan
+		RGB(0xFF, 0xB3, 0x6B), // peach orange
+		RGB(0xD6, 0xAC, 0xFF), // lavender
+		RGB(0x6B, 0xD8, 0xD8), // teal
+		RGB(0xFF, 0xD6, 0xA5), // warm sand
+		RGB(0xA5, 0xF3, 0xC4), // seafoam
+		RGB(0xF7, 0xA0, 0xC4), // rose pink
+		RGB(0xB3, 0xDC, 0xFF), // ice blue
+		RGB(0xD4, 0xFF, 0xA0), // chartreuse
+	),
 )
 
 // ThemeSolarized is a classic Solarized 256-colour palette.
@@ -451,6 +578,20 @@ var ThemeSolarized = NewTheme("Solarized",
 	WithStyleSlot(SlotStatusWarn, Colour256(136)),
 	WithStyleSlot(SlotStatusInfo, Colour256(33)),
 	WithStyleSlot(SlotTableHeader, Colour256(37)),
+	// Component palette: mid-range 256-colour hues legible on the Solarized base03 background.
+	// Avoids debug/61, info/33, warn/136, error/160, muted/8, heading/37.
+	WithComponentPalette(
+		Colour256(64),  // green (good)
+		Colour256(37),  // cyan
+		Colour256(167), // salmon
+		Colour256(125), // magenta
+		Colour256(68),  // slate blue
+		Colour256(107), // olive
+		Colour256(73),  // steel teal
+		Colour256(172), // gold
+		Colour256(110), // periwinkle
+		Colour256(71),  // forest green
+	),
 )
 
 // ThemeDracula is the Dracula 256-colour palette.
@@ -482,6 +623,20 @@ var ThemeDracula = NewTheme("Dracula",
 	WithStyleSlot(SlotStatusWarn, Colour256(228)),
 	WithStyleSlot(SlotStatusInfo, Colour256(81)),
 	WithStyleSlot(SlotTableHeader, Colour256(87)),
+	// Component palette: vivid hues on Dracula's dark background.
+	// Avoids debug/141, info/81, warn/228, error/212, muted/59, heading/87.
+	WithComponentPalette(
+		Colour256(84),  // bright green
+		Colour256(215), // apricot
+		Colour256(117), // powder blue
+		Colour256(183), // lilac
+		Colour256(121), // mint
+		Colour256(222), // butter yellow
+		Colour256(159), // pale cyan
+		Colour256(210), // light coral
+		Colour256(114), // sage
+		Colour256(189), // pale mauve
+	),
 )
 
 // ThemeNord is the Nord 256-colour palette, cool and arctic.
@@ -513,6 +668,20 @@ var ThemeNord = NewTheme("Nord",
 	WithStyleSlot(SlotStatusWarn, Colour256(180)),
 	WithStyleSlot(SlotStatusInfo, Colour256(109)),
 	WithStyleSlot(SlotTableHeader, Colour256(110)),
+	// Component palette: cool arctic tones legible on Nord's dark polar-night background.
+	// Avoids debug/139, info/109, warn/180, error/191, muted/59, heading/110.
+	WithComponentPalette(
+		Colour256(152), // frost light blue
+		Colour256(114), // aurora green
+		Colour256(216), // aurora orange (same as message but distinct from level colours)
+		Colour256(183), // soft violet
+		Colour256(159), // pale aqua
+		Colour256(222), // aurora yellow
+		Colour256(147), // periwinkle
+		Colour256(157), // light mint
+		Colour256(210), // salmon rose
+		Colour256(153), // sky blue
+	),
 )
 
 // ThemeMono is a colour-free theme. Format always returns the input unchanged.

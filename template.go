@@ -34,15 +34,18 @@ type Template struct {
 	// level + 1). Used by Logger.Render so block output (tables, banners, boxes)
 	// lands at the same column as log message text.
 	cachedMessageIndentStr string
-	levelStyle             LevelStyle
-	fieldDisplayMode       FieldDisplayMode
-	cachedPrefixWidth      int
-	cachedMessageColumn    int
-	showTime               bool
-	showLevel              bool
-	showMessage            bool
-	showFields             bool
-	useColours             bool
+	// indicators carries the opt-in compact header config. Zero value means all
+	// indicators are disabled and the render path is unchanged from baseline.
+	indicators          inlineIndicators
+	levelStyle          LevelStyle
+	fieldDisplayMode    FieldDisplayMode
+	cachedPrefixWidth   int
+	cachedMessageColumn int
+	showTime            bool
+	showLevel           bool
+	showMessage         bool
+	showFields          bool
+	useColours          bool
 }
 
 type LevelStyle int

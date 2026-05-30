@@ -47,6 +47,24 @@ func (m FieldDisplayMode) String() string {
 // Default behaviour is os.Exit(1). Override in tests to prevent process exit.
 type FatalHandler func()
 
+// inlineIndicators holds config for the opt-in compact header indicators feature.
+// The zero value means everything is disabled, so existing behaviour is unchanged
+// unless the caller explicitly enables it via WithComponentField / WithComponentStyling etc.
+// removeFromTree defaults to true only when the feature is actively enabled — it is
+// meaningless when component == false, so we derive the effective value at render time.
+type inlineIndicators struct {
+	componentField string
+	countFields    []string // small N; linear scan is fine
+	timingFields   []string
+	statePairs     [][2]string
+
+	componentWidth int
+
+	component      bool
+	showGlyphs     bool
+	removeFromTree bool // true = promoted fields are hidden from the tree
+}
+
 // config holds all logger configuration. Unexported — callers configure via Options.
 type config struct {
 	ConsoleOutput io.Writer
@@ -64,7 +82,10 @@ type config struct {
 	ConsoleTheme    *Theme
 	DisplayTimezone *time.Location
 
-	TimeFormat       string
+	TimeFormat string
+
+	Indicators inlineIndicators
+
 	StructuredFormat Format
 
 	BufferSize    int
