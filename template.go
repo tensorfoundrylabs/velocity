@@ -47,6 +47,10 @@ type Template struct {
 	showMessage         bool
 	showFields          bool
 	useColours          bool
+	// indicatorsActive is precomputed from indicators so the disabled hot path checks
+	// one bool instead of reading the bulky indicators struct (which would pull an
+	// extra cache line into every log call). Kept among the other hot bools.
+	indicatorsActive bool
 }
 
 type LevelStyle int
@@ -126,10 +130,16 @@ type indicatorScanResult struct {
 	skip uint64
 }
 
-// isActive reports whether any indicator is enabled for this template.
+// isActive reports whether any indicator is enabled for this template. Reads the
+// precomputed bool so the disabled hot path never touches the indicators struct.
 // When false, buildWithTimezoneSecure takes the baseline path unchanged.
 func (t *Template) isActive() bool {
-	ind := &t.indicators
+	return t.indicatorsActive
+}
+
+// active reports whether the config enables any indicator. Used once at construction
+// to precompute Template.indicatorsActive.
+func (ind *inlineIndicators) active() bool {
 	return ind.component || len(ind.countFields) > 0 || len(ind.timingFields) > 0 || len(ind.statePairs) > 0
 }
 

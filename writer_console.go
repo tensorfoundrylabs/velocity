@@ -282,7 +282,15 @@ func (w *ConsoleWriter) WriteSecure(e *Entry, trusted bool, redactionMark string
 
 	if tmpl != nil {
 		tempBuf := GetTemplateBuffer()
-		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		// Dispatch on the hottest log path here rather than inside
+		// buildWithTimezoneSecure: isActive inlines but the render functions do not,
+		// so routing the no-indicators case straight to buildBaselineSecure keeps the
+		// disabled path at one render call, the same cost as before the feature.
+		if tmpl.isActive() {
+			tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		} else {
+			tmpl.buildBaselineSecure(tempBuf, e, theme, tz, trusted, redactionMark)
+		}
 
 		w.mu.Lock()
 		_, err := w.out.Write(tempBuf.Bytes())

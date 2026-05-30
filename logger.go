@@ -148,9 +148,11 @@ func newFromConfig(cfg *config) *Logger {
 			logger.consoleWriter.template.initCache()
 		}
 		// Thread inline-indicator config onto the template so render paths can
-		// access it without needing a reference back to config.
+		// access it without needing a reference back to config. indicatorsActive is
+		// precomputed here so the disabled hot path checks one bool, not the struct.
 		if logger.consoleWriter != nil {
 			logger.consoleWriter.template.indicators = cfg.Indicators
+			logger.consoleWriter.template.indicatorsActive = cfg.Indicators.active()
 		}
 	}
 
