@@ -60,8 +60,12 @@ type inlineIndicators struct {
 
 	componentWidth int
 
-	component      bool
-	showGlyphs     bool
+	component  bool
+	showGlyphs bool
+	// glyphsExplicit is true when WithInlineGlyphs was called. When false,
+	// the render path uses glyphsSupported() (runtime VELOCITY_GLYPHS detection)
+	// instead of the showGlyphs value.
+	glyphsExplicit bool
 	removeFromTree bool // true = promoted fields are hidden from the tree
 }
 

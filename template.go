@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // referenceTime is a fixed timestamp used to measure formatted time width at construction.
@@ -106,8 +107,254 @@ func initTemplate(t *Template) *Template {
 	return t
 }
 
+// indicatorScanResult holds the output of the single pre-scan pass over entry.Fields.
+// All storage is on the caller's stack — no heap allocations.
+// timingIdx and stateIdx are field indices into entry.Fields; -1 means absent.
+// skip is a bitmask of field indices to omit from the tree/inline renderer.
+type indicatorScanResult struct {
+	// timingIdx holds indices of matching timingFields, in field order. Capped at 8.
+	timingIdx [8]int
+	timingN   int // number of valid entries in timingIdx
+
+	stateFromIdx int // index of the "from" field of the winning state pair, or -1
+	stateToIdx   int // index of the "to"   field of the winning state pair, or -1
+	componentIdx int // index of the component field, or -1
+	countIdx     int // index of the first matching count field, or -1
+
+	// skip bitmask: bit i set means entry.Fields[i] must not appear in the tree.
+	// Only used when len(entry.Fields) <= 64; >64 fields fall back to rendering all.
+	skip uint64
+}
+
+// isActive reports whether any indicator is enabled for this template.
+// When false, buildWithTimezoneSecure takes the baseline path unchanged.
+func (t *Template) isActive() bool {
+	ind := &t.indicators
+	return ind.component || len(ind.countFields) > 0 || len(ind.timingFields) > 0 || len(ind.statePairs) > 0
+}
+
+// resolveGlyphs returns the effective glyph setting for this render call.
+// When the caller set WithInlineGlyphs explicitly that wins; otherwise the
+// runtime VELOCITY_GLYPHS detection applies.
+func (t *Template) resolveGlyphs() bool {
+	if t.indicators.glyphsExplicit {
+		return t.indicators.showGlyphs
+	}
+	return GlyphsSupported()
+}
+
+// isSecureOnUntrusted reports whether field f would render as redacted on an
+// untrusted writer. Such fields must not be promoted to the header.
+func isSecureOnUntrusted(f Field, trusted bool) bool {
+	if trusted {
+		return false
+	}
+	switch f.Type {
+	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted:
+		return true
+	default:
+		return false
+	}
+}
+
+// pairSides tracks the field indices for a single state-transition pair.
+type pairSides struct{ fromIdx, toIdx int }
+
+// scanIndicators performs a single pass over entry.Fields to locate all
+// promoted-field indices. It is allocation-free: all state lives on the stack.
+// Returns the scan result and whether any indicator was found.
+func (t *Template) scanIndicators(entry *Entry, trusted bool) (r indicatorScanResult, anyFound bool) {
+	r.componentIdx = -1
+	r.countIdx = -1
+	r.stateFromIdx = -1
+	r.stateToIdx = -1
+
+	ind := &t.indicators
+	activePairs := min(len(ind.statePairs), 8)
+
+	// Track per-pair state on the stack; -1 means not yet seen.
+	var pairState [8]pairSides
+	for i := range activePairs {
+		pairState[i] = pairSides{fromIdx: -1, toIdx: -1}
+	}
+
+	for i, f := range entry.Fields {
+		matchComponentField(ind, f, i, trusted, &r, &anyFound)
+		matchCountField(ind, f, i, &r, &anyFound)
+		matchTimingField(ind, f, i, &r, &anyFound)
+		matchStatePairs(ind, f, i, activePairs, pairState[:])
+	}
+
+	// Resolve the winning state pair: first complete pair wins.
+	for p := range activePairs {
+		if pairState[p].fromIdx >= 0 && pairState[p].toIdx >= 0 {
+			r.stateFromIdx = pairState[p].fromIdx
+			r.stateToIdx = pairState[p].toIdx
+			anyFound = true
+			break
+		}
+	}
+
+	buildSkipMask(ind, entry, &r)
+	return r, anyFound
+}
+
+func matchComponentField(ind *inlineIndicators, f Field, i int, trusted bool, r *indicatorScanResult, anyFound *bool) {
+	if !ind.component || r.componentIdx >= 0 || f.Key != ind.componentField {
+		return
+	}
+	if f.Type == FieldTypeString && !isSecureOnUntrusted(f, trusted) {
+		r.componentIdx = i
+		*anyFound = true
+	}
+}
+
+func matchCountField(ind *inlineIndicators, f Field, i int, r *indicatorScanResult, anyFound *bool) {
+	if r.countIdx >= 0 || len(ind.countFields) == 0 {
+		return
+	}
+	for _, name := range ind.countFields {
+		if f.Key == name && (f.Type == FieldTypeInt || f.Type == FieldTypeInt64) {
+			r.countIdx = i
+			*anyFound = true
+			return
+		}
+	}
+}
+
+func matchTimingField(ind *inlineIndicators, f Field, i int, r *indicatorScanResult, anyFound *bool) {
+	if r.timingN >= 8 || len(ind.timingFields) == 0 {
+		return
+	}
+	for _, name := range ind.timingFields {
+		if f.Key == name && (f.Type == FieldTypeInt || f.Type == FieldTypeInt64 || f.Type == FieldTypeDuration) {
+			r.timingIdx[r.timingN] = i
+			r.timingN++
+			*anyFound = true
+			return
+		}
+	}
+}
+
+func matchStatePairs(ind *inlineIndicators, f Field, i, activePairs int, pairState []pairSides) {
+	for p := range activePairs {
+		pair := ind.statePairs[p]
+		switch f.Key {
+		case pair[0]:
+			pairState[p].fromIdx = i
+		case pair[1]:
+			pairState[p].toIdx = i
+		}
+	}
+}
+
+// buildSkipMask populates r.skip from the found indices.
+// Only built when removeFromTree is enabled and field count fits in uint64.
+func buildSkipMask(ind *inlineIndicators, entry *Entry, r *indicatorScanResult) {
+	if !ind.removeFromTree || len(entry.Fields) > 64 {
+		return
+	}
+	setSkip := func(idx int) {
+		if idx >= 0 {
+			r.skip |= 1 << uint(idx) //nolint:gosec // G115: idx is [0,63]; uint conversion is safe
+		}
+	}
+	setSkip(r.componentIdx)
+	setSkip(r.countIdx)
+	for j := range r.timingN {
+		setSkip(r.timingIdx[j])
+	}
+	setSkip(r.stateFromIdx)
+	setSkip(r.stateToIdx)
+}
+
 // buildWithTimezoneSecure is the trust-aware template rendering path.
 func (t *Template) buildWithTimezoneSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location, trusted bool, redactionMark string) {
+	// Fast path: no indicators configured at all — take the pre-existing code
+	// path completely unchanged. This is the zero-regression guarantee: no extra
+	// work, no pre-scan, output is bit-for-bit identical to baseline.
+	if !t.isActive() {
+		t.buildBaselineSecure(buf, entry, theme, displayTimezone, trusted, redactionMark)
+		return
+	}
+
+	// Pre-scan once. If nothing matched, fall back to baseline so a mismatched
+	// entry (no component/count/timing keys) produces identical output.
+	scan, anyFound := t.scanIndicators(entry, trusted)
+	if !anyFound {
+		t.buildBaselineSecure(buf, entry, theme, displayTimezone, trusted, redactionMark)
+		return
+	}
+
+	// --- Indicators are active and at least one field was found. ---
+	glyphs := t.resolveGlyphs()
+
+	if t.showTime && !entry.Time.IsZero() {
+		t.writeTimestampWithTimezone(buf, entry, theme, displayTimezone)
+	}
+
+	if t.showLevel {
+		t.writeLevel(buf, entry, theme)
+	}
+
+	// Phase 2: component prefix " <name padded> │ ".
+	if scan.componentIdx >= 0 {
+		t.writeComponentPrefix(buf, entry.Fields[scan.componentIdx], theme)
+	}
+
+	if t.showMessage && entry.Message != "" {
+		if buf.Len() > 0 {
+			_ = buf.WriteByte(' ')
+		}
+		t.writeMessageSecure(buf, entry, theme, trusted, redactionMark)
+	}
+
+	// Phase 3: count suffix " (N)".
+	if scan.countIdx >= 0 {
+		t.writeCountSuffix(buf, entry.Fields[scan.countIdx], theme)
+	}
+
+	// Phase 5: state-transition arrow " from → to".
+	if scan.stateFromIdx >= 0 {
+		t.writeStateArrow(buf, entry.Fields[scan.stateFromIdx], entry.Fields[scan.stateToIdx], theme, trusted, redactionMark, glyphs)
+	}
+
+	// Phase 4: timing suffix " [⏱ ...]".
+	if scan.timingN > 0 {
+		t.writeTimingSuffix(buf, entry, scan, theme, glyphs)
+	}
+
+	if entry.Caller != "" {
+		_ = buf.WriteByte(' ')
+		if t.useColours && theme != nil {
+			buf.WriteString(theme.cachedTimestampFgStr())
+		}
+		buf.WriteString(entry.Caller)
+		_ = buf.WriteByte(':')
+		var lineBuf [10]byte
+		buf.Write(strconv.AppendInt(lineBuf[:0], int64(entry.Line), 10))
+		if t.useColours && theme != nil {
+			buf.WriteString(Reset)
+		}
+	}
+
+	// Phase 6: fields with skip mask.
+	remainingFields := countRemainingFields(entry.Fields, scan.skip)
+	if t.showFields && remainingFields > 0 {
+		if buf.Len() > 0 {
+			_ = buf.WriteByte(' ')
+		}
+		t.writeFieldsSecureWithSkip(buf, entry, theme, trusted, redactionMark, scan.skip)
+	}
+
+	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
+		_ = buf.WriteByte('\n')
+	}
+}
+
+// buildBaselineSecure is the original build path extracted verbatim, so the
+// indicator-enabled path can call it when nothing matches without any divergence.
+func (t *Template) buildBaselineSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location, trusted bool, redactionMark string) {
 	if t.showTime && !entry.Time.IsZero() {
 		t.writeTimestampWithTimezone(buf, entry, theme, displayTimezone)
 	}
@@ -147,6 +394,260 @@ func (t *Template) buildWithTimezoneSecure(buf *bytes.Buffer, entry *Entry, them
 	if buf.Len() == 0 || buf.Bytes()[buf.Len()-1] != '\n' {
 		_ = buf.WriteByte('\n')
 	}
+}
+
+// writeComponentPrefix renders " <name> │ " after the level badge.
+// Name is left-aligned and padded/truncated to componentWidth runes.
+// Name uses the theme's component colour; │ uses SlotMuted.
+func (t *Template) writeComponentPrefix(buf *bytes.Buffer, f Field, theme *Theme) {
+	_ = buf.WriteByte(' ')
+
+	name := *(*string)(f.value)
+	width := t.indicators.componentWidth
+	if width <= 0 {
+		width = 8
+	}
+
+	// Apply component colour.
+	var colCode string
+	if t.useColours && theme != nil {
+		colCode = theme.componentColourCode(name)
+		if colCode != "" {
+			buf.WriteString(colCode)
+		}
+	}
+
+	// Write name padded/truncated to width runes.
+	writeRunePadded(buf, name, width)
+
+	if colCode != "" {
+		buf.WriteString(Reset)
+	}
+
+	// Separator │ in SlotMuted.
+	_ = buf.WriteByte(' ')
+	if t.useColours && theme != nil {
+		muted := theme.cachedSlotFg[SlotMuted]
+		if muted != "" {
+			buf.WriteString(muted)
+		}
+	}
+	buf.WriteString("│")
+	if t.useColours && theme != nil && theme.cachedSlotFg[SlotMuted] != "" {
+		buf.WriteString(Reset)
+	}
+}
+
+// writeRunePadded writes s to buf, left-aligned, exactly width runes wide.
+// Truncates with '…' if s is longer; pads with spaces if shorter.
+func writeRunePadded(buf *bytes.Buffer, s string, width int) {
+	n := utf8.RuneCountInString(s)
+	if n > width {
+		// Truncate: write width-1 runes then '…'.
+		count := 0
+		for _, r := range s {
+			if count == width-1 {
+				break
+			}
+			writeRune(buf, r)
+			count++
+		}
+		buf.WriteString("…")
+		return
+	}
+	buf.WriteString(s)
+	for i := n; i < width; i++ {
+		_ = buf.WriteByte(' ')
+	}
+}
+
+// writeRune writes a single rune into a bytes.Buffer.
+func writeRune(buf *bytes.Buffer, r rune) {
+	var tmp [utf8.UTFMax]byte
+	n := utf8.EncodeRune(tmp[:], r)
+	buf.Write(tmp[:n])
+}
+
+// writeCountSuffix appends " (N)" after the message using SlotCount colour.
+func (t *Template) writeCountSuffix(buf *bytes.Buffer, f Field, theme *Theme) {
+	_ = buf.WriteByte(' ')
+	if t.useColours && theme != nil {
+		code := theme.cachedSlotFg[SlotCount]
+		if code != "" {
+			buf.WriteString(code)
+		}
+	}
+	_ = buf.WriteByte('(')
+	var tmp [20]byte
+	n := formatInt(tmp[:], f.num)
+	buf.Write(tmp[:n])
+	_ = buf.WriteByte(')')
+	if t.useColours && theme != nil && theme.cachedSlotFg[SlotCount] != "" {
+		buf.WriteString(Reset)
+	}
+}
+
+// writeStateArrow renders " from → to" (or " from -> to" when glyphs off).
+// Both field values are read as strings; other types are left in the tree.
+func (t *Template) writeStateArrow(buf *bytes.Buffer, fromField, toField Field, theme *Theme, trusted bool, redactionMark string, glyphs bool) {
+	_ = buf.WriteByte(' ')
+
+	var muted string
+	if t.useColours && theme != nil {
+		muted = theme.cachedSlotFg[SlotMuted]
+	}
+	if muted != "" {
+		buf.WriteString(muted)
+	}
+
+	writeFieldValueString(buf, fromField, trusted, redactionMark)
+	if glyphs {
+		buf.WriteString(" → ")
+	} else {
+		buf.WriteString(" -> ")
+	}
+	writeFieldValueString(buf, toField, trusted, redactionMark)
+
+	if muted != "" {
+		buf.WriteString(Reset)
+	}
+}
+
+// writeFieldValueString writes the string representation of a field's value.
+// Used for state-arrow rendering where we want the bare value (no key, no quotes).
+func writeFieldValueString(buf *bytes.Buffer, f Field, trusted bool, redactionMark string) {
+	switch f.Type {
+	case FieldTypeString:
+		buf.WriteString(*(*string)(f.value))
+	case FieldTypeSecure, FieldTypeSecureURL:
+		switch {
+		case trusted && f.value != nil:
+			buf.WriteString((*secureValue)(f.value).plain)
+		case f.value != nil:
+			buf.WriteString((*secureValue)(f.value).redacted)
+		default:
+			buf.WriteString(redactionMark)
+		}
+	case FieldTypeRedacted:
+		buf.WriteString(redactionMark)
+	case FieldTypeInt, FieldTypeInt64:
+		var tmp [20]byte
+		n := formatInt(tmp[:], f.num)
+		buf.Write(tmp[:n])
+	default:
+		// For non-string types fall back to safe formatted output.
+		f.writeFormattedWithMark(buf, redactionMark)
+	}
+}
+
+// writeTimingSuffix renders " [⏱ t1, t2]" (or " [t1, t2]" without glyph).
+// Integer fields are treated as milliseconds; Duration fields use smart formatting.
+func (t *Template) writeTimingSuffix(buf *bytes.Buffer, entry *Entry, scan indicatorScanResult, theme *Theme, glyphs bool) {
+	_ = buf.WriteByte(' ')
+
+	var muted string
+	if t.useColours && theme != nil {
+		muted = theme.cachedSlotFg[SlotMuted]
+	}
+	if muted != "" {
+		buf.WriteString(muted)
+	}
+
+	_ = buf.WriteByte('[')
+	if glyphs {
+		buf.WriteString("⏱ ")
+	}
+
+	for i := range scan.timingN {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		f := entry.Fields[scan.timingIdx[i]]
+		writeSmartDuration(buf, f)
+	}
+
+	_ = buf.WriteByte(']')
+
+	if muted != "" {
+		buf.WriteString(Reset)
+	}
+}
+
+// writeSmartDuration renders a timing field value in a compact human form.
+// Integer/Int64 fields are treated as milliseconds (renders as "294ms", "2.78s").
+// Duration fields (field.num as time.Duration) use the same compact logic.
+// This avoids time.Duration.String() and fmt.Sprintf entirely.
+func writeSmartDuration(buf *bytes.Buffer, f Field) {
+	var ns int64
+	switch f.Type {
+	case FieldTypeDuration:
+		ns = f.num // already nanoseconds
+	case FieldTypeInt, FieldTypeInt64:
+		// Treat as milliseconds.
+		ns = f.num * int64(time.Millisecond)
+	default:
+		// Fallback: write the raw int.
+		var tmp [20]byte
+		n := formatInt(tmp[:], f.num)
+		buf.Write(tmp[:n])
+		return
+	}
+
+	if ns < 0 {
+		_ = buf.WriteByte('-')
+		ns = -ns
+	}
+
+	ms := ns / int64(time.Millisecond)
+	us := ns / int64(time.Microsecond)
+	sec := ns / int64(time.Second)
+
+	switch {
+	case ns < int64(time.Millisecond):
+		// Sub-millisecond: render in microseconds.
+		var tmp [20]byte
+		n := formatInt(tmp[:], us)
+		buf.Write(tmp[:n])
+		buf.WriteString("µs")
+
+	case ns < int64(time.Second):
+		// Millisecond range: render as "NNNms".
+		var tmp [20]byte
+		n := formatInt(tmp[:], ms)
+		buf.Write(tmp[:n])
+		buf.WriteString("ms")
+
+	default:
+		// Second range: render as "X.XXs" (2 decimal places).
+		remainMs := (ns - sec*int64(time.Second)) / int64(time.Millisecond)
+		var tmp [20]byte
+		n := formatInt(tmp[:], sec)
+		buf.Write(tmp[:n])
+		_ = buf.WriteByte('.')
+		// Two decimal digits from millisecond remainder (0-999 → 00-99 after /10).
+		centis := remainMs / 10
+		if centis < 10 {
+			_ = buf.WriteByte('0')
+		}
+		m := formatInt(tmp[:], centis)
+		buf.Write(tmp[:m])
+		_ = buf.WriteByte('s')
+	}
+}
+
+// countRemainingFields returns the number of fields not masked by skip.
+// When there are more than 64 fields the skip mask is not used and all fields count.
+func countRemainingFields(fields []Field, skip uint64) int {
+	if len(fields) > 64 {
+		return len(fields)
+	}
+	n := 0
+	for i := range fields {
+		if skip&(1<<uint(i)) == 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func (t *Template) writeTimestampWithTimezone(buf *bytes.Buffer, entry *Entry, theme *Theme, displayTimezone *time.Location) {
@@ -233,11 +734,60 @@ func (t *Template) writeFieldsSecure(buf *bytes.Buffer, entry *Entry, theme *The
 	}
 }
 
+// writeFieldsSecureWithSkip renders fields, skipping those whose index bits are
+// set in skip. Called from the indicators path only.
+func (t *Template) writeFieldsSecureWithSkip(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string, skip uint64) {
+	if entry.forceTreeDisplay || t.fieldDisplayMode == FieldDisplayTree {
+		t.writeFieldsTreeSecureWithSkip(buf, entry, theme, trusted, redactionMark, skip)
+	} else {
+		t.writeFieldsInlineSecureWithSkip(buf, entry, theme, trusted, redactionMark, skip)
+	}
+}
+
 func (t *Template) writeFieldsInlineSecure(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string) {
 	for i, field := range entry.Fields {
 		if i > 0 {
 			buf.WriteString(t.fieldSep)
 		}
+
+		if t.useColours && theme != nil {
+			buf.WriteString(theme.cachedFieldKeyFgStr())
+		}
+		buf.WriteString(field.Key)
+		if t.useColours && theme != nil {
+			buf.WriteString(Reset)
+		}
+
+		buf.WriteString(t.fieldPairSep)
+
+		if t.useColours && field.Type == FieldTypeError && theme != nil {
+			buf.WriteString(theme.cachedErrorValFgStr())
+		} else if t.useColours && theme != nil {
+			buf.WriteString(theme.cachedFieldValFgStr())
+		}
+
+		if trusted {
+			field.writeFormattedTrusted(buf)
+		} else {
+			field.writeFormattedWithMark(buf, redactionMark)
+		}
+
+		if t.useColours && theme != nil {
+			buf.WriteString(Reset)
+		}
+	}
+}
+
+func (t *Template) writeFieldsInlineSecureWithSkip(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string, skip uint64) {
+	first := true
+	for i, field := range entry.Fields {
+		if len(entry.Fields) <= 64 && skip&(1<<uint(i)) != 0 {
+			continue
+		}
+		if !first {
+			buf.WriteString(t.fieldSep)
+		}
+		first = false
 
 		if t.useColours && theme != nil {
 			buf.WriteString(theme.cachedFieldKeyFgStr())
@@ -283,6 +833,68 @@ func (t *Template) writeFieldsTreeSecure(buf *bytes.Buffer, entry *Entry, theme 
 
 		var treeChar string
 		if i == len(entry.Fields)-1 {
+			treeChar = "└ "
+		} else {
+			treeChar = "├ "
+		}
+
+		buf.WriteString(treeChar)
+
+		if t.useColours && theme != nil {
+			buf.WriteString(theme.cachedFieldKeyFgStr())
+		}
+		buf.WriteString(field.Key)
+		if t.useColours && theme != nil {
+			buf.WriteString(Reset)
+		}
+
+		buf.WriteString(t.fieldPairSep)
+
+		if t.useColours && field.Type == FieldTypeError && theme != nil {
+			buf.WriteString(theme.cachedErrorValFgStr())
+		} else if t.useColours && theme != nil {
+			buf.WriteString(theme.cachedFieldValFgStr())
+		}
+
+		if trusted {
+			field.writeFormattedTrusted(buf)
+		} else {
+			field.writeFormattedWithMark(buf, redactionMark)
+		}
+
+		if t.useColours && theme != nil {
+			buf.WriteString(Reset)
+		}
+	}
+}
+
+func (t *Template) writeFieldsTreeSecureWithSkip(buf *bytes.Buffer, entry *Entry, theme *Theme, trusted bool, redactionMark string, skip uint64) {
+	var indentStr string
+	if t.levelStyle == LevelStyleBadge {
+		indentStr = t.cachedIndentStr
+	} else {
+		indentStr = strings.Repeat(" ", t.calculatePrefixWidth(entry))
+	}
+
+	// Determine the last non-skipped index for the └ glyph.
+	lastIdx := -1
+	for i := range entry.Fields {
+		if len(entry.Fields) <= 64 && skip&(1<<uint(i)) != 0 {
+			continue
+		}
+		lastIdx = i
+	}
+
+	for i, field := range entry.Fields {
+		if len(entry.Fields) <= 64 && skip&(1<<uint(i)) != 0 {
+			continue
+		}
+
+		_ = buf.WriteByte('\n')
+		buf.WriteString(indentStr)
+
+		var treeChar string
+		if i == lastIdx {
 			treeChar = "└ "
 		} else {
 			treeChar = "├ "

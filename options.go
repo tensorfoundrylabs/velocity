@@ -375,6 +375,7 @@ func WithStateTransitionPairs(pairs ...[2]string) Option {
 func WithInlineGlyphs(enabled bool) Option {
 	return func(c *config) {
 		c.Indicators.showGlyphs = enabled
+		c.Indicators.glyphsExplicit = true
 	}
 }
 

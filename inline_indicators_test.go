@@ -11,6 +11,10 @@ import (
 // (not UTC) so RFC3339-style formats include "+HH:MM" — the longest rendered form.
 var fixedTime = time.Date(2026, 5, 30, 14, 52, 33, 0, time.FixedZone("AEST", 10*60*60))
 
+// fieldNameComponent is the canonical field name used in test fixtures.
+// Defined as a constant to avoid goconst lint noise across this file.
+const fieldNameComponent = "component"
+
 // renderEntry is a test helper that builds a console output string for the given
 // entry using colour disabled, the default template, and the supplied config.
 // Caller constructs the cfg with any test-specific overrides before passing it here.
@@ -52,7 +56,7 @@ func TestInlineIndicators_DefaultOff_OutputByteIdentical(t *testing.T) {
 	e.SetMessage("service started")
 	e.SetTime(fixedTime)
 	e.WithFields(
-		String("component", "Scout"),
+		String(fieldNameComponent, "Scout"),
 		Int("count", 3),
 		String("startup_ms", "2000"),
 		String("env", "production"),
@@ -163,8 +167,8 @@ func TestInlineIndicators_OptionsWriteConfig(t *testing.T) {
 		if !cfg.Indicators.component {
 			t.Error("component should be true after WithComponentStyling")
 		}
-		if cfg.Indicators.componentField != "component" {
-			t.Errorf("componentField = %q, want %q", cfg.Indicators.componentField, "component")
+		if cfg.Indicators.componentField != fieldNameComponent {
+			t.Errorf("componentField = %q, want %q", cfg.Indicators.componentField, fieldNameComponent)
 		}
 		if len(cfg.Indicators.countFields) == 0 {
 			t.Error("countFields should be non-empty after WithComponentStyling")
@@ -202,11 +206,10 @@ func TestInlineIndicators_ThreadedToTemplate(t *testing.T) {
 	}
 }
 
-// TestInlineIndicators_EnabledDoesNotChangeOutput confirms that enabling the indicators
-// config (component = true) but NOT yet rendering (Phase 2+) leaves the console output
-// byte-identical to the zero-value path. Phase 2 will change this — until then the
-// render path is untouched and this test must pass.
-func TestInlineIndicators_EnabledDoesNotChangeOutput(t *testing.T) {
+// TestInlineIndicators_WithComponentStyling_GoldenOutput is the Phase 2+ golden test
+// confirming that WithComponentStyling renders the expected compact header format.
+// The Phase 0 no-change contract is covered by TestInlineIndicators_DefaultOff_OutputByteIdentical.
+func TestInlineIndicators_WithComponentStyling_GoldenOutput(t *testing.T) {
 	t.Parallel()
 
 	e := GetEntry()
@@ -215,21 +218,19 @@ func TestInlineIndicators_EnabledDoesNotChangeOutput(t *testing.T) {
 	e.SetMessage("service started")
 	e.SetTime(fixedTime)
 	e.WithFields(
-		String("component", "Fleet"),
+		String(fieldNameComponent, "Fleet"),
 		Int("count", 5),
 	)
 
-	baselineCfg := defaultConfig()
-	baseline := renderEntry(t, baselineCfg, e)
+	cfg := defaultConfig()
+	WithComponentStyling()(cfg)
+	WithInlineGlyphs(false)(cfg) // deterministic: no glyph env dependency
+	got := renderEntry(t, cfg, e)
 
-	enabledCfg := defaultConfig()
-	WithComponentStyling()(enabledCfg) // writes into the config; no rendering change yet
-	enabled := renderEntry(t, enabledCfg, e)
-
-	// Phase 0 contract: enabling the config changes nothing in the output.
-	if baseline != enabled {
-		t.Errorf("Phase 0: enabling indicators must not change output:\n  baseline: %q\n  enabled:  %q",
-			baseline, enabled)
+	// component (8-wide) + │ + message + (5) + no remaining fields
+	want := "2026-05-30 14:52:33 [INFO] Fleet    │ service started (5)\n"
+	if got != want {
+		t.Errorf("golden output mismatch:\n  got:  %q\n  want: %q", got, want)
 	}
 }
 
@@ -444,6 +445,608 @@ func TestComponentColourCode_CachingIsIdempotent(t *testing.T) {
 		got := <-results
 		if got != want {
 			t.Errorf("concurrent componentColourCode(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Component prefix rendering
+// ---------------------------------------------------------------------------
+
+// TestComponentPrefix_PaddingAndTruncation verifies that the component name is
+// padded to componentWidth when short and truncated (with ellipsis) when long.
+func TestComponentPrefix_PaddingAndTruncation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		compName  string
+		width     int
+		wantInOut string // the portion of the output between "[INFO]" and "│"
+	}{
+		{"exact", "Scout", 5, " Scout │ "},
+		{"padded", "A", 4, " A    │ "},
+		{"truncated", "Longname", 5, " Long… │ "},
+		// width=8, "Fleet"=5 runes: 3 rune padding + 1 separator space = 4 visible spaces before │
+		{"default-width", "Fleet", 8, " Fleet    │ "},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := GetEntry()
+			defer e.Release()
+			e.SetLevel(LevelInfo)
+			e.SetMessage("msg")
+			e.SetTime(fixedTime)
+			e.WithFields(String(fieldNameComponent, tc.compName))
+
+			cfg := defaultConfig()
+			cfg.Indicators.component = true
+			cfg.Indicators.componentField = fieldNameComponent
+			cfg.Indicators.componentWidth = tc.width
+			cfg.Indicators.removeFromTree = true
+			got := renderEntry(t, cfg, e)
+
+			if !strings.Contains(got, tc.wantInOut) {
+				t.Errorf("component prefix: got %q, want substring %q", got, tc.wantInOut)
+			}
+		})
+	}
+}
+
+// TestComponentPrefix_MissingField verifies that when the component field is absent
+// the output is unchanged from baseline (no prefix rendered).
+func TestComponentPrefix_MissingField(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("no component")
+	e.SetTime(fixedTime)
+	e.WithFields(String("env", "prod"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.component = true
+	cfg.Indicators.componentField = fieldNameComponent
+	cfg.Indicators.componentWidth = 8
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// Fallback to baseline path because no matching key found.
+	if strings.Contains(got, "│") {
+		t.Errorf("no component field: unexpected │ in output: %q", got)
+	}
+}
+
+// TestComponentPrefix_SecureOnUntrustedStaysInTree verifies that a Secure component
+// field is NOT promoted — it stays in the field list.
+func TestComponentPrefix_SecureOnUntrustedStaysInTree(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("secure component")
+	e.SetTime(fixedTime)
+	// A Secure field type for the component key — must not be promoted on untrusted path.
+	e.WithFields(Secure(fieldNameComponent, "InternalService"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.component = true
+	cfg.Indicators.componentField = fieldNameComponent
+	cfg.Indicators.componentWidth = 8
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// No │ separator — field was not promoted.
+	if strings.Contains(got, "│") {
+		t.Errorf("secure component field: should not be promoted, got %q", got)
+	}
+	// The field should still appear in the output via the tree/inline path.
+	if !strings.Contains(got, fieldNameComponent) {
+		t.Errorf("secure component field: should remain in output, got %q", got)
+	}
+}
+
+// TestComponentPrefix_NoColour verifies plain "name │" output when colour is off.
+func TestComponentPrefix_NoColour(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("msg")
+	e.SetTime(fixedTime)
+	e.WithFields(String(fieldNameComponent, "Scout"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.component = true
+	cfg.Indicators.componentField = fieldNameComponent
+	cfg.Indicators.componentWidth = 8
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e) // renderEntry forces DisableColour = true
+	// Should contain plain "Scout    │" without ANSI codes.
+	if !strings.Contains(got, "Scout    │") {
+		t.Errorf("no-colour output: want 'Scout    │', got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Count promotion
+// ---------------------------------------------------------------------------
+
+// TestCountPromotion_IntField verifies that an integer count field is promoted
+// to "(N)" and removed from the tree.
+func TestCountPromotion_IntField(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("stopping services")
+	e.SetTime(fixedTime)
+	e.WithFields(Int("count", 4), String("env", "prod"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.countFields = []string{"count"}
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// Message + count suffix, env field remains.
+	if !strings.Contains(got, "stopping services (4)") {
+		t.Errorf("count: want 'stopping services (4)', got %q", got)
+	}
+	// count field removed from tree.
+	if strings.Contains(got, "count: 4") {
+		t.Errorf("count field should be removed from tree, got %q", got)
+	}
+	// env field still present.
+	if !strings.Contains(got, "env") {
+		t.Errorf("env field should remain in tree, got %q", got)
+	}
+}
+
+// TestCountPromotion_StringFieldLeftInTree verifies that a string-typed field
+// matching a countFields name is NOT promoted (only integer types are eligible).
+func TestCountPromotion_StringFieldLeftInTree(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("msg")
+	e.SetTime(fixedTime)
+	e.WithFields(String("count", "many"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.countFields = []string{"count"}
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// No "(N)" suffix because field is string type.
+	if strings.Contains(got, "(") {
+		t.Errorf("string count field should not be promoted, got %q", got)
+	}
+	// Field should still appear.
+	if !strings.Contains(got, "count: many") {
+		t.Errorf("string count field should remain in tree, got %q", got)
+	}
+}
+
+// TestCountPromotion_MultipleNames verifies that the first matching count field
+// name wins.
+func TestCountPromotion_MultipleNames(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("msg")
+	e.SetTime(fixedTime)
+	e.WithFields(Int("total", 7))
+
+	cfg := defaultConfig()
+	cfg.Indicators.countFields = []string{"count", "total"}
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	if !strings.Contains(got, "msg (7)") {
+		t.Errorf("second name in countFields: want 'msg (7)', got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: Timing promotion and smart duration formatting
+// ---------------------------------------------------------------------------
+
+// TestTimingPromotion_IntMilliseconds verifies that an integer timing field is
+// rendered as "NNNms" inside the timing bracket.
+func TestTimingPromotion_IntMilliseconds(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("started")
+	e.SetTime(fixedTime)
+	e.WithFields(Int("startup_ms", 294))
+
+	cfg := defaultConfig()
+	cfg.Indicators.timingFields = []string{"startup_ms"}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(false)(cfg) // deterministic
+
+	got := renderEntry(t, cfg, e)
+	if !strings.Contains(got, "[294ms]") {
+		t.Errorf("int timing: want '[294ms]', got %q", got)
+	}
+}
+
+// TestTimingPromotion_DurationField verifies smart duration formatting from a
+// time.Duration field.
+func TestTimingPromotion_DurationField(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		d        time.Duration
+		wantFrag string
+	}{
+		{"sub-ms", 850 * time.Microsecond, "[850µs]"},
+		{"ms", 294 * time.Millisecond, "[294ms]"},
+		{"seconds", 2778 * time.Millisecond, "[2.77s]"},
+		{"whole-seconds", 3 * time.Second, "[3.00s]"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := GetEntry()
+			defer e.Release()
+			e.SetLevel(LevelInfo)
+			e.SetMessage("op")
+			e.SetTime(fixedTime)
+			e.WithFields(Duration("elapsed", tc.d))
+
+			cfg := defaultConfig()
+			cfg.Indicators.timingFields = []string{"elapsed"}
+			cfg.Indicators.removeFromTree = true
+			WithInlineGlyphs(false)(cfg)
+
+			got := renderEntry(t, cfg, e)
+			if !strings.Contains(got, tc.wantFrag) {
+				t.Errorf("duration %v: want %q in %q", tc.d, tc.wantFrag, got)
+			}
+		})
+	}
+}
+
+// TestTimingPromotion_MultipleFields verifies that multiple timing fields are
+// comma-separated inside one bracket.
+func TestTimingPromotion_MultipleFields(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("op")
+	e.SetTime(fixedTime)
+	e.WithFields(Int("startup_ms", 100), Int("stop_ms", 50))
+
+	cfg := defaultConfig()
+	cfg.Indicators.timingFields = []string{"startup_ms", "stop_ms"}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(false)(cfg)
+
+	got := renderEntry(t, cfg, e)
+	if !strings.Contains(got, "[100ms, 50ms]") {
+		t.Errorf("multiple timing fields: want '[100ms, 50ms]', got %q", got)
+	}
+}
+
+// TestTimingPromotion_GlyphOff verifies ASCII fallback: no ⏱ when glyphs are off.
+func TestTimingPromotion_GlyphOff(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("op")
+	e.SetTime(fixedTime)
+	e.WithFields(Int("t", 42))
+
+	cfg := defaultConfig()
+	cfg.Indicators.timingFields = []string{"t"}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(false)(cfg)
+
+	got := renderEntry(t, cfg, e)
+	if strings.Contains(got, "⏱") {
+		t.Errorf("glyph-off: unexpected ⏱ in output: %q", got)
+	}
+	if !strings.Contains(got, "[42ms]") {
+		t.Errorf("glyph-off: want '[42ms]', got %q", got)
+	}
+}
+
+// TestTimingPromotion_GlyphOn verifies ⏱ glyph appears when explicitly enabled.
+func TestTimingPromotion_GlyphOn(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("op")
+	e.SetTime(fixedTime)
+	e.WithFields(Int("t", 200))
+
+	cfg := defaultConfig()
+	cfg.Indicators.timingFields = []string{"t"}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(true)(cfg)
+
+	got := renderEntry(t, cfg, e)
+	if !strings.Contains(got, "⏱") {
+		t.Errorf("glyph-on: expected ⏱ in output: %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: State-transition arrow pairs
+// ---------------------------------------------------------------------------
+
+// TestStateArrow_BothPresent verifies that a complete pair renders " from → to".
+func TestStateArrow_BothPresent(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("state change")
+	e.SetTime(fixedTime)
+	e.WithFields(String("old_state", "connected"), String("new_state", "stale"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.statePairs = [][2]string{{"old_state", "new_state"}}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(true)(cfg)
+
+	got := renderEntry(t, cfg, e)
+	if !strings.Contains(got, "connected → stale") {
+		t.Errorf("state arrow: want 'connected → stale', got %q", got)
+	}
+	// Both fields removed from tree.
+	if strings.Contains(got, "old_state") || strings.Contains(got, "new_state") {
+		t.Errorf("state fields should be removed from tree, got %q", got)
+	}
+}
+
+// TestStateArrow_GlyphOff verifies ASCII arrow when glyphs are disabled.
+func TestStateArrow_GlyphOff(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("state change")
+	e.SetTime(fixedTime)
+	e.WithFields(String("old_state", "open"), String("new_state", "closed"))
+
+	cfg := defaultConfig()
+	cfg.Indicators.statePairs = [][2]string{{"old_state", "new_state"}}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(false)(cfg)
+
+	got := renderEntry(t, cfg, e)
+	if !strings.Contains(got, "open -> closed") {
+		t.Errorf("glyph-off arrow: want 'open -> closed', got %q", got)
+	}
+}
+
+// TestStateArrow_OnlyOneHalfPresent verifies that a partial pair is NOT collapsed:
+// both fields remain in the tree.
+func TestStateArrow_OnlyOneHalfPresent(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("partial")
+	e.SetTime(fixedTime)
+	e.WithFields(String("old_state", "running"))
+	// new_state absent — pair is incomplete.
+
+	cfg := defaultConfig()
+	cfg.Indicators.statePairs = [][2]string{{"old_state", "new_state"}}
+	cfg.Indicators.removeFromTree = true
+	WithInlineGlyphs(false)(cfg)
+
+	got := renderEntry(t, cfg, e)
+	// No arrow.
+	if strings.Contains(got, "->") || strings.Contains(got, "→") {
+		t.Errorf("partial pair: unexpected arrow in %q", got)
+	}
+	// old_state should remain in output.
+	if !strings.Contains(got, "old_state") {
+		t.Errorf("partial pair: old_state should remain in output, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: Tree/inline skip integration
+// ---------------------------------------------------------------------------
+
+// TestTreeSkip_PartialSkip verifies that non-promoted fields remain in the tree
+// and the last-child └ glyph is correct.
+func TestTreeSkip_PartialSkip(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("msg")
+	e.SetTime(fixedTime)
+	e.WithFields(
+		String(fieldNameComponent, "Scout"),
+		String("region", "ap-southeast-2"),
+		String("env", "prod"),
+	)
+	e.forceTreeDisplay = true
+
+	cfg := defaultConfig()
+	cfg.Indicators.component = true
+	cfg.Indicators.componentField = fieldNameComponent
+	cfg.Indicators.componentWidth = 8
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// region and env remain; component is removed.
+	if !strings.Contains(got, "region") {
+		t.Errorf("tree skip: region should remain, got %q", got)
+	}
+	if !strings.Contains(got, "env") {
+		t.Errorf("tree skip: env should remain, got %q", got)
+	}
+	if strings.Contains(got, "component:") {
+		t.Errorf("tree skip: component should be removed, got %q", got)
+	}
+	// The last remaining field (env) must use └, not ├.
+	if !strings.Contains(got, "└ env") {
+		t.Errorf("tree skip: last-child should use └ for env, got %q", got)
+	}
+}
+
+// TestTreeSkip_AllFieldsPromoted verifies that when all fields are promoted the
+// output ends with a single newline and no stray tree characters.
+func TestTreeSkip_AllFieldsPromoted(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("msg")
+	e.SetTime(fixedTime)
+	e.WithFields(
+		String(fieldNameComponent, "Fleet"),
+		Int("count", 3),
+	)
+	e.forceTreeDisplay = true
+
+	cfg := defaultConfig()
+	cfg.Indicators.component = true
+	cfg.Indicators.componentField = fieldNameComponent
+	cfg.Indicators.componentWidth = 8
+	cfg.Indicators.countFields = []string{"count"}
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// No tree glyphs should appear.
+	if strings.Contains(got, "├") || strings.Contains(got, "└") {
+		t.Errorf("all-promoted: unexpected tree glyph in %q", got)
+	}
+	// Must end with exactly one newline.
+	if !strings.HasSuffix(got, "\n") || strings.HasSuffix(got, "\n\n") {
+		t.Errorf("all-promoted: should end with exactly one newline, got %q", got)
+	}
+}
+
+// TestTreeSkip_MoreThan64Fields verifies the >64 field safety fallback: when
+// an entry has more than 64 fields, all fields render (no skip mask applied).
+func TestTreeSkip_MoreThan64Fields(t *testing.T) {
+	t.Parallel()
+
+	fields := make([]Field, 65)
+	fields[0] = String(fieldNameComponent, "Scout")
+	for i := 1; i < 65; i++ {
+		fields[i] = String("k"+itoa(i), "v")
+	}
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("large entry")
+	e.SetTime(fixedTime)
+	e.WithFields(fields...)
+
+	cfg := defaultConfig()
+	cfg.Indicators.component = true
+	cfg.Indicators.componentField = fieldNameComponent
+	cfg.Indicators.componentWidth = 8
+	cfg.Indicators.removeFromTree = true
+
+	got := renderEntry(t, cfg, e)
+	// component field should still appear in the tree since skip is disabled for >64.
+	if !strings.Contains(got, "component: Scout") {
+		t.Errorf(">64 fields: component should remain in output, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: JSON parity
+// ---------------------------------------------------------------------------
+
+// TestJSONParity verifies that a console render with indicators on produces the
+// compact format, while the same entry through a JSON writer contains every field
+// fully expanded (writer_json.go must be untouched).
+func TestJSONParity(t *testing.T) {
+	t.Parallel()
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("service started")
+	e.SetTime(fixedTime)
+	e.WithFields(
+		String(fieldNameComponent, "Scout"),
+		Int("count", 4),
+		Int("startup_ms", 2000),
+		String("old_state", "idle"),
+		String("new_state", "running"),
+		String("env", "prod"),
+	)
+
+	// Console with indicators on.
+	consoleCfg := defaultConfig()
+	consoleCfg.Indicators = inlineIndicators{
+		component:      true,
+		componentField: fieldNameComponent,
+		componentWidth: 8,
+		countFields:    []string{"count"},
+		timingFields:   []string{"startup_ms"},
+		statePairs:     [][2]string{{"old_state", "new_state"}},
+		removeFromTree: true,
+		showGlyphs:     false,
+		glyphsExplicit: true,
+	}
+
+	// Use renderEntry helper for console.
+	consoleOut := renderEntry(t, consoleCfg, e)
+
+	// Console must have the compact form.
+	if !strings.Contains(consoleOut, "Scout") {
+		t.Errorf("console: want 'Scout' component prefix, got %q", consoleOut)
+	}
+	if !strings.Contains(consoleOut, "(4)") {
+		t.Errorf("console: want '(4)' count suffix, got %q", consoleOut)
+	}
+	if !strings.Contains(consoleOut, "[2000ms]") && !strings.Contains(consoleOut, "[2.00s]") {
+		t.Errorf("console: want timing bracket, got %q", consoleOut)
+	}
+
+	// JSON must expand every field.
+	var jsonBuf bytes.Buffer
+	jw := NewJSONWriter(&jsonBuf)
+	if err := jw.Write(e); err != nil {
+		t.Fatalf("JSONWriter.Write: %v", err)
+	}
+	jsonOut := jsonBuf.String()
+
+	for _, wantKey := range []string{fieldNameComponent, "count", "startup_ms", "old_state", "new_state", "env"} {
+		if !strings.Contains(jsonOut, `"`+wantKey+`"`) {
+			t.Errorf("JSON parity: key %q missing from JSON output: %q", wantKey, jsonOut)
 		}
 	}
 }

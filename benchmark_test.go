@@ -433,3 +433,88 @@ func BenchmarkSecureField_UntrustedWriter(b *testing.B) {
 		l.Info("request completed", Secure("session", "abc123def456"))
 	}
 }
+
+// ---- Inline-indicator benchmarks --------------------------------------------
+
+// newIndicatorLogger builds a logger with the full indicator set enabled and a
+// console writer pointing at io.Discard. Used to isolate indicator render cost.
+func newIndicatorLogger() *Logger {
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = io.Discard
+	cfg.StructuredOutput = nil
+	cfg.ConsoleLevel = LevelDebug
+	cfg.Indicators = inlineIndicators{
+		component:      true,
+		componentField: "component",
+		componentWidth: 8,
+		countFields:    []string{"count"},
+		timingFields:   []string{"startup_ms"},
+		statePairs:     [][2]string{{"old_state", "new_state"}},
+		removeFromTree: true,
+		showGlyphs:     false,
+		glyphsExplicit: true,
+	}
+	return newFromConfig(cfg)
+}
+
+// indicatorFields returns a representative field set that matches every indicator
+// key (component, count, timing, state pair) plus one ordinary field.
+func indicatorFields() []Field {
+	return []Field{
+		String("component", "Scout"),
+		Int("count", 4),
+		Int("startup_ms", 2000),
+		String("old_state", "idle"),
+		String("new_state", "running"),
+		String("env", "prod"),
+	}
+}
+
+// noMatchFields returns a field set that contains no indicator keys, so the
+// pre-scan short-circuits to the baseline path.
+func noMatchFields() []Field {
+	return []Field{
+		String("service", "api-gateway"),
+		Int("port", 8080),
+		Bool("tls", true),
+		String("region", "ap-southeast-2"),
+	}
+}
+
+// BenchmarkIndicators_ON measures the console render path with indicators fully
+// active: component prefix + count + timing + state arrow.
+func BenchmarkIndicators_ON(b *testing.B) {
+	l := newIndicatorLogger()
+	fields := indicatorFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("service started", fields...)
+	}
+}
+
+// BenchmarkIndicators_OFF_NoMatch measures the case where indicators are
+// configured but NO entry fields match any indicator key. The pre-scan must
+// short-circuit to the baseline code path with no measurable overhead vs a
+// plain logger.
+func BenchmarkIndicators_OFF_NoMatch(b *testing.B) {
+	l := newIndicatorLogger()
+	fields := noMatchFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("request completed", fields...)
+	}
+}
+
+// BenchmarkIndicators_Disabled is the true baseline: indicators struct is
+// entirely zero-valued, so isActive() returns false and the pre-scan is skipped.
+func BenchmarkIndicators_Disabled(b *testing.B) {
+	l := newDiscardLogger()
+	fields := noMatchFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("request completed", fields...)
+	}
+}
