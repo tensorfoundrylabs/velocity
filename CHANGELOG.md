@@ -22,7 +22,7 @@
 
 ### New features
 
-- **Inline indicators** (`WithComponentStyling` and friends) — opt-in, pretty-console-only feature that promotes a configurable set of well-known fields to compact header tokens: a hashed-colour component name with a muted `│` bar, a `(N)` count suffix, a `⏱ …` timing suffix, and `from → to` state-transition arrows. Promoted fields are removed from the field tree by default so they are not shown twice. JSON writers are completely unaffected — every field still appears fully expanded.
+- **Inline indicators** (`WithComponentStyling` and friends) — opt-in, pretty-console-only feature that promotes a configurable set of well-known fields to compact header tokens: a hashed-colour component name with a muted `│` bar, a `(N)` count suffix, a `⏱ …` timing suffix, and `⟳ from → to` state-transition arrows. Promoted fields are removed from the field tree by default so they are not shown twice. JSON writers are completely unaffected — every field still appears fully expanded.
   - `WithComponentStyling()` — convenience option: component field `"component"`, count field `"count"`, state pairs `old_state`/`new_state` and `prev_state`/`next_state`, glyph auto-detection. Timing fields are left for the caller (names are application-specific).
   - `WithComponentField(name string)` — enable component prefix, set field name
   - `WithComponentColumnWidth(n int)` — fixed column width for the name (default 8)

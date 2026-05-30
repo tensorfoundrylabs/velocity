@@ -823,8 +823,9 @@ func TestStateArrow_BothPresent(t *testing.T) {
 	WithInlineGlyphs(true)(cfg)
 
 	got := renderEntry(t, cfg, e)
-	if !strings.Contains(got, "connected → stale") {
-		t.Errorf("state arrow: want 'connected → stale', got %q", got)
+	// Glyphs on: the ⟳ state-change icon leads the transition.
+	if !strings.Contains(got, "⟳ connected → stale") {
+		t.Errorf("state arrow: want '⟳ connected → stale', got %q", got)
 	}
 	// Both fields removed from tree.
 	if strings.Contains(got, "old_state") || strings.Contains(got, "new_state") {
@@ -851,6 +852,10 @@ func TestStateArrow_GlyphOff(t *testing.T) {
 	got := renderEntry(t, cfg, e)
 	if !strings.Contains(got, "open -> closed") {
 		t.Errorf("glyph-off arrow: want 'open -> closed', got %q", got)
+	}
+	// No state-change glyph in the ASCII fallback.
+	if strings.Contains(got, "⟳") {
+		t.Errorf("glyph-off arrow: unexpected ⟳ in %q", got)
 	}
 }
 

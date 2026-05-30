@@ -71,7 +71,7 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 - **`Logger.Status`** renders inline (indented under parent log line, no own timestamp) on the console; JSON writers still receive structured records with `status` field.
 - **Shared `writerSet`**: parent and child loggers (`With`, `Detailed`, `WithComponent`, `Request`) share writer topology and `scanSecure` atomic, so `AddWriter` after child creation is visible everywhere.
 - **No `encoding/json`** in hot paths.
-- **Inline indicators** (opt-in, pretty-only, JSON unaffected): `WithComponentStyling()` enables compact header indicators — a hashed-colour component name + muted `│` bar, `(N)` count suffix, `⏱ …` timing suffix, and `from → to` state-transition arrows. Promoted fields are removed from the tree by default (`removeFromTree=true`). Configured via `WithComponentField`, `WithComponentColumnWidth`, `WithCountFields`, `WithTimingFields`, `WithStateTransitionPairs`, `WithInlineGlyphs`. The component palette is set via `WithComponentPalette` / `WithComponentColour` `ThemeOption`s. JSON writers are never affected.
+- **Inline indicators** (opt-in, pretty-only, JSON unaffected): `WithComponentStyling()` enables compact header indicators — a hashed-colour component name + muted `│` bar, `(N)` count suffix, `⏱ …` timing suffix, and `⟳ from → to` state-transition arrows. Promoted fields are removed from the tree by default (`removeFromTree=true`). Configured via `WithComponentField`, `WithComponentColumnWidth`, `WithCountFields`, `WithTimingFields`, `WithStateTransitionPairs`, `WithInlineGlyphs`. The component palette is set via `WithComponentPalette` / `WithComponentColour` `ThemeOption`s. JSON writers are never affected.
 
 ## Concurrency
 

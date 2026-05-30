@@ -501,7 +501,8 @@ func (t *Template) writeCountSuffix(buf *bytes.Buffer, f Field, theme *Theme) {
 	}
 }
 
-// writeStateArrow renders " from → to" (or " from -> to" when glyphs off).
+// writeStateArrow renders " ⟳ from → to" (or " from -> to" when glyphs off). The ⟳
+// signifies a state change and shares the muted colour of the rest of the token.
 // Both field values are read as strings; other types are left in the tree.
 func (t *Template) writeStateArrow(buf *bytes.Buffer, fromField, toField Field, theme *Theme, trusted bool, redactionMark string, glyphs bool) {
 	_ = buf.WriteByte(' ')
@@ -512,6 +513,12 @@ func (t *Template) writeStateArrow(buf *bytes.Buffer, fromField, toField Field, 
 	}
 	if muted != "" {
 		buf.WriteString(muted)
+	}
+
+	// Lead with the state-change glyph so transitions stand out at a glance.
+	// Dropped in the ASCII fallback, where the arrow alone carries the meaning.
+	if glyphs {
+		buf.WriteString("⟳ ")
 	}
 
 	writeFieldValueString(buf, fromField, trusted, redactionMark)
