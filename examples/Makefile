@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-notify run-secure run-ring-buffer run-status-items run-groups run-continuation run-hyperlinks run-all build-all clean help
+.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-notify run-secure run-ring-buffer run-status-items run-groups run-continuation run-hyperlinks run-component-logging run-all build-all clean help
 
 SEPARATOR = @echo "" && echo "============================================================" && echo ""
 
@@ -75,6 +75,10 @@ run-continuation:
 ## run-hyperlinks: Run the OSC 8 hyperlink example
 run-hyperlinks:
 	go run ./hyperlinks
+
+## run-component-logging: Run the component-aware inline-indicator example
+run-component-logging:
+	go run ./component-logging
 
 ## run-all: Run all examples sequentially with a separator between each
 run-all:
@@ -169,6 +173,11 @@ run-all:
 	@echo "  EXAMPLE 18: hyperlinks"
 	@echo "============================================================"
 	go run ./hyperlinks
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 19: component-logging"
+	@echo "============================================================"
+	go run ./component-logging
 
 ## build-all: Compile all examples to binaries in examples/bin/
 build-all:
@@ -189,14 +198,15 @@ build-all:
 	go build -o bin/status-items       ./status-items
 	go build -o bin/groups             ./groups
 	go build -o bin/continuation       ./continuation
-	go build -o bin/hyperlinks         ./hyperlinks
+	go build -o bin/hyperlinks          ./hyperlinks
+	go build -o bin/component-logging  ./component-logging
 
 ## clean: Remove compiled example binaries
 clean:
 	go clean ./basic ./json-logging ./themes ./custom-theme ./pretty-output \
 		./tables ./progress ./slog-bridge ./multi-writer ./sampling \
 		./terminal-velocity ./notify ./secure ./ring-buffer ./status-items \
-		./groups ./continuation ./hyperlinks
+		./groups ./continuation ./hyperlinks ./component-logging
 	-rm -rf bin
 
 ## help: Show this help message

@@ -63,6 +63,7 @@ go run ./examples/terminal-velocity
 | [groups](groups/) | `Logger.Group` for count-headed indented blocks; explicit markers; empty group | `make run-groups` |
 | [continuation](continuation/) | `Logger.Continue` for multi-line output anchored to one structured entry; hyperlinks inside continuation lines | `make run-continuation` |
 | [hyperlinks](hyperlinks/) | `Hyperlink` OSC 8 helper; `HyperlinksSupported` detection; all three fallback modes; composing with `Theme.Format`; embedding in Box, Table, and ContinuationBlock | `make run-hyperlinks` |
+| [component-logging](component-logging/) | `WithComponentStyling` inline-indicator feature: component bar, `(N)` count, `[⏱ …]` timing, `from → to` state arrows, tree-skip of promoted fields; JSON-parity proof | `make run-component-logging` |
 
 ## Building
 

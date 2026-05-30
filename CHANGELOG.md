@@ -18,6 +18,22 @@
 - `StatusItem.writeStatusFields` now applies the same TTY-as-trust model as `ConsoleWriter`: Secure fields show plaintext on terminal output and are redacted in plain (non-TTY) renders. Previously, Secure fields were always redacted in Status badge output even on trusted terminals.
 - `SetTheme(nil)` now documents and enforces "nil = reset to NightOwl" semantics; `Style()` and `cfg.ConsoleTheme` both reflect the reset. Previously, the nil behaviour was not regression-tested.
 
+## v2.0.1 — pending
+
+### New features
+
+- **Inline indicators** (`WithComponentStyling` and friends) — opt-in, pretty-console-only feature that promotes a configurable set of well-known fields to compact header tokens: a hashed-colour component name with a muted `│` bar, a `(N)` count suffix, a `[⏱ …]` timing suffix, and `from → to` state-transition arrows. Promoted fields are removed from the field tree by default so they are not shown twice. JSON writers are completely unaffected — every field still appears fully expanded.
+  - `WithComponentStyling()` — convenience option: component field `"component"`, count field `"count"`, state pairs `old_state`/`new_state` and `prev_state`/`next_state`, glyph auto-detection. Timing fields are left for the caller (names are application-specific).
+  - `WithComponentField(name string)` — enable component prefix, set field name
+  - `WithComponentColumnWidth(n int)` — fixed column width for the name (default 8)
+  - `WithCountFields(names ...string)` — promote integer count fields
+  - `WithTimingFields(names ...string)` — promote timing fields (int ms or `time.Duration`)
+  - `WithStateTransitionPairs(pairs ...[2]string)` — register from/to field pairs
+  - `WithInlineGlyphs(enabled bool)` — override `VELOCITY_GLYPHS` env detection
+  - `WithComponentPalette(colours ...Colour)` — `ThemeOption` to set the hash palette
+  - `WithComponentColour(name string, c Colour)` — `ThemeOption` to pin one component name
+- New example `examples/component-logging` demonstrating the full indicator set with a Fleet/Scout/Relay service simulation and JSON-parity proof.
+
 ## v2.0.0 — 2026-05-15
 
 Tag when ready: `git tag v2.0.0 feature/v2`

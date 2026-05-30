@@ -53,6 +53,7 @@ import (
 - **Ring buffer writer** — `RingBufferWriter` with `Snapshot(n)` and `Subscribe(ctx, bufSize)` for in-process log capture
 - **slog bridge** — `slogbridge.NewHandler` implements `log/slog.Handler` for incremental adoption
 - **Log sampling** — `CountSampler` checked before pool acquisition; no allocs on the skip path
+- **Component-aware pretty output** — opt-in `WithComponentStyling()` folds service name, count, timing, and state-transition fields into compact inline indicators on the console; JSON output is unaffected and keeps every field expanded
 - **Nil-safe and testable** — every public method handles nil receivers; overridable `FatalHandler`; `WithTesting(t)` preset
 
 ## Performance
