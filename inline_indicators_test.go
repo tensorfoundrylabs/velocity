@@ -92,8 +92,10 @@ func TestInlineIndicators_OptionsWriteConfig(t *testing.T) {
 		if cfg.Indicators.componentField != "svc" {
 			t.Errorf("componentField = %q, want %q", cfg.Indicators.componentField, "svc")
 		}
-		if cfg.Indicators.componentWidth != 8 {
-			t.Errorf("componentWidth default = %d, want 8", cfg.Indicators.componentWidth)
+		// Default is compact (0): the name keeps its natural width. A fixed column
+		// is opt-in via WithComponentColumnWidth.
+		if cfg.Indicators.componentWidth != 0 {
+			t.Errorf("componentWidth default = %d, want 0 (compact)", cfg.Indicators.componentWidth)
 		}
 		if !cfg.Indicators.removeFromTree {
 			t.Error("removeFromTree should default to true when component is enabled")
@@ -227,8 +229,8 @@ func TestInlineIndicators_WithComponentStyling_GoldenOutput(t *testing.T) {
 	WithInlineGlyphs(false)(cfg) // deterministic: no glyph env dependency
 	got := renderEntry(t, cfg, e)
 
-	// component (8-wide) + │ + message + (5) + no remaining fields
-	want := "2026-05-30 14:52:33 [INFO] Fleet    │ service started (5)\n"
+	// compact component (natural width) + │ + message + (5) + no remaining fields
+	want := "2026-05-30 14:52:33 [INFO] Fleet │ service started (5)\n"
 	if got != want {
 		t.Errorf("golden output mismatch:\n  got:  %q\n  want: %q", got, want)
 	}
@@ -464,6 +466,8 @@ func TestComponentPrefix_PaddingAndTruncation(t *testing.T) {
 		width     int
 		wantInOut string // the portion of the output between "[INFO]" and "│"
 	}{
+		// Compact (width 0, the default): natural width, single separator space.
+		{"compact", "Fleet", 0, " Fleet │ "},
 		{"exact", "Scout", 5, " Scout │ "},
 		{"padded", "A", 4, " A    │ "},
 		{"truncated", "Longname", 5, " Long… │ "},
@@ -789,8 +793,12 @@ func TestTimingPromotion_GlyphOn(t *testing.T) {
 	WithInlineGlyphs(true)(cfg)
 
 	got := renderEntry(t, cfg, e)
-	if !strings.Contains(got, "⏱") {
-		t.Errorf("glyph-on: expected ⏱ in output: %q", got)
+	// With the glyph present the timing is bracketless: " ⏱ 200ms", not "[⏱ 200ms]".
+	if !strings.Contains(got, "⏱ 200ms") {
+		t.Errorf("glyph-on: expected '⏱ 200ms' in output: %q", got)
+	}
+	if strings.Contains(got, "[⏱") || strings.Contains(got, "200ms]") {
+		t.Errorf("glyph-on: timing should not be bracketed: %q", got)
 	}
 }
 

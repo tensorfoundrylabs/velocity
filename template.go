@@ -403,10 +403,9 @@ func (t *Template) writeComponentPrefix(buf *bytes.Buffer, f Field, theme *Theme
 	_ = buf.WriteByte(' ')
 
 	name := *(*string)(f.value)
+	// width <= 0 is compact: the name keeps its natural length (bars still align
+	// when names share a length). A positive width pads/truncates to a fixed column.
 	width := t.indicators.componentWidth
-	if width <= 0 {
-		width = 8
-	}
 
 	// Apply component colour.
 	var colCode string
@@ -441,6 +440,11 @@ func (t *Template) writeComponentPrefix(buf *bytes.Buffer, f Field, theme *Theme
 // writeRunePadded writes s to buf, left-aligned, exactly width runes wide.
 // Truncates with '…' if s is longer; pads with spaces if shorter.
 func writeRunePadded(buf *bytes.Buffer, s string, width int) {
+	if width <= 0 {
+		// Compact: natural width, no column padding or truncation.
+		buf.WriteString(s)
+		return
+	}
 	n := utf8.RuneCountInString(s)
 	if n > width {
 		// Truncate: write width-1 runes then '…'.
@@ -540,7 +544,10 @@ func writeFieldValueString(buf *bytes.Buffer, f Field, trusted bool, redactionMa
 	}
 }
 
-// writeTimingSuffix renders " [⏱ t1, t2]" (or " [t1, t2]" without glyph).
+// writeTimingSuffix renders " ⏱ t1, t2" with the stopwatch glyph, or the bracketed
+// ASCII fallback " [t1, t2]" when glyphs are off. With the glyph present, the glyph
+// and the muted colour set the timing apart so the brackets are redundant; without it
+// the brackets keep the value from reading as part of the message.
 // Integer fields are treated as milliseconds; Duration fields use smart formatting.
 func (t *Template) writeTimingSuffix(buf *bytes.Buffer, entry *Entry, scan indicatorScanResult, theme *Theme, glyphs bool) {
 	_ = buf.WriteByte(' ')
@@ -553,9 +560,10 @@ func (t *Template) writeTimingSuffix(buf *bytes.Buffer, entry *Entry, scan indic
 		buf.WriteString(muted)
 	}
 
-	_ = buf.WriteByte('[')
 	if glyphs {
 		buf.WriteString("⏱ ")
+	} else {
+		_ = buf.WriteByte('[')
 	}
 
 	for i := range scan.timingN {
@@ -566,7 +574,9 @@ func (t *Template) writeTimingSuffix(buf *bytes.Buffer, entry *Entry, scan indic
 		writeSmartDuration(buf, f)
 	}
 
-	_ = buf.WriteByte(']')
+	if !glyphs {
+		_ = buf.WriteByte(']')
+	}
 
 	if muted != "" {
 		buf.WriteString(Reset)

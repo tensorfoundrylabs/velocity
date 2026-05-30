@@ -39,16 +39,21 @@ Without indicators (default tree mode):
 With `WithComponentStyling()` + `WithTimingFields("startup_ms")`:
 
 ```
-2026-05-30 14:52:33 [INFO] Scout    │ service started [⏱ 2.00s]
+2026-05-30 14:52:33 [INFO] Scout │ service started ⏱ 2.00s
                             ├ name: discovery
                             └ phase: 0
-2026-05-30 14:52:33 [INFO] Relay    │ stopping services (4)
-2026-05-30 14:52:33 [WARN] Scout    │ circuit breaker opened closed → open
+2026-05-30 14:52:33 [INFO] Relay │ stopping services (4)
+2026-05-30 14:52:33 [WARN] Scout │ circuit breaker opened closed → open
                             └ endpoint: 192.168.0.181:8010
-2026-05-30 14:52:33 [INFO] Fleet    │ Source state transition connected → stale
+2026-05-30 14:52:33 [INFO] Fleet │ Source state transition connected → stale
                             └ source_id: relay-CODY-RYZEN
-2026-05-30 14:52:33 [INFO] Fleet    │ Fleet has shutdown
+2026-05-30 14:52:33 [INFO] Fleet │ Fleet has shutdown
 ```
+
+The component column is **compact** by default: the name keeps its natural width and
+the bars line up whenever names share a length (the common case for a fixed service
+set like Fleet/Scout/Relay). For guaranteed alignment when names vary in length, set
+a fixed column with `WithComponentColumnWidth(n)` (for example `WithComponentColumnWidth(5)`).
 
 Reading order is now: **when** (timestamp), **how bad** (level), **who** (component), **what** (message).
 
@@ -85,7 +90,7 @@ See `examples/component-logging` for a complete Fleet/Scout/Relay simulation.
 
 Convenience preset. Enables:
 
-- Component prefix with field name `"component"`, column width 8
+- Component prefix with field name `"component"`, compact column (natural width)
 - Count promotion on field `"count"`
 - State-transition pairs `old_state`/`new_state` and `prev_state`/`next_state`
 - Glyph auto-detection (reads `VELOCITY_GLYPHS` env var at first use)
@@ -96,13 +101,16 @@ Timing fields are **not** included, because their names are application-specific
 ### `WithComponentField(name string)`
 
 Enables the component prefix and sets the field name to look up on each entry.
-Column width defaults to 8 if not already set via `WithComponentColumnWidth`.
+The column is compact (natural width) unless you set `WithComponentColumnWidth`.
 
 ### `WithComponentColumnWidth(n int)`
 
-Sets the fixed column width for the component name. Names shorter than `n` are
-right-padded with spaces; names longer than `n` are truncated. Default is 8,
-which fits most short service names (Fleet, Scout, Relay, Auth, etc.).
+Sets a fixed column width for the component name so the bars align even when names
+differ in length. Names shorter than `n` are right-padded with spaces; names longer
+than `n` are truncated with an ellipsis. The default (unset, or `0`) is compact: the
+name keeps its natural width. For a uniform set of short service names, a small fixed
+width such as `WithComponentColumnWidth(5)` (Fleet, Scout, Relay) keeps a tidy column
+with a single space before the bar.
 
 ### `WithCountFields(names ...string)`
 
@@ -112,7 +120,8 @@ services use different field names.
 
 ### `WithTimingFields(names ...string)`
 
-Registers field names promoted to a `[⏱ …]` timing suffix. All matching fields
+Registers field names promoted to a `⏱ …` timing suffix (bracketless with the
+stopwatch glyph; `[…]` is the ASCII fallback when glyphs are off). All matching fields
 appear inside one bracket, comma-separated. Accepts both integer millisecond fields
 and `time.Duration` fields. The value is formatted with smart precision:
 
@@ -176,7 +185,7 @@ log := velocity.New(
 |-----------|--------|
 | `NO_COLOR=1` env | All colour disabled; component name renders in plain text |
 | `FORCE_COLOR=1` env | Colour forced on (useful on Windows with piped stdout) |
-| `VELOCITY_GLYPHS=0` env | Unicode glyphs replaced: `[⏱ …]` → `[…]`, `→` → `->` |
+| `VELOCITY_GLYPHS=0` env | Unicode glyphs replaced: `⏱ …` → `[…]`, `→` → `->` |
 | `WithInlineGlyphs(false)` | Same as `VELOCITY_GLYPHS=0`, takes precedence over env |
 | Non-TTY stdout (pipe/file) | Colour auto-disabled; glyphs unaffected |
 
@@ -188,7 +197,7 @@ rendering. A single entry logged through both writers produces:
 
 **Console:**
 ```
-2026-05-30 14:52:33 [INFO] Scout    │ service started (12) [⏱ 3.20s]
+2026-05-30 14:52:33 [INFO] Scout │ service started (12) ⏱ 3.20s
 ```
 
 **JSON:**

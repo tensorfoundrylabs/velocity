@@ -292,45 +292,42 @@ func WithSecureTags(enabled bool) Option {
 }
 
 // WithComponentStyling enables the compact inline-indicator feature with sensible
-// defaults: component field name "component", column width 8, count field "count",
-// state-transition pairs old/new and prev/next, glyph auto-detection. Timing fields
-// are deliberately excluded — their names are application-specific.
-// Call WithTimingFields separately to enable timing promotion.
+// defaults: component field name "component", count field "count", state-transition
+// pairs old/new and prev/next, glyph auto-detection. The component column is compact
+// by default (the name is followed by a single space and the bar), so bars line up
+// when names share a length. Call WithComponentColumnWidth for a fixed-width column,
+// and WithTimingFields to enable timing promotion (timing field names are
+// application-specific).
 func WithComponentStyling() Option {
 	return func(c *config) {
 		c.Indicators.component = true
 		c.Indicators.componentField = "component"
-		if c.Indicators.componentWidth == 0 {
-			c.Indicators.componentWidth = 8
-		}
 		c.Indicators.countFields = []string{"count"}
 		c.Indicators.statePairs = [][2]string{
 			{"old_state", "new_state"},
 			{"prev_state", "next_state"},
 		}
 		c.Indicators.removeFromTree = true
-		// Glyph detection defers to the runtime check; leave showGlyphs as false
-		// (the render path will call glyphsSupported() at Phase 4 — for now the
-		// field is scaffolding only).
+		// Glyph use is resolved at newFromConfig time: explicit WithInlineGlyphs wins,
+		// otherwise GlyphsSupported() auto-detects the terminal.
 	}
 }
 
 // WithComponentField enables the component prefix indicator and sets the field name
-// to look up on each entry. Column width defaults to 8 if not already set.
+// to look up on each entry. The column is compact by default; call
+// WithComponentColumnWidth for a fixed-width aligned column.
 func WithComponentField(name string) Option {
 	return func(c *config) {
 		c.Indicators.component = true
 		c.Indicators.componentField = name
-		if c.Indicators.componentWidth == 0 {
-			c.Indicators.componentWidth = 8
-		}
 		c.Indicators.removeFromTree = true
 	}
 }
 
-// WithComponentColumnWidth sets the fixed column width used to pad (or truncate)
-// the component name in the header prefix. Has no effect when the component
-// indicator is disabled.
+// WithComponentColumnWidth pads (or truncates) the component name to a fixed width so
+// the bars align into a column even when names differ in length. The default (unset,
+// or zero) is compact: the name keeps its natural width. Has no effect when the
+// component indicator is disabled.
 func WithComponentColumnWidth(n int) Option {
 	return func(c *config) {
 		if n > 0 {

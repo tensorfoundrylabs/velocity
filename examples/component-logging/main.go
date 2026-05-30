@@ -41,6 +41,7 @@ func main() {
 	console := velocity.New(
 		velocity.WithDevelopment(),
 		velocity.WithComponentStyling(),
+		// velocity.WithComponentColumnWidth(5),
 		velocity.WithTimingFields("startup_ms", "startup_time", "stop_ms", "shutdown_ms"),
 		velocity.WithFieldDisplayMode(velocity.FieldDisplayTree),
 		velocity.WithInlineGlyphs(true),
