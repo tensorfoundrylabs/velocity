@@ -10,6 +10,24 @@
 
 ### Bug fixes
 
+- Fixed field corruption in `Logger.LogEntry` (used by slogbridge) when base fields were prepended in-place into a shared backing array, silently overwriting the first `len(baseFields)` user fields.
+- Fixed caller off-by-one for `Logger.Status`, `Logger.Group`, and `Logger.Continue`: these 3-frame call paths were skipping 4 frames and reported the wrong source location.
+- `slogbridge.Handler` now resolves `record.PC` into `Caller`/`Line`/`Function` fields when the velocity logger has caller capture enabled; previously PC was silently dropped.
+- `ConsoleWriter.SetTheme` now builds a new `Template` rather than mutating the existing one in-place, eliminating a data race with concurrent `WriteSecure` calls that snapshot the template pointer under the lock.
+- Guarded the `l.writers.mw != nil` nil-check in `logStatusStructuredWithFields` under an RLock, preventing a race with concurrent `AddWriter`/`Close` calls.
+- Ring-buffer flusher no longer busy-polls when idle: replaced the spinning `default:` branch with a signal channel (`writeCh`) that `Write` kicks after each commit, parking the flusher until work arrives.
+- `MultiWriter.Write` now takes `RLock` instead of a full write lock, allowing concurrent log fan-outs to proceed in parallel.
+- `FieldValueToString` (`FieldTypeInt`, `FieldTypeGroupItems`, `FieldTypeContinuationLines`) no longer returns a string backed by a stack-local buffer; uses `strconv.FormatInt` instead.
+- All four JSON write paths (`WriteSecure`, `WriteStatusSecure`, `WriteGroupSecure`, `WriteContinueSecure`) now append the newline inside the buffer before a single `Write` call, halving syscalls per entry.
+- Effective log level now only accounts for outputs that actually exist; a console-only logger with a high console level no longer paid for sub-threshold structured work due to the default `StructuredLevel` dragging the gate down.
+- `ConsoleWriterRB` direct-write fallback no longer races with the ring-buffer flusher: both paths now serialise via a shared mutex. `ConsoleWriterRB` is also marked deprecated.
+- `ConsoleWriterRB` constructor and `SetTheme` now derive `useColours` from `resolveColourForWriter` instead of hardcoding `true`, so ANSI sequences are not emitted into pipes or files.
+- `FromContext` returns a package-level singleton nop logger on cache miss instead of allocating a new `Logger` per call.
+- `PutFieldSlice` no longer heap-allocates a new `*[]Field` wrapper on every call; the wrapper is now recycled from a secondary pool.
+- `visibleLen` now correctly skips OSC 8 hyperlink escape sequences (`ESC ] 8 ; ... ST`) so column-width arithmetic in `Table`/`KeyValue` cells is correct when cells contain hyperlinks.
+- `isTerminal` now calls `term.IsTerminal` for any `*os.File`, not only the three standard streams, matching `IsTerminalWriter` behaviour.
+- `CLAUDE.md` corrected: `AtomicLevel` type reference removed (level is a bare `atomic.Int32`).
+- Banner renderer now uses a consistent single-line box-drawing set (`┌─┐│└┘`) instead of mixing double corners (`╔╗╚╝`) with single-line fills.
 - Console writer now correctly emits colour when no theme is explicitly configured; previously, the default-theme path silently disabled colour.
 - `StatusItem`, `Group`, and `ContinuationBlock` now implement `TTYRenderable` and expose a `RenderTTY(w, isTTY)` method. Previously, when rendered via `Logger.Render`, `IsTerminalWriter` on the intermediate buffer always returned false, producing plain (uncoloured) badge/item output even on real terminals.
 - `template.useColours` is now gated on actual TTY state at writer construction, not just on whether the theme has colours. Previously, ANSI sequences were always emitted when the theme was non-mono, including when stdout was a pipe or file.
