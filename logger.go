@@ -127,9 +127,26 @@ func newFromConfig(cfg *config) *Logger {
 	// Default: secure tag scanning is enabled unless explicitly disabled.
 	logger.secureScanEnabled.Store(!cfg.DisableSecureTags)
 
-	// Use the most permissive level so logs aren't dropped when outputs have
-	// different thresholds.
-	effectiveLevel := min(cfg.StructuredLevel, cfg.ConsoleLevel)
+	// Clamp levels to LevelOff when the corresponding output doesn't exist, so
+	// the gate only reflects outputs that are actually wired up. Without this a
+	// console-only logger at LevelWarn still processes Info entries because the
+	// default StructuredLevel (LevelInfo) drags the effective gate down.
+	consoleLevel := cfg.ConsoleLevel
+	if cfg.ConsoleOutput == nil || cfg.ConsoleOutput == io.Discard {
+		consoleLevel = LevelOff
+	}
+	structuredLevel := cfg.StructuredLevel
+	if cfg.StructuredOutput == nil || cfg.StructuredOutput == io.Discard {
+		structuredLevel = LevelOff
+	}
+	// Use the most permissive level of the outputs that actually exist so logs
+	// aren't dropped when outputs have different thresholds.
+	effectiveLevel := min(structuredLevel, consoleLevel)
+	// If no fixed outputs are configured at all (e.g. MultiWriter-only or Nop),
+	// fall back to the original min so dynamic AddWriter calls still work.
+	if consoleLevel == LevelOff && structuredLevel == LevelOff {
+		effectiveLevel = min(cfg.StructuredLevel, cfg.ConsoleLevel)
+	}
 	logger.level.Store(int32(effectiveLevel))
 
 	if cfg.ConsoleOutput != nil && cfg.ConsoleOutput != io.Discard {
