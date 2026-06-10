@@ -60,56 +60,66 @@ func main() {
 
 	// --- Startup sequence ---
 
-	scout.Info("service started",
+	scout.Info(
+		"service started",
 		velocity.Int("startup_ms", 2000),
 		velocity.String("name", "discovery"),
 		velocity.Int("phase", 0),
 	)
 
-	fleet.Info("service started",
+	fleet.Info(
+		"service started",
 		velocity.Duration("startup_time", 1500*1000*1000), // 1.5 s as nanoseconds
 		velocity.String("mode", "primary"),
 	)
 
-	relay.Info("service started",
+	relay.Info(
+		"service started",
 		velocity.Int("startup_ms", 800),
 		velocity.String("listen", ":7400"),
 	)
 
-	relay.Info("registered upstream peers",
+	relay.Info(
+		"registered upstream peers",
 		velocity.Int("count", 3),
 		velocity.String("region", "ap-southeast-2"),
 	)
 
-	fleet.Info("source connected",
+	fleet.Info(
+		"source connected",
 		velocity.String("old_state", "disconnected"),
 		velocity.String("new_state", "connected"),
 		velocity.String("source_id", "relay-CODY-RYZEN"),
 	)
 
-	scout.Info("discovery complete",
+	scout.Info(
+		"discovery complete",
 		velocity.Int("count", 12),
 		velocity.Int("startup_ms", 3200),
 	)
 
 	// --- Steady-state ---
 
-	fleet.Info("health check passed",
+	fleet.Info(
+		"health check passed",
 		velocity.String("prev_state", "degraded"),
 		velocity.String("next_state", "healthy"),
 	)
 
-	relay.Info("stopping services",
+	relay.Info(
+		"stopping services",
 		velocity.Int("count", 4),
 	)
 
-	scout.Warn("circuit breaker opened",
+	scout.Warn(
+		"circuit breaker opened",
 		velocity.String("old_state", "closed"),
 		velocity.String("new_state", "open"),
 		velocity.String("endpoint", "192.168.0.181:8010"),
 	)
 
-	fleet.Info("Source state transition",
+	fleet.Info(
+		"Source state transition",
 		velocity.String("prev_state", "connected"),
 		velocity.String("next_state", "stale"),
 		velocity.String("source_id", "relay-CODY-RYZEN"),
@@ -117,16 +127,19 @@ func main() {
 
 	// --- Shutdown sequence ---
 
-	scout.Info("stopping",
+	scout.Info(
+		"stopping",
 		velocity.Int("stop_ms", 120),
 	)
 
-	relay.Info("flushed pending messages",
+	relay.Info(
+		"flushed pending messages",
 		velocity.Int("count", 7),
 		velocity.Int("stop_ms", 45),
 	)
 
-	fleet.Info("Fleet has shutdown",
+	fleet.Info(
+		"Fleet has shutdown",
 		velocity.Int("shutdown_ms", 310),
 	)
 
@@ -160,19 +173,22 @@ func main() {
 	jFleet := jsonLog.WithComponent("Fleet")
 	jScout := jsonLog.WithComponent("Scout")
 
-	jScout.Info("service started",
+	jScout.Info(
+		"service started",
 		velocity.Int("startup_ms", 2000),
 		velocity.String("name", "discovery"),
 		velocity.Int("phase", 0),
 	)
 
-	jFleet.Info("source connected",
+	jFleet.Info(
+		"source connected",
 		velocity.String("old_state", "disconnected"),
 		velocity.String("new_state", "connected"),
 		velocity.String("source_id", "relay-CODY-RYZEN"),
 	)
 
-	jScout.Warn("circuit breaker opened",
+	jScout.Warn(
+		"circuit breaker opened",
 		velocity.String("old_state", "closed"),
 		velocity.String("new_state", "open"),
 		velocity.String("endpoint", "192.168.0.181:8010"),

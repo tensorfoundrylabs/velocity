@@ -278,7 +278,8 @@ func TestComponentColourCode_PaletteIndexStable(t *testing.T) {
 		RGB(0x03, 0x00, 0x00), // index 2
 		RGB(0x04, 0x00, 0x00), // index 3
 	}
-	th := NewTheme("test",
+	th := NewTheme(
+		"test",
 		WithComponentPalette(palette[:]...),
 	)
 
@@ -340,7 +341,8 @@ func TestComponentColourCode_NilThemeReturnsEmpty(t *testing.T) {
 func TestComponentColourCode_NoPaletteReturnsEmpty(t *testing.T) {
 	t.Parallel()
 
-	th := NewTheme("no-palette",
+	th := NewTheme(
+		"no-palette",
 		WithStyleSlot(SlotGood, RGB(0x80, 0xD4, 0xAA)),
 	)
 	got := th.componentColourCode("Scout")
@@ -355,7 +357,8 @@ func TestComponentColourCode_PinOverridesHash(t *testing.T) {
 	t.Parallel()
 
 	pinned := RGB(0xAB, 0xCD, 0xEF)
-	th := NewTheme("pinned",
+	th := NewTheme(
+		"pinned",
 		WithComponentPalette(
 			RGB(0x01, 0x00, 0x00),
 			RGB(0x02, 0x00, 0x00),

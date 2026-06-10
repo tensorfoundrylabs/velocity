@@ -189,7 +189,8 @@ func TestLoggerGroupConsole(t *testing.T) {
 		WithColour(false),
 	)
 
-	log.Group(LevelInfo, "Registering routes",
+	log.Group(
+		LevelInfo, "Registering routes",
 		GroupItem{Text: "GET /api/v1/users"},
 		GroupItem{Text: "POST /api/v1/users"},
 		GroupItem{Text: "GET /api/v1/users/:id"},
@@ -220,7 +221,8 @@ func TestLoggerGroupJSON(t *testing.T) {
 		WithStructuredOutput(&buf),
 	)
 
-	log.Group(LevelInfo, "Registering routes",
+	log.Group(
+		LevelInfo, "Registering routes",
 		GroupItem{Text: "GET /api/v1/users"},
 		GroupItem{Text: "POST /api/v1/users"},
 		GroupItem{Text: "GET /api/v1/users/:id"},
@@ -259,7 +261,8 @@ func TestLoggerGroupJSONMarkersStripped(t *testing.T) {
 		WithStructuredOutput(&buf),
 	)
 
-	log.Group(LevelInfo, "Results",
+	log.Group(
+		LevelInfo, "Results",
 		GroupItem{Marker: "✓", Text: "auth passed"},
 		GroupItem{Marker: "✗", Text: "rate limit failed"},
 	)
@@ -303,7 +306,8 @@ func TestLoggerGroupNil(t *testing.T) {
 
 	// Must not panic.
 	var log *Logger
-	log.Group(LevelInfo, "should not panic",
+	log.Group(
+		LevelInfo, "should not panic",
 		GroupItem{Text: "item one"},
 	)
 }
@@ -320,7 +324,8 @@ func TestLoggerGroupLevelFilter(t *testing.T) {
 		WithStructuredLevel(LevelError),
 	)
 
-	log.Group(LevelInfo, "this should be filtered",
+	log.Group(
+		LevelInfo, "this should be filtered",
 		GroupItem{Text: "item"},
 	)
 
@@ -343,7 +348,8 @@ func TestLoggerGroupTTYIndent(t *testing.T) {
 	// Fake a TTY by setting up a logger with a console writer whose isTTY is true.
 	// We can't force this in tests, but we can verify the non-TTY item indent
 	// is present (groupItemIndent at a minimum).
-	log.Group(LevelInfo, "Routes",
+	log.Group(
+		LevelInfo, "Routes",
 		GroupItem{Text: "GET /"},
 		GroupItem{Text: "POST /"},
 	)

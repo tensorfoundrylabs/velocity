@@ -501,7 +501,8 @@ func (t *Theme) componentColourCode(name string) string {
 // --- Built-in themes ---
 
 // ThemeNightOwl is a dark, high-contrast palette inspired by the Night Owl VS Code theme.
-var ThemeNightOwl = NewTheme("Night Owl",
+var ThemeNightOwl = NewTheme(
+	"Night Owl",
 	WithLevelColours(
 		RGB(0xC7, 0x92, 0xEA), // debug: purple
 		RGB(0x82, 0xAA, 0xFF), // info: blue
@@ -550,7 +551,8 @@ var ThemeNightOwl = NewTheme("Night Owl",
 )
 
 // ThemeSolarized is a classic Solarized 256-colour palette.
-var ThemeSolarized = NewTheme("Solarized",
+var ThemeSolarized = NewTheme(
+	"Solarized",
 	WithLevelColours(
 		Colour256(61),  // debug
 		Colour256(33),  // info
@@ -595,7 +597,8 @@ var ThemeSolarized = NewTheme("Solarized",
 )
 
 // ThemeDracula is the Dracula 256-colour palette.
-var ThemeDracula = NewTheme("Dracula",
+var ThemeDracula = NewTheme(
+	"Dracula",
 	WithLevelColours(
 		Colour256(141), // debug: purple
 		Colour256(81),  // info: cyan
@@ -640,7 +643,8 @@ var ThemeDracula = NewTheme("Dracula",
 )
 
 // ThemeNord is the Nord 256-colour palette, cool and arctic.
-var ThemeNord = NewTheme("Nord",
+var ThemeNord = NewTheme(
+	"Nord",
 	WithLevelColours(
 		Colour256(139), // debug
 		Colour256(109), // info

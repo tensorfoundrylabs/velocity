@@ -157,7 +157,8 @@ func main() {
 	log.Newline()
 	log.Info("pre-flight complete, starting deployment")
 	log.Warn("production namespace check failed, continuing with staging only")
-	log.Info("deployment finished",
+	log.Info(
+		"deployment finished",
 		velocity.String("status", "success"),
 		velocity.String("environment", "staging"),
 	)

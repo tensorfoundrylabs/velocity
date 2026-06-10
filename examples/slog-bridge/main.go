@@ -37,8 +37,10 @@ func main() {
 	dbLog.Info("Query executed", "query", "SELECT * FROM orders", "rows", 42)
 
 	// Nested groups work too. The keys come out as "http.req.method", etc.
-	slog.Info("Handling request",
-		slog.Group("http",
+	slog.Info(
+		"Handling request",
+		slog.Group(
+			"http",
 			slog.Group("req", "method", "GET", "path", "/health"),
 			slog.Group("resp", "status", 200, "bytes", 128),
 		),

@@ -73,7 +73,8 @@ func TestStatusKindSlot(t *testing.T) {
 func TestStatusItemRenderTTY(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusOK, "user signed in", ThemeMono,
+	item := NewStatusItem(
+		StatusOK, "user signed in", ThemeMono,
 		Int("user_id", 42),
 		Duration("took", 18*1000*1000), // 18ms
 	)
@@ -125,7 +126,8 @@ func TestStatusItemBadgeCompact(t *testing.T) {
 func TestStatusItemRenderPlain(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusFail, "payment refused", ThemeMono,
+	item := NewStatusItem(
+		StatusFail, "payment refused", ThemeMono,
 		String("reason", "card expired"),
 	)
 
@@ -200,7 +202,8 @@ func TestStatusItemNoFields(t *testing.T) {
 func TestStatusItemFiveFields(t *testing.T) {
 	t.Parallel()
 
-	item := NewStatusItem(StatusInfo, "ready", ThemeMono,
+	item := NewStatusItem(
+		StatusInfo, "ready", ThemeMono,
 		String("svc", "auth"),
 		Int("port", 8080),
 		Bool("tls", true),

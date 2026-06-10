@@ -40,24 +40,28 @@ func main() {
 	fmt.Println("--- Secure field constructors ---")
 
 	// Secure(key, value): shows plaintext on TTY console, [REDACTED] in JSON log.
-	log.Info("user authenticated",
+	log.Info(
+		"user authenticated",
 		velocity.Secure("session_token", "tok_abc123def456"),
 	)
 
 	// SecureURL(key, url): redacts the password portion of the URL everywhere
 	// except trusted writers. The host and path are preserved in the redacted form.
-	log.Info("database connected",
+	log.Info(
+		"database connected",
 		velocity.SecureURL("dsn", "postgres://app:s3cretP4ss@db.internal:5432/mydb"),
 	)
 
 	// Redacted(key): permanently hidden — no plaintext stored, not even on trusted writers.
-	log.Info("request received",
+	log.Info(
+		"request received",
 		velocity.Redacted("api_key"),
 	)
 
 	// Truncated(key, val, maxLen): shows a safe prefix, appends '…' when clipped.
 	// Useful for bearer tokens where the prefix identifies the token type.
-	log.Info("bearer presented",
+	log.Info(
+		"bearer presented",
 		velocity.Truncated("token", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig", 20),
 	)
 
@@ -74,7 +78,8 @@ func main() {
 	fmt.Println("--- Multi-writer trust divergence ---")
 
 	// Mixed trusted + untrusted writers on the same log call.
-	log.Info("session created",
+	log.Info(
+		"session created",
 		velocity.Secure("session", "sess_XyZ789"),
 		velocity.String("user_id", "u_42"),
 	)

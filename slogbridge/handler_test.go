@@ -118,7 +118,8 @@ func TestSlogHandler_FieldTypes(t *testing.T) {
 	sl := slogbridge.NewLogger(l)
 
 	now := time.Now()
-	sl.Info("typed fields",
+	sl.Info(
+		"typed fields",
 		slog.String("str", "hello"),
 		slog.Int("count", 42),
 		slog.Float64("ratio", 3.14),
@@ -247,7 +248,8 @@ func BenchmarkSlogHandler_Info(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		sl.Info("benchmark message",
+		sl.Info(
+			"benchmark message",
 			slog.String("key1", "value1"),
 			slog.String("key2", "value2"),
 			slog.String("key3", "value3"),

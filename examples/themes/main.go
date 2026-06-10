@@ -42,7 +42,8 @@ func showTheme(theme *velocity.Theme) {
 
 	// Detailed() returns a child that forces tree-format, showing how each
 	// theme colours key names and values separately.
-	log.Detailed().Info("deployment complete",
+	log.Detailed().Info(
+		"deployment complete",
 		velocity.String("environment", "staging"),
 		velocity.String("version", "3.1.0"),
 		velocity.Int("instances", 5),

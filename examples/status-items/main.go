@@ -52,32 +52,38 @@ func main() {
 	log.Newline()
 
 	// Startup checklist: six services, mixed outcomes.
-	log.Status(velocity.LevelInfo, velocity.StatusOK, "postgres connected",
+	log.Status(
+		velocity.LevelInfo, velocity.StatusOK, "postgres connected",
 		velocity.String("host", "db.internal"),
 		velocity.Duration("latency", 4*time.Millisecond),
 	)
 
-	log.Status(velocity.LevelInfo, velocity.StatusOK, "redis connected",
+	log.Status(
+		velocity.LevelInfo, velocity.StatusOK, "redis connected",
 		velocity.String("host", "cache.internal"),
 		velocity.Duration("latency", 1*time.Millisecond),
 	)
 
-	log.Status(velocity.LevelInfo, velocity.StatusWarn, "object storage degraded",
+	log.Status(
+		velocity.LevelInfo, velocity.StatusWarn, "object storage degraded",
 		velocity.String("bucket", "assets-prod"),
 		velocity.String("region", "ap-southeast-2"),
 		velocity.Duration("latency", 320*time.Millisecond),
 	)
 
-	log.Status(velocity.LevelError, velocity.StatusFail, "payment gateway unreachable",
+	log.Status(
+		velocity.LevelError, velocity.StatusFail, "payment gateway unreachable",
 		velocity.String("provider", "stripe"),
 		velocity.Error("reason", os.ErrDeadlineExceeded),
 	)
 
-	log.Status(velocity.LevelInfo, velocity.StatusPending, "feature flags syncing",
+	log.Status(
+		velocity.LevelInfo, velocity.StatusPending, "feature flags syncing",
 		velocity.String("remote", "flags.internal"),
 	)
 
-	log.Status(velocity.LevelInfo, velocity.StatusSkipped, "telemetry export",
+	log.Status(
+		velocity.LevelInfo, velocity.StatusSkipped, "telemetry export",
 		velocity.String("reason", "disabled in config"),
 	)
 

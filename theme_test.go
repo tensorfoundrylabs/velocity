@@ -43,7 +43,8 @@ func TestThemeMono_Format(t *testing.T) {
 func TestTheme_Format_EmitsANSI(t *testing.T) {
 	t.Parallel()
 
-	th := NewTheme("test",
+	th := NewTheme(
+		"test",
 		WithStyleSlot(SlotGood, RGB(0x00, 0xFF, 0x00)),
 	)
 
@@ -64,7 +65,8 @@ func TestTheme_Format_UnsetSlot(t *testing.T) {
 	t.Parallel()
 
 	// Only SlotGood is set; SlotBad should passthrough.
-	th := NewTheme("partial",
+	th := NewTheme(
+		"partial",
 		WithStyleSlot(SlotGood, RGB(0x00, 0xFF, 0x00)),
 	)
 
@@ -91,7 +93,8 @@ func TestTheme_Format_NilTheme(t *testing.T) {
 func TestTheme_Wrap_EmitsCodesForSetSlot(t *testing.T) {
 	t.Parallel()
 
-	th := NewTheme("test",
+	th := NewTheme(
+		"test",
 		WithStyleSlot(SlotStatusOK, RGB(0x80, 0xD4, 0xAA)),
 	)
 
@@ -108,7 +111,8 @@ func TestTheme_Wrap_EmitsCodesForSetSlot(t *testing.T) {
 func TestTheme_Wrap_EmptyForUnsetSlot(t *testing.T) {
 	t.Parallel()
 
-	th := NewTheme("partial",
+	th := NewTheme(
+		"partial",
 		WithStyleSlot(SlotGood, RGB(0x00, 0xFF, 0x00)),
 	)
 
@@ -143,7 +147,8 @@ func TestTheme_Stylish_BufferIsNotTTY(t *testing.T) {
 func TestWithLevelColours_SetsAllLevels(t *testing.T) {
 	t.Parallel()
 
-	th := NewTheme("levels",
+	th := NewTheme(
+		"levels",
 		WithLevelColours(
 			RGB(0x11, 0x11, 0x11), // debug
 			RGB(0x22, 0x22, 0x22), // info
@@ -168,7 +173,8 @@ func TestWithLevelColours_SetsAllLevels(t *testing.T) {
 func TestWithLevelColour_Single(t *testing.T) {
 	t.Parallel()
 
-	th := NewTheme("single",
+	th := NewTheme(
+		"single",
 		WithLevelColour(LevelError, RGB(0xFF, 0x55, 0x72)),
 	)
 
@@ -219,7 +225,8 @@ func TestBuiltInThemes_LevelCodesPresent(t *testing.T) {
 func TestLogger_SetTheme_WithNewTheme(t *testing.T) {
 	t.Parallel()
 
-	customTheme := NewTheme("Custom",
+	customTheme := NewTheme(
+		"Custom",
 		WithLevelColours(
 			RGB(0x11, 0x22, 0x33),
 			RGB(0x44, 0x55, 0x66),

@@ -13,7 +13,8 @@ import (
 )
 
 // ThemeCyberpunk is a neon-on-dark palette inspired by Night City.
-var ThemeCyberpunk = velocity.NewTheme("Cyberpunk",
+var ThemeCyberpunk = velocity.NewTheme(
+	"Cyberpunk",
 	// Log levels: each gets a distinct neon tone.
 	velocity.WithLevelColours(
 		velocity.RGB(0x8B, 0x5C, 0xF6), // debug: purple
@@ -62,7 +63,8 @@ func main() {
 	log.Newline()
 
 	// Detailed() child forces tree mode, same colours as the parent theme.
-	log.Detailed().Info("system status",
+	log.Detailed().Info(
+		"system status",
 		velocity.String("cpu", "Arasaka X9-R"),
 		velocity.Int("cores", 128),
 		velocity.Float64("clock_ghz", 5.8),
