@@ -3,6 +3,7 @@ package velocity
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
 )
 
 // workerState holds per-writer state cached at AddWriter time.
@@ -26,13 +27,18 @@ type MultiWriter struct {
 
 	wg sync.WaitGroup
 
-	shutdownOnce sync.Once
+	// dropped counts entries silently discarded because a worker channel was full.
+	// Atomic so DroppedCount() can be read without acquiring any lock.
+	dropped atomic.Uint64
+
 	// mu guards closed, writeChans, and workers. Write() takes RLock (reads
 	// writeChans without modifying them); AddWriter/RemoveWriter/Close take the
 	// full write lock. This is safe: Close sets closed=true under the write lock,
 	// so any Write() that holds RLock will see closed=false and finish its channel
 	// send before Close closes those channels.
 	mu sync.RWMutex
+
+	shutdownOnce sync.Once
 
 	closed bool
 }
@@ -147,6 +153,9 @@ func (mw *MultiWriter) Write(e *Entry) error {
 		select {
 		case ch <- e:
 		default:
+			// Worker channel is full; releasing here rather than blocking keeps
+			// fast writers from stalling behind a slow consumer.
+			mw.dropped.Add(1)
 			e.Release()
 		}
 	}
@@ -232,6 +241,17 @@ func (mw *MultiWriter) Stats() map[string]int {
 	}
 
 	return stats
+}
+
+// DroppedCount returns the total number of entries discarded because a worker's
+// buffered channel was full at the moment Write was called. Mirrors the same
+// metric on RingBuffer so callers can observe back-pressure from slow writers.
+// Safe to call concurrently; the counter is updated atomically without any lock.
+func (mw *MultiWriter) DroppedCount() uint64 {
+	if mw == nil {
+		return 0
+	}
+	return mw.dropped.Load()
 }
 
 type FilteredWriter struct {
