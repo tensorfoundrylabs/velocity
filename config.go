@@ -128,22 +128,14 @@ func defaultConfig() *config {
 }
 
 // isTerminal reports whether f is connected to a terminal.
+// Uses term.IsTerminal for all *os.File values (not just the three std streams)
+// to match IsTerminalWriter's behaviour and avoid false-negatives on arbitrary
+// file handles like those from os.OpenFile or pty wrappers.
 func isTerminal(f *os.File) bool {
 	if f == nil {
 		return false
 	}
-
-	switch f {
-	case os.Stdout, os.Stderr, os.Stdin:
-		stat, err := f.Stat()
-		if err != nil {
-			return false
-		}
-		// ModeCharDevice is set for character devices (terminals).
-		return (stat.Mode() & os.ModeCharDevice) != 0
-	default:
-		return false
-	}
+	return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
 }
 
 // resolveColourForWriter reports whether ANSI colour should be emitted to w,
