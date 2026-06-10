@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## v2.1.0
+
+Tag when ready (after CI is green): `git tag v2.1.0`
 
 ### New features
 
+- `Logger.CallerEnabled()` reports whether the logger is configured to capture caller information. Adapters that carry their own program counter (such as `slogbridge`, which receives `record.PC` from slog) use it to decide whether to resolve that PC into `Caller`/`Line`/`Function` fields.
 - `FORCE_COLOR=<non-empty>` environment variable forces ANSI colour output regardless of whether stdout is a real terminal. Useful on Windows where terminal emulators proxy stdout through a named pipe, causing `term.IsTerminal` to return false even in a colour-capable terminal.
 - `NO_COLOR=<non-empty>` environment variable unconditionally disables ANSI colour output, following the https://no-color.org convention. Takes precedence over `FORCE_COLOR`.
 - `TTYRenderable` interface — optional extension to `Renderable` for types that need the terminal state at render time. `Logger.Render` and `Logger.RenderRaw` detect this interface and pass the console writer's resolved TTY state so colour decisions are correct even when rendering through an intermediate buffer.
