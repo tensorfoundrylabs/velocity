@@ -3,6 +3,7 @@ package slogbridge
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"strings"
 	"time"
 
@@ -67,6 +68,27 @@ func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 			appendAttrToEntry(entry, prefix, a)
 			return true
 		})
+	}
+
+	// Resolve the slog record's program counter into caller information when the
+	// velocity logger has caller capture enabled. Without this, slog-sourced entries
+	// always show an empty Caller field even though slog itself preserves the PC.
+	if record.PC != 0 && h.logger.CallerEnabled() {
+		frames := runtime.CallersFrames([]uintptr{record.PC})
+		f, _ := frames.Next()
+		if f.File != "" {
+			// Trim to just the base filename, matching captureCaller's behaviour.
+			shortFile := f.File
+			for i := len(f.File) - 1; i >= 0; i-- {
+				if f.File[i] == '/' || f.File[i] == '\\' {
+					shortFile = f.File[i+1:]
+					break
+				}
+			}
+			entry.Caller = shortFile
+			entry.Line = f.Line
+			entry.Function = f.Function
+		}
 	}
 
 	h.logger.LogEntry(entry)

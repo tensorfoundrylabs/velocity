@@ -206,6 +206,16 @@ func (l *Logger) Level() Level {
 	return Level(l.level.Load())
 }
 
+// CallerEnabled reports whether this logger is configured to capture caller
+// information. Used by adapters (e.g. slogbridge) that carry their own PC and
+// need to know whether to resolve it into Caller/Line/Function fields.
+func (l *Logger) CallerEnabled() bool {
+	if l == nil || l.cfg == nil {
+		return false
+	}
+	return l.cfg.AddCaller
+}
+
 // With returns a child logger that prepends the given fields to every log entry.
 // The child shares the writer topology (writers) with the parent, so writers
 // added to the parent after the child is created are immediately visible to both.

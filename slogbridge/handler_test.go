@@ -240,6 +240,54 @@ func TestSlogHandler_SecureTagsRedacted(t *testing.T) {
 	}
 }
 
+// TestSlogHandler_CallerFromRecordPC verifies that when the velocity logger has
+// caller capture enabled, the slog record's PC is resolved into Caller/Line fields
+// rather than being silently dropped.
+func TestSlogHandler_CallerFromRecordPC(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	l := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+		velocity.WithLevel(velocity.LevelDebug),
+		velocity.WithCaller(true),
+	)
+	sl := slogbridge.NewLogger(l)
+
+	sl.Info("caller via PC")
+
+	out := jsonBuf.String()
+	if !strings.Contains(out, `"caller"`) {
+		t.Errorf("expected caller field in JSON output, got: %s", out)
+	}
+	if !strings.Contains(out, `_test.go`) {
+		t.Errorf("expected caller to reference a test file, got: %s", out)
+	}
+}
+
+// TestSlogHandler_CallerNotEmitted_WhenDisabled verifies that caller fields are
+// absent when the velocity logger does not have caller capture configured.
+func TestSlogHandler_CallerNotEmitted_WhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	l := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+		velocity.WithLevel(velocity.LevelDebug),
+		// caller capture NOT enabled
+	)
+	sl := slogbridge.NewLogger(l)
+
+	sl.Info("no caller")
+
+	out := jsonBuf.String()
+	if strings.Contains(out, `"caller"`) {
+		t.Errorf("expected no caller field when AddCaller is disabled, got: %s", out)
+	}
+}
+
 // TestLogEntry_BaseFieldPrependNoCorruption is a regression test for the field-
 // corruption bug where LogEntry prepended base fields in-place, clobbering the
 // first len(baseFields) user fields that the original slice alias still pointed at.
