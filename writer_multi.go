@@ -27,7 +27,12 @@ type MultiWriter struct {
 	wg sync.WaitGroup
 
 	shutdownOnce sync.Once
-	mu           sync.Mutex
+	// mu guards closed, writeChans, and workers. Write() takes RLock (reads
+	// writeChans without modifying them); AddWriter/RemoveWriter/Close take the
+	// full write lock. This is safe: Close sets closed=true under the write lock,
+	// so any Write() that holds RLock will see closed=false and finish its channel
+	// send before Close closes those channels.
+	mu sync.RWMutex
 
 	closed bool
 }
@@ -123,8 +128,13 @@ func (mw *MultiWriter) IsTrusted(name string) bool {
 }
 
 func (mw *MultiWriter) Write(e *Entry) error {
-	mw.mu.Lock()
-	defer mw.mu.Unlock()
+	// RLock is sufficient here: Write only reads writeChans and closed, it never
+	// modifies them. Close() takes the write lock and sets closed=true before
+	// closing channels, so a concurrent Write() holding RLock will see
+	// closed=true (or will already have sent on the open channel) before the
+	// channel is closed — no send-on-closed-channel is possible.
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
 
 	if mw.closed {
 		return ErrWriterClosed
