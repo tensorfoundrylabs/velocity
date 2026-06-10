@@ -544,7 +544,8 @@ func (l *Logger) logStatusStructuredWithFields(level Level, kind StatusKind, msg
 		entry.WithFields(fields...)
 	}
 
-	l.captureCaller(entry, 0)
+	// Status → logStatusStructuredWithFields → captureCaller is 3 frames, not 4.
+	l.captureCaller(entry, -1)
 
 	if l.jsonWriter != nil && level >= l.cfg.StructuredLevel {
 		if err := l.jsonWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
@@ -611,7 +612,8 @@ func (l *Logger) logGroup(level Level, msg string, items []GroupItem) {
 		entry.WithFields(l.baseFields...)
 	}
 
-	l.captureCaller(entry, 0)
+	// Group → logGroup → captureCaller is 3 frames, not 4.
+	l.captureCaller(entry, -1)
 
 	if l.cfg != nil {
 		// Console and JSON writers receive items directly — their dedicated Group
@@ -662,9 +664,10 @@ func (l *Logger) isEnabled(level Level) bool {
 }
 
 // captureCaller populates entry with caller information if configured.
-// extraSkip lets callers that add extra frames (e.g. wrappers) adjust the skip depth.
-//
-//nolint:unparam // extraSkip is always 0 today but reserved for future use by non-direct call paths
+// extraSkip adjusts the number of frames skipped on top of the standard 4.
+// Pass -1 from 3-frame call sites (Status/Group/Continue) that don't go through
+// the log→logInternal pair, so the reported frame is the user call site, not the
+// internal dispatch helper.
 func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	if l.cfg == nil || !l.cfg.AddCaller {
 		return

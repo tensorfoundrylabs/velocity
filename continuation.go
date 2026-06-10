@@ -263,7 +263,8 @@ func (l *Logger) logContinue(level Level, msg string, lines []string) {
 		entry.WithFields(l.baseFields...)
 	}
 
-	l.captureCaller(entry, 0)
+	// Continue → logContinue → captureCaller is 3 frames, not 4.
+	l.captureCaller(entry, -1)
 
 	if l.cfg != nil {
 		if level >= l.cfg.ConsoleLevel && l.consoleWriter != nil {

@@ -147,3 +147,58 @@ func TestJSONWriter_CallerEscaping(t *testing.T) {
 		t.Errorf("expected numeric line value, got: %s", output)
 	}
 }
+
+// TestStatus_CallerPoints_ToCallSite verifies that captureCaller is invoked
+// with the right skip depth for Status, so the reported caller is the test
+// function itself, not an internal dispatch helper.
+func TestStatus_CallerPoints_ToCallSite(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &buf
+	cfg.StructuredLevel = LevelDebug
+	cfg.AddCaller = true
+	log := newFromConfig(cfg)
+
+	log.Status(LevelInfo, StatusOK, "caller check") //nolint:testableexamples // line number pinned
+	out := buf.String()
+	if !strings.Contains(out, `writer_json_test.go`) {
+		t.Errorf("Status caller should point to this test file, got: %s", out)
+	}
+}
+
+// TestGroup_CallerPoints_ToCallSite verifies that captureCaller is invoked
+// with the right skip depth for Group.
+func TestGroup_CallerPoints_ToCallSite(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &buf
+	cfg.StructuredLevel = LevelDebug
+	cfg.AddCaller = true
+	log := newFromConfig(cfg)
+
+	log.Group(LevelInfo, "caller check", GroupItem{Text: "item"})
+	out := buf.String()
+	if !strings.Contains(out, `writer_json_test.go`) {
+		t.Errorf("Group caller should point to this test file, got: %s", out)
+	}
+}
+
+// TestContinue_CallerPoints_ToCallSite verifies that captureCaller is invoked
+// with the right skip depth for Continue.
+func TestContinue_CallerPoints_ToCallSite(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &buf
+	cfg.StructuredLevel = LevelDebug
+	cfg.AddCaller = true
+	log := newFromConfig(cfg)
+
+	log.Continue(LevelInfo, "caller check", "line one")
+	out := buf.String()
+	if !strings.Contains(out, `writer_json_test.go`) {
+		t.Errorf("Continue caller should point to this test file, got: %s", out)
+	}
+}
