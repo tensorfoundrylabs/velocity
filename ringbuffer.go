@@ -24,9 +24,9 @@ type RingBufferEntry struct {
 // RingBuffer implements a lock-free ring buffer for batched writing.
 // Uses atomic operations to minimise contention and provide high throughput.
 type RingBuffer struct {
-	writer  io.Writer
-	stopCh  chan struct{}
-	doneCh  chan struct{}
+	writer io.Writer
+	stopCh chan struct{}
+	doneCh chan struct{}
 	// writeCh is a single-element signal channel: Write sends a non-blocking
 	// notification after committing an entry so the flusher can wake immediately
 	// rather than waiting for the next ticker tick. This avoids the previous

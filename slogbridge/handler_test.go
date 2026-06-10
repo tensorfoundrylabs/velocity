@@ -307,7 +307,8 @@ func TestLogEntry_BaseFieldPrependNoCorruption(t *testing.T) {
 	sl := slogbridge.NewLogger(child)
 
 	// Three user fields — more than the single base field — triggers the overwrite.
-	sl.Info("corruption check",
+	sl.Info(
+		"corruption check",
 		slog.String("x", "X"),
 		slog.String("y", "Y"),
 		slog.String("z", "Z"),

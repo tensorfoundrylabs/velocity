@@ -15,7 +15,7 @@ import (
 // ring-buffer flusher). Use ConsoleWriter, which buffers output via the logger's
 // own mutex and is the supported path. ConsoleWriterRB will be removed in v3.
 type ConsoleWriterRB struct {
-	out             io.Writer     // the raw destination; writes must go through outMu
+	out             io.Writer // the raw destination; writes must go through outMu
 	theme           *Theme
 	bufPool         *BufferPool
 	template        *Template
