@@ -3,6 +3,7 @@ package velocity
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
 )
 
 // workerState holds per-writer state cached at AddWriter time.
@@ -26,8 +27,18 @@ type MultiWriter struct {
 
 	wg sync.WaitGroup
 
+	// dropped counts entries silently discarded because a worker channel was full.
+	// Atomic so DroppedCount() can be read without acquiring any lock.
+	dropped atomic.Uint64
+
+	// mu guards closed, writeChans, and workers. Write() takes RLock (reads
+	// writeChans without modifying them); AddWriter/RemoveWriter/Close take the
+	// full write lock. This is safe: Close sets closed=true under the write lock,
+	// so any Write() that holds RLock will see closed=false and finish its channel
+	// send before Close closes those channels.
+	mu sync.RWMutex
+
 	shutdownOnce sync.Once
-	mu           sync.Mutex
 
 	closed bool
 }
@@ -123,8 +134,13 @@ func (mw *MultiWriter) IsTrusted(name string) bool {
 }
 
 func (mw *MultiWriter) Write(e *Entry) error {
-	mw.mu.Lock()
-	defer mw.mu.Unlock()
+	// RLock is sufficient here: Write only reads writeChans and closed, it never
+	// modifies them. Close() takes the write lock and sets closed=true before
+	// closing channels, so a concurrent Write() holding RLock will see
+	// closed=true (or will already have sent on the open channel) before the
+	// channel is closed — no send-on-closed-channel is possible.
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
 
 	if mw.closed {
 		return ErrWriterClosed
@@ -137,6 +153,9 @@ func (mw *MultiWriter) Write(e *Entry) error {
 		select {
 		case ch <- e:
 		default:
+			// Worker channel is full; releasing here rather than blocking keeps
+			// fast writers from stalling behind a slow consumer.
+			mw.dropped.Add(1)
 			e.Release()
 		}
 	}
@@ -222,6 +241,17 @@ func (mw *MultiWriter) Stats() map[string]int {
 	}
 
 	return stats
+}
+
+// DroppedCount returns the total number of entries discarded because a worker's
+// buffered channel was full at the moment Write was called. Mirrors the same
+// metric on RingBuffer so callers can observe back-pressure from slow writers.
+// Safe to call concurrently; the counter is updated atomically without any lock.
+func (mw *MultiWriter) DroppedCount() uint64 {
+	if mw == nil {
+		return 0
+	}
+	return mw.dropped.Load()
 }
 
 type FilteredWriter struct {

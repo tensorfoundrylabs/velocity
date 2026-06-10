@@ -44,6 +44,10 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 
 	w.formatJSONStatusSecure(buf, e, trusted, redactionMark)
 
+	// Append the newline inside the buffer so a single Write call emits a complete
+	// line — halving the number of syscalls per entry versus a separate Write(newlineByte).
+	_ = buf.WriteByte('\n')
+
 	w.mu.Lock()
 	if w.closed {
 		w.mu.Unlock()
@@ -51,9 +55,6 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 		return ErrWriterClosed
 	}
 	_, err := w.out.Write(buf.Bytes())
-	if err == nil {
-		_, err = w.out.Write(newlineByte)
-	}
 	w.mu.Unlock()
 
 	w.bufPool.Put(rawBuf)
@@ -128,6 +129,7 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
+	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
 	if w.closed {
@@ -136,9 +138,6 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 		return ErrWriterClosed
 	}
 	_, err := w.out.Write(buf.Bytes())
-	if err == nil {
-		_, err = w.out.Write(newlineByte)
-	}
 	w.mu.Unlock()
 
 	w.bufPool.Put(rawBuf)
@@ -234,6 +233,7 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 
 	// Format entirely outside the lock; entry is immutable at this point.
 	w.formatJSONSecure(buf, e, trusted, redactionMark)
+	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
 	if w.closed {
@@ -242,9 +242,6 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 		return ErrWriterClosed
 	}
 	_, err := w.out.Write(buf.Bytes())
-	if err == nil {
-		_, err = w.out.Write(newlineByte)
-	}
 	w.mu.Unlock()
 
 	w.bufPool.Put(rawBuf)
@@ -541,6 +538,7 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
+	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
 	if w.closed {
@@ -549,9 +547,6 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 		return ErrWriterClosed
 	}
 	_, err := w.out.Write(buf.Bytes())
-	if err == nil {
-		_, err = w.out.Write(newlineByte)
-	}
 	w.mu.Unlock()
 
 	w.bufPool.Put(rawBuf)

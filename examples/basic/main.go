@@ -29,7 +29,8 @@ func main() {
 
 	// Typed field constructors keep allocations off the heap on hot paths.
 	// Use the specific constructor when you know the type.
-	log.Info("request processed",
+	log.Info(
+		"request processed",
 		velocity.String("method", "GET"),
 		velocity.String("path", "/api/users"),
 		velocity.Int("status", 200),
@@ -51,7 +52,8 @@ func main() {
 
 	// Nested errors show up nicely with ErrorField.
 	dbErr := errors.New("connection refused")
-	reqLog.Error("database query failed",
+	reqLog.Error(
+		"database query failed",
 		velocity.String("query", "SELECT * FROM users"),
 		velocity.Error("err", dbErr),
 	)
@@ -69,7 +71,8 @@ func main() {
 
 	// Detailed() returns a child logger that forces tree-format for every call.
 	// Easier to read when there are many fields or values are long.
-	log.Detailed().Info("deployment summary",
+	log.Detailed().Info(
+		"deployment summary",
 		velocity.String("environment", "staging"),
 		velocity.String("version", "2.4.1"),
 		velocity.Int("replicas", 3),
@@ -79,7 +82,8 @@ func main() {
 
 	// WithDevelopment() as the only option keeps it simple.
 	devLog := velocity.New(velocity.WithDevelopment())
-	devLog.Info("development preset logger is ready",
+	devLog.Info(
+		"development preset logger is ready",
 		velocity.String("preset", "development"),
 	)
 }

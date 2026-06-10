@@ -127,9 +127,26 @@ func newFromConfig(cfg *config) *Logger {
 	// Default: secure tag scanning is enabled unless explicitly disabled.
 	logger.secureScanEnabled.Store(!cfg.DisableSecureTags)
 
-	// Use the most permissive level so logs aren't dropped when outputs have
-	// different thresholds.
-	effectiveLevel := min(cfg.StructuredLevel, cfg.ConsoleLevel)
+	// Clamp levels to LevelOff when the corresponding output doesn't exist, so
+	// the gate only reflects outputs that are actually wired up. Without this a
+	// console-only logger at LevelWarn still processes Info entries because the
+	// default StructuredLevel (LevelInfo) drags the effective gate down.
+	consoleLevel := cfg.ConsoleLevel
+	if cfg.ConsoleOutput == nil || cfg.ConsoleOutput == io.Discard {
+		consoleLevel = LevelOff
+	}
+	structuredLevel := cfg.StructuredLevel
+	if cfg.StructuredOutput == nil || cfg.StructuredOutput == io.Discard {
+		structuredLevel = LevelOff
+	}
+	// Use the most permissive level of the outputs that actually exist so logs
+	// aren't dropped when outputs have different thresholds.
+	effectiveLevel := min(structuredLevel, consoleLevel)
+	// If no fixed outputs are configured at all (e.g. MultiWriter-only or Nop),
+	// fall back to the original min so dynamic AddWriter calls still work.
+	if consoleLevel == LevelOff && structuredLevel == LevelOff {
+		effectiveLevel = min(cfg.StructuredLevel, cfg.ConsoleLevel)
+	}
 	logger.level.Store(int32(effectiveLevel))
 
 	if cfg.ConsoleOutput != nil && cfg.ConsoleOutput != io.Discard {
@@ -204,6 +221,16 @@ func (l *Logger) Level() Level {
 		return LevelOff
 	}
 	return Level(l.level.Load())
+}
+
+// CallerEnabled reports whether this logger is configured to capture caller
+// information. Used by adapters (e.g. slogbridge) that carry their own PC and
+// need to know whether to resolve it into Caller/Line/Function fields.
+func (l *Logger) CallerEnabled() bool {
+	if l == nil || l.cfg == nil {
+		return false
+	}
+	return l.cfg.AddCaller
 }
 
 // With returns a child logger that prepends the given fields to every log entry.
@@ -521,8 +548,12 @@ func (l *Logger) logStatusStructuredWithFields(level Level, kind StatusKind, msg
 	}
 
 	// Nothing to do when there are no structured outputs.
-	hasStructured := (l.jsonWriter != nil && level >= l.cfg.StructuredLevel) ||
-		l.writers.mw != nil
+	// Guard the mw read with the RLock to avoid a race with concurrent AddWriter/Close
+	// calls that replace or nil-out the MultiWriter under the write lock.
+	l.writers.mu.RLock()
+	hasMW := l.writers.mw != nil
+	l.writers.mu.RUnlock()
+	hasStructured := (l.jsonWriter != nil && level >= l.cfg.StructuredLevel) || hasMW
 	if !hasStructured {
 		return
 	}
@@ -544,7 +575,8 @@ func (l *Logger) logStatusStructuredWithFields(level Level, kind StatusKind, msg
 		entry.WithFields(fields...)
 	}
 
-	l.captureCaller(entry, 0)
+	// Status → logStatusStructuredWithFields → captureCaller is 3 frames, not 4.
+	l.captureCaller(entry, -1)
 
 	if l.jsonWriter != nil && level >= l.cfg.StructuredLevel {
 		if err := l.jsonWriter.WriteStatus(entry); err != nil { //nolint:staticcheck // Silently drop on write errors to prevent logging from blocking
@@ -611,7 +643,8 @@ func (l *Logger) logGroup(level Level, msg string, items []GroupItem) {
 		entry.WithFields(l.baseFields...)
 	}
 
-	l.captureCaller(entry, 0)
+	// Group → logGroup → captureCaller is 3 frames, not 4.
+	l.captureCaller(entry, -1)
 
 	if l.cfg != nil {
 		// Console and JSON writers receive items directly — their dedicated Group
@@ -662,9 +695,10 @@ func (l *Logger) isEnabled(level Level) bool {
 }
 
 // captureCaller populates entry with caller information if configured.
-// extraSkip lets callers that add extra frames (e.g. wrappers) adjust the skip depth.
-//
-//nolint:unparam // extraSkip is always 0 today but reserved for future use by non-direct call paths
+// extraSkip adjusts the number of frames skipped on top of the standard 4.
+// Pass -1 from 3-frame call sites (Status/Group/Continue) that don't go through
+// the log→logInternal pair, so the reported frame is the user call site, not the
+// internal dispatch helper.
 func (l *Logger) captureCaller(entry *Entry, extraSkip int) {
 	if l.cfg == nil || !l.cfg.AddCaller {
 		return
@@ -706,11 +740,15 @@ func (l *Logger) LogEntry(e *Entry) {
 		return
 	}
 	// Prepend base fields from With() so child loggers propagate their fields.
+	// Copy existing into a separate slice before zeroing e.Fields; if we simply
+	// re-slice to [:0] and append baseFields, the backing array is shared and
+	// the first len(baseFields) user fields get silently overwritten.
 	if len(l.baseFields) > 0 {
-		existing := e.Fields
+		saved := make([]Field, len(e.Fields))
+		copy(saved, e.Fields)
 		e.Fields = e.Fields[:0]
 		e.WithFields(l.baseFields...)
-		e.WithFields(existing...)
+		e.WithFields(saved...)
 	}
 	// Apply the same <secure> tag scan as logInternal so entries routed through
 	// external adapters (e.g. slogbridge) benefit from message-level redaction.

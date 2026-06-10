@@ -24,9 +24,14 @@ type RingBufferEntry struct {
 // RingBuffer implements a lock-free ring buffer for batched writing.
 // Uses atomic operations to minimise contention and provide high throughput.
 type RingBuffer struct {
-	writer  io.Writer
-	stopCh  chan struct{}
-	doneCh  chan struct{}
+	writer io.Writer
+	stopCh chan struct{}
+	doneCh chan struct{}
+	// writeCh is a single-element signal channel: Write sends a non-blocking
+	// notification after committing an entry so the flusher can wake immediately
+	// rather than waiting for the next ticker tick. This avoids the previous
+	// busy-poll default branch that caused ~10k wakeups/sec when the ring was idle.
+	writeCh chan struct{}
 	entries []RingBufferEntry
 	wg      sync.WaitGroup
 
@@ -85,6 +90,7 @@ func NewRingBuffer(writer io.Writer, size int) *RingBuffer {
 		writer:        writer,
 		stopCh:        make(chan struct{}),
 		doneCh:        make(chan struct{}),
+		writeCh:       make(chan struct{}, 1),
 		batchSize:     DefaultBatchSize,
 		flushInterval: DefaultFlushInterval,
 	}
@@ -166,6 +172,13 @@ func (rb *RingBuffer) Write(data []byte) bool {
 			entry.size.Store(int32(dataLen)) // #nosec G115 - dataLen is from len() which is always non-negative
 			entry.committed.Store(1)
 
+			// Wake the flusher without blocking; if the channel already has a
+			// pending signal the flusher will pick up this entry on its next drain.
+			select {
+			case rb.writeCh <- struct{}{}:
+			default:
+			}
+
 			return true
 		}
 	}
@@ -212,17 +225,9 @@ func (rb *RingBuffer) flusher() {
 			rb.flushAll()
 			return
 
-		case <-ticker.C:
-			if len(batchBuf) > 0 {
-				if _, err := rb.writer.Write(batchBuf); err != nil {
-					rb.dropped.Add(1)
-				}
-				batchBuf = batchBuf[:0]
-			}
-
-		default:
+		case <-rb.writeCh:
+			// A writer committed at least one entry; drain what we can.
 			batchBuf = rb.collectBatch(batchBuf)
-
 			if len(batchBuf) > 0 {
 				if _, err := rb.writer.Write(batchBuf); err != nil {
 					rb.dropped.Add(1)
@@ -230,8 +235,15 @@ func (rb *RingBuffer) flusher() {
 				batchBuf = batchBuf[:0]
 			}
 
-			if rb.tail.Load() >= rb.head.Load() {
-				time.Sleep(100 * time.Microsecond)
+		case <-ticker.C:
+			// Periodic flush: catches any entries that arrived between writeCh
+			// signals and were not yet drained (e.g. due to burst batching).
+			batchBuf = rb.collectBatch(batchBuf)
+			if len(batchBuf) > 0 {
+				if _, err := rb.writer.Write(batchBuf); err != nil {
+					rb.dropped.Add(1)
+				}
+				batchBuf = batchBuf[:0]
 			}
 		}
 	}

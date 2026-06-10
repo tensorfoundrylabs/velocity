@@ -13,7 +13,8 @@ func TestIntegration(_ *testing.T) {
 	log.Warn("Warning message")
 	log.Error("Error message")
 
-	log.Info("Server started",
+	log.Info(
+		"Server started",
 		String("addr", ":8080"),
 		Int("pid", os.Getpid()),
 		Bool("tls", true),

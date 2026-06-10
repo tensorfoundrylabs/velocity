@@ -328,10 +328,13 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	contentWidth := maxLen
 	boxWidth := contentWidth + 2
 
+	// Use a consistent single-line box-drawing set throughout (┌─┐│└┘).
+	// The previous code mixed double corners (╔╗╚╝) with single-line fills (─│),
+	// which looks broken in terminals and fonts that render them at different weights.
 	buf.WriteString(theme.CachedFieldKeyFg())
-	buf.WriteString("╔")
+	buf.WriteString("┌")
 	buf.WriteString(strings.Repeat("─", boxWidth))
-	buf.WriteString("╗")
+	buf.WriteString("┐")
 	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 
@@ -349,9 +352,9 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	}
 
 	buf.WriteString(theme.CachedFieldKeyFg())
-	buf.WriteString("╚")
+	buf.WriteString("└")
 	buf.WriteString(strings.Repeat("─", boxWidth))
-	buf.WriteString("╝")
+	buf.WriteString("┘")
 	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
@@ -513,24 +516,107 @@ func (s *SystemInfo) String() string {
 	return buf.String()
 }
 
-// visibleLen returns the number of visible runes in s, ignoring ANSI escape sequences.
+// visibleLen returns the number of visible runes in s, ignoring ANSI escape
+// sequences and OSC 8 hyperlink sequences.
+//
+// SGR escapes: ESC [ ... m  (ends on 'm')
+// OSC sequences: ESC ] ... BEL  or  ESC ] ... ESC \
+// Both forms are transparent to column-width arithmetic — only the visible link
+// text (between the OSC 8 open/close sequences) contributes to the count.
 func visibleLen(s string) int {
 	n := 0
-	inEscape := false
-	for _, r := range s {
-		if inEscape {
-			if r == 'm' {
-				inEscape = false
+	i := 0
+	for i < len(s) {
+		if s[i] != '\033' {
+			// Fast path: count the rune and advance.
+			_, size := runeAt(s, i)
+			n++
+			i += size
+			continue
+		}
+		// ESC seen — peek at the next byte.
+		if i+1 >= len(s) {
+			break
+		}
+		switch s[i+1] {
+		case '[':
+			// SGR / CSI sequence: skip until 'm' (or any final byte 0x40–0x7E).
+			i += 2
+			for i < len(s) && (s[i] < 0x40 || s[i] > 0x7E) {
+				i++
 			}
-			continue
+			if i < len(s) {
+				i++ // consume the final byte
+			}
+		case ']':
+			// OSC sequence: skip until BEL (\a) or ESC \ (ST).
+			i += 2
+			for i < len(s) {
+				if s[i] == '\a' {
+					i++
+					break
+				}
+				if s[i] == '\033' && i+1 < len(s) && s[i+1] == '\\' {
+					i += 2
+					break
+				}
+				i++
+			}
+		default:
+			// Unknown escape — skip just the ESC.
+			i++
 		}
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		n++
 	}
 	return n
+}
+
+// runeAt decodes the rune at position i in s without allocating.
+// Falls back to a single byte if the sequence is invalid.
+func runeAt(s string, i int) (rune, int) {
+	b := s[i]
+	if b < 0x80 {
+		return rune(b), 1
+	}
+	// Delegate to the unicode/utf8 package for multi-byte sequences.
+	r, size := rune(b), 1
+	if b >= 0xC0 && i+1 < len(s) {
+		r2, sz := decodeRuneInString(s[i:])
+		if sz > 0 {
+			return r2, sz
+		}
+	}
+	return r, size
+}
+
+// decodeRuneInString is a thin wrapper so we don't need a top-level import of
+// unicode/utf8 just for runeAt.
+func decodeRuneInString(s string) (rune, int) {
+	// Inline the first-byte decode to stay branch-cheap.
+	b0 := s[0]
+	switch {
+	case b0 < 0x80:
+		return rune(b0), 1
+	case b0 < 0xC0:
+		return '�', 1
+	case b0 < 0xE0:
+		if len(s) < 2 {
+			return '�', 1
+		}
+		r := rune(b0&0x1F)<<6 | rune(s[1]&0x3F)
+		return r, 2
+	case b0 < 0xF0:
+		if len(s) < 3 {
+			return '�', 1
+		}
+		r := rune(b0&0x0F)<<12 | rune(s[1]&0x3F)<<6 | rune(s[2]&0x3F)
+		return r, 3
+	default:
+		if len(s) < 4 {
+			return '�', 1
+		}
+		r := rune(b0&0x07)<<18 | rune(s[1]&0x3F)<<12 | rune(s[2]&0x3F)<<6 | rune(s[3]&0x3F)
+		return r, 4
+	}
 }
 
 // padRightVisible pads s to width based on visible rune count, accounting for ANSI codes.

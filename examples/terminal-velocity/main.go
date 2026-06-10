@@ -113,7 +113,8 @@ func stageClusterDiscovery(log *velocity.Logger, p *velocity.Pretty) {
 		},
 	})
 
-	log.Info("cluster discovery complete",
+	log.Info(
+		"cluster discovery complete",
 		velocity.Int("nodes", 4),
 		velocity.Int("gpus", 16),
 		velocity.String("cuda", "13.0"),
@@ -164,7 +165,8 @@ func stageSecureConfig(log *velocity.Logger, p *velocity.Pretty) {
 	// Secure("key", val) — plaintext on TTY, [REDACTED] on non-TTY / JSON.
 	// This is the pattern for API keys, session tokens, and similar secrets
 	// that operators need to see locally but must never reach a log aggregator.
-	log.Info("loading inference server config",
+	log.Info(
+		"loading inference server config",
 		velocity.Secure("api_key", "sk-live-7f3a9b2c4e1d8f60"),
 		velocity.SecureURL("registry_dsn", "https://registry:s3cret@models.internal/v2"),
 		velocity.String("model_path", "/mnt/models/llama-3.1-70b-awq"),
@@ -176,7 +178,8 @@ func stageSecureConfig(log *velocity.Logger, p *velocity.Pretty) {
 
 	// Redacted is always hidden — not even trusted writers see the value.
 	// Use it for fields you want present in the schema but never logged.
-	log.Debug("auth context attached",
+	log.Debug(
+		"auth context attached",
 		velocity.Redacted("bearer_token"),
 		velocity.String("scope", "inference:read"),
 	)
@@ -218,7 +221,8 @@ func stagePreflightChecks(log *velocity.Logger, p *velocity.Pretty) {
 
 	// Logger.Status uses StatusKind to produce a coloured badge in the console
 	// and a structured "status" field in JSON — no raw ANSI needed at the call site.
-	log.Status(velocity.LevelWarn, velocity.StatusWarn, "node-3 disk space critically low",
+	log.Status(
+		velocity.LevelWarn, velocity.StatusWarn, "node-3 disk space critically low",
 		velocity.String("node", "node-3"),
 		velocity.String("available", "18 GB"),
 		velocity.String("required", "35 GB"),
@@ -232,7 +236,8 @@ func stagePreflightChecks(log *velocity.Logger, p *velocity.Pretty) {
 // stageRouteRegistration shows Logger.Group for count-headed indented blocks.
 // This is exactly the pattern used by olla's translator route registration.
 func stageRouteRegistration(log *velocity.Logger) {
-	log.Group(velocity.LevelInfo, "Registering inference API routes",
+	log.Group(
+		velocity.LevelInfo, "Registering inference API routes",
 		velocity.GroupItem{Text: "POST /v1/chat/completions"},
 		velocity.GroupItem{Text: "POST /v1/completions"},
 		velocity.GroupItem{Text: "POST /v1/embeddings"},
@@ -246,7 +251,8 @@ func stageRouteRegistration(log *velocity.Logger) {
 	// Continue places all lines under one timestamped INFO entry. OSC 8
 	// hyperlinks are only emitted when stdout is a TTY that supports them;
 	// plain URLs are used otherwise so no control sequences reach pipes.
-	log.Continue(velocity.LevelInfo, "Inference server listening",
+	log.Continue(
+		velocity.LevelInfo, "Inference server listening",
 		"API:      "+link("http://10.0.1.10:8080/v1", "http://10.0.1.10:8080/v1"),
 		"Metrics:  "+link("http://10.0.1.10:9090/metrics", "http://10.0.1.10:9090/metrics"),
 		"Press Ctrl+C to stop",
@@ -279,7 +285,8 @@ func stageModelDistribution(log *velocity.Logger, p *velocity.Pretty) {
 	}
 	pb.Complete()
 
-	distLog.Info("model weights verified",
+	distLog.Info(
+		"model weights verified",
 		velocity.Int64("size_mb", weightBytes),
 		velocity.String("checksum", "sha256:a3f9...d12e"),
 	)
@@ -311,7 +318,8 @@ func stageModelDistribution(log *velocity.Logger, p *velocity.Pretty) {
 	}
 
 	for i, layer := range completedLayers {
-		distLog.Debug("container layer complete",
+		distLog.Debug(
+			"container layer complete",
 			velocity.String("layer", layer),
 			velocity.Int("index", i),
 		)
@@ -350,7 +358,8 @@ func stageNodeDeployment(log *velocity.Logger, p *velocity.Pretty) string {
 
 			// StatusFail gives the operator an immediate visual signal without
 			// the full tree layout of Detailed(). The fields still land in JSON.
-			log.Status(velocity.LevelError, velocity.StatusFail, "container failed to start: insufficient disk space",
+			log.Status(
+				velocity.LevelError, velocity.StatusFail, "container failed to start: insufficient disk space",
 				velocity.String("node", node.name),
 				velocity.String("error", "no space left on device"),
 				velocity.String("disk_used", "93%"),
@@ -363,7 +372,8 @@ func stageNodeDeployment(log *velocity.Logger, p *velocity.Pretty) string {
 			spinner.StopWithSuccess(node.name + " ready, inference endpoint active")
 
 			// StatusOK produces a green badge on TTY; JSON gets status:"ok".
-			log.Status(velocity.LevelInfo, velocity.StatusOK, node.name+" deployment successful",
+			log.Status(
+				velocity.LevelInfo, velocity.StatusOK, node.name+" deployment successful",
 				velocity.String("endpoint", "http://"+net.JoinHostPort(node.ip, "8080")+"/v1"),
 				velocity.String("model", "llama-3.1-70b-awq"),
 			)
@@ -388,7 +398,8 @@ func stageRecovery(log *velocity.Logger, p *velocity.Pretty, failedNode string) 
 		velocity.String("stage", "recovery"),
 	)
 
-	log.Status(velocity.LevelWarn, velocity.StatusWarn, "initiating workload reallocation",
+	log.Status(
+		velocity.LevelWarn, velocity.StatusWarn, "initiating workload reallocation",
 		velocity.String("from", failedNode),
 		velocity.String("to", "node-0"),
 		velocity.String("strategy", "single-node-overflow"),
@@ -398,7 +409,8 @@ func stageRecovery(log *velocity.Logger, p *velocity.Pretty, failedNode string) 
 	time.Sleep(1400 * time.Millisecond)
 	spinner.StopWithSuccess("Workload reallocated, node-0 running at 2x replicas")
 
-	recoveryLog.Info("reallocation complete",
+	recoveryLog.Info(
+		"reallocation complete",
 		velocity.String("node_0_replicas", "2"),
 		velocity.String("lb_config", "updated"),
 	)
@@ -457,7 +469,8 @@ func stageSummary(log *velocity.Logger, p *velocity.Pretty, started time.Time, r
 	p.Box("Deployment Summary", content)
 	log.Newline()
 
-	log.Info("deployment complete",
+	log.Info(
+		"deployment complete",
 		velocity.Int("nodes_total", 4),
 		velocity.Int("nodes_healthy", 3),
 		velocity.Int("gpus_total", 16),

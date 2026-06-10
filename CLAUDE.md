@@ -31,7 +31,7 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 | `field.go` / `field_convert.go` | Zero-alloc typed fields via `unsafe.Pointer`; typed nil guards via `reflect` |
 | `config.go` | `Config`, TTY detection, `resolveColourForWriter` (NO_COLOR/FORCE_COLOR) |
 | `options.go` | `New(opts...)` functional options; `WithDevelopment`, `WithProduction`, `WithContainer`, `WithNop`, `WithHighThroughput`, `WithTheme`, `WithLevel`, `WithStructuredLevel`, etc. |
-| `level.go` | Log levels, `ParseLevel`, `MustParseLevel`, `AtomicLevel` |
+| `level.go` | Log levels, `ParseLevel`, `MustParseLevel`; level is stored as a bare `atomic.Int32` on `Logger` |
 | `writer.go` | `Writer`, `WriterFunc`, `NoOpWriter`, `FilteredWriter`, capability interfaces, `WriterTrusted()` |
 | `writer_console.go` | Themed ANSI console output |
 | `writer_console_rb.go` | Lock-free ring-buffer console writer |
@@ -75,7 +75,7 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 
 ## Concurrency
 
-- `AtomicLevel`: single atomic load per log call; sub-threshold entries never allocate.
+- **Level gate**: `Logger.level` is a bare `atomic.Int32`; a single atomic load per log call means sub-threshold entries never allocate.
 - `MultiWriter`: per-writer buffered channels (256 cap), non-blocking send, `Retain`/`Release` lifecycle. Workers close their own writer via defer. Shutdown drain via `for range ch`.
 - `RingBuffer`: CAS-based, power-of-2 sized, atomic commit flags, batched flush. Bounded spins (1000 iterations).
 - `Entry`: `atomic.Int32` ref count; CAS to pool prevents double-release.

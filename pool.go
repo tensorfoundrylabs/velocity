@@ -55,8 +55,11 @@ func GetFieldSlice() []Field {
 		slice := make([]Field, 0, 8)
 		return slice
 	}
-	*slicePtr = (*slicePtr)[:0]
-	return *slicePtr
+	result := (*slicePtr)[:0]
+	// Return the wrapper to slicePtrPool so PutFieldSlice can reuse it and
+	// avoid a per-call allocation when putting the slice back.
+	slicePtrPool.Put(slicePtr)
+	return result
 }
 
 func GetFieldSliceWithCapacity(capacity int) []Field {
@@ -65,13 +68,25 @@ func GetFieldSliceWithCapacity(capacity int) []Field {
 		// Fallback in case pool returns unexpected type
 		return make([]Field, 0, capacity)
 	}
-	*slicePtr = (*slicePtr)[:0]
-
+	var result []Field
 	if cap(*slicePtr) < capacity {
-		*slicePtr = make([]Field, 0, capacity)
+		result = make([]Field, 0, capacity)
+	} else {
+		result = (*slicePtr)[:0]
 	}
+	slicePtrPool.Put(slicePtr)
+	return result
+}
 
-	return *slicePtr
+// slicePtrPool is a secondary pool for the *[]Field wrapper objects themselves.
+// Putting &fields (address of a local parameter) into fieldSlicePool.pool causes
+// a heap allocation per call because the local copy escapes. Instead, we recycle
+// the wrapper pointer from this pool so PutFieldSlice doesn't allocate.
+var slicePtrPool = sync.Pool{
+	New: func() any {
+		s := make([]Field, 0, 8)
+		return &s
+	},
 }
 
 // PutFieldSlice returns a field slice to the pool for reuse.
@@ -86,6 +101,14 @@ func PutFieldSlice(fields []Field) {
 		return
 	}
 
-	fields = fields[:0]
-	fieldSlicePool.pool.Put(&fields)
+	// Borrow a *[]Field wrapper from slicePtrPool, store the slice into it, and
+	// put the wrapper into fieldSlicePool. This avoids the per-call heap allocation
+	// that &fields (address of a local parameter copy) would cause.
+	p, _ := slicePtrPool.Get().(*[]Field)
+	if p == nil {
+		s := make([]Field, 0, cap(fields))
+		p = &s
+	}
+	*p = fields[:0]
+	fieldSlicePool.pool.Put(p)
 }

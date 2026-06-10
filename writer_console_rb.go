@@ -9,15 +9,24 @@ import (
 )
 
 // ConsoleWriterRB is a high-performance console writer using a lock-free ring buffer.
-// This eliminates mutex contention and provides batched writing for better throughput.
+//
+// Deprecated: ConsoleWriterRB is not integrated with the standard Logger pipeline
+// and has known concurrency issues (the direct-write fallback path races with the
+// ring-buffer flusher). Use ConsoleWriter, which buffers output via the logger's
+// own mutex and is the supported path. ConsoleWriterRB will be removed in v3.
 type ConsoleWriterRB struct {
-	out             io.Writer
+	out             io.Writer // the raw destination; writes must go through outMu
 	theme           *Theme
 	bufPool         *BufferPool
 	template        *Template
 	displayTimezone *time.Location
 	ringBuffer      *RingBuffer
 	closed          atomic.Bool
+
+	// outMu serialises all writes to out — both the ring-buffer flusher's batch
+	// writes and the direct-write fallback path that fires when the ring is full.
+	// Without this, the two paths race on the underlying io.Writer.
+	outMu sync.Mutex
 
 	// isTTY mirrors ConsoleWriter's trust model: TTY = trusted (human terminal),
 	// non-TTY = untrusted (pipe or file). The template is rendered via the secure
@@ -27,6 +36,19 @@ type ConsoleWriterRB struct {
 	mu     sync.Mutex // Protects theme and template
 	writes atomic.Uint64
 	errors atomic.Uint64
+}
+
+// syncWriter wraps an io.Writer and a mutex so the ring buffer's flusher and
+// the direct-write fallback in Write() use the same lock when writing to out.
+type syncWriter struct {
+	mu  *sync.Mutex
+	out io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.out.Write(p)
 }
 
 func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Location, fieldMode FieldDisplayMode) *ConsoleWriterRB {
@@ -47,12 +69,18 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 		theme:           theme,
 		bufPool:         NewBufferPool(),
 		displayTimezone: displayTimezone,
-		isTTY:           resolveColourForWriter(actualOut),
+		// Respect NO_COLOR / FORCE_COLOR / TTY detection; don't blindly emit ANSI
+		// into pipes or files (fixes L4: useColours was previously hardcoded true).
+		isTTY: resolveColourForWriter(actualOut),
 	}
 
-	w.ringBuffer = NewRingBuffer(actualOut, DefaultRingBufferSize)
+	// Pass a syncWriter so the ring flusher's w.out.Write calls are serialised
+	// via the same outMu as the direct-write fallback, eliminating the H2 race.
+	sw := &syncWriter{mu: &w.outMu, out: actualOut}
+	w.ringBuffer = NewRingBuffer(sw, DefaultRingBufferSize)
 
 	if theme != nil {
+		useColours := w.isTTY && !theme.noColour
 		w.template = initTemplate(&Template{
 			showTime:         true,
 			timeFormat:       time.RFC3339,
@@ -63,7 +91,7 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 			fieldSep:         " ",
 			fieldPairSep:     "=",
 			fieldDisplayMode: fieldMode,
-			useColours:       true,
+			useColours:       useColours,
 		})
 	}
 
@@ -104,11 +132,14 @@ func (w *ConsoleWriterRB) Write(e *Entry) error {
 		formattedData = buf.Bytes()
 	}
 
-	// Lock-free write to ring buffer
+	// Lock-free write to ring buffer.
 	if !w.ringBuffer.Write(formattedData) {
 		w.errors.Add(1)
-		// Fallback to direct write if buffer is full
+		// Fallback: ring is full; write directly but serialise via outMu so this
+		// path cannot interleave with the ring flusher (which uses syncWriter).
+		w.outMu.Lock()
 		_, err := w.out.Write(formattedData)
+		w.outMu.Unlock()
 		return err
 	}
 
@@ -167,6 +198,8 @@ func (w *ConsoleWriterRB) SetTheme(theme *Theme) {
 
 	w.theme = theme
 	if theme != nil {
+		// Preserve TTY/colour state from construction when updating the theme.
+		useColours := w.isTTY && !theme.noColour
 		w.template = initTemplate(&Template{
 			showTime:         true,
 			timeFormat:       time.RFC3339,
@@ -177,7 +210,7 @@ func (w *ConsoleWriterRB) SetTheme(theme *Theme) {
 			fieldSep:         " ",
 			fieldPairSep:     "=",
 			fieldDisplayMode: FieldDisplayInline,
-			useColours:       true,
+			useColours:       useColours,
 		})
 	}
 }

@@ -764,9 +764,15 @@ func (w *ConsoleWriter) SetTheme(theme *Theme) {
 	defer w.mu.Unlock()
 
 	w.theme = theme
-	// Re-derive useColours from current isTTY and new theme state.
+	// Re-derive useColours from the current TTY state and the new theme.
+	// Build a NEW Template rather than mutating the existing one in-place;
+	// WriteSecure snapshots the template pointer under the lock and then reads
+	// its fields outside the lock, so mutating the pointed-at struct would be a
+	// data race on that concurrent read path.
 	themeHasColour := theme != nil && !theme.noColour
-	w.template.useColours = w.isTTY && themeHasColour
+	newTmpl := *w.template // copy all fields
+	newTmpl.useColours = w.isTTY && themeHasColour
+	w.template = &newTmpl
 	w.cacheLevelColours()
 }
 

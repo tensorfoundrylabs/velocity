@@ -63,7 +63,8 @@ var libraries = []Library{
 			l.(*velocity.Logger).Info("request completed")
 		},
 		InfoWithFields: func(l any) {
-			l.(*velocity.Logger).Info("request completed",
+			l.(*velocity.Logger).Info(
+				"request completed",
 				velocity.String("method", "GET"),
 				velocity.Int("status", 200),
 				velocity.Float64("latency", 0.042),
@@ -101,7 +102,8 @@ var libraries = []Library{
 			l.(*velocity.Logger).Info("accumulated context")
 		},
 		MixedTypes: func(l any) {
-			l.(*velocity.Logger).Info("mixed types",
+			l.(*velocity.Logger).Info(
+				"mixed types",
 				velocity.String("str", "hello"),
 				velocity.Int("num", 42),
 				velocity.Float64("flt", 3.14),
@@ -113,7 +115,8 @@ var libraries = []Library{
 			)
 		},
 		ErrorLog: func(l any) {
-			l.(*velocity.Logger).Error("something failed",
+			l.(*velocity.Logger).Error(
+				"something failed",
 				velocity.Error("err", benchErr),
 			)
 		},
@@ -121,7 +124,8 @@ var libraries = []Library{
 			l.(*velocity.Logger).Info(largeMsg)
 		},
 		TenFields: func(l any) {
-			l.(*velocity.Logger).Info("ten fields",
+			l.(*velocity.Logger).Info(
+				"ten fields",
 				velocity.String("f1", "v1"),
 				velocity.String("f2", "v2"),
 				velocity.String("f3", "v3"),
@@ -149,7 +153,8 @@ var libraries = []Library{
 			l.(*zap.Logger).Info("request completed")
 		},
 		InfoWithFields: func(l any) {
-			l.(*zap.Logger).Info("request completed",
+			l.(*zap.Logger).Info(
+				"request completed",
 				zap.String("method", "GET"),
 				zap.Int("status", 200),
 				zap.Float64("latency", 0.042),
@@ -187,7 +192,8 @@ var libraries = []Library{
 			l.(*zap.Logger).Info("accumulated context")
 		},
 		MixedTypes: func(l any) {
-			l.(*zap.Logger).Info("mixed types",
+			l.(*zap.Logger).Info(
+				"mixed types",
 				zap.String("str", "hello"),
 				zap.Int("num", 42),
 				zap.Float64("flt", 3.14),
@@ -205,7 +211,8 @@ var libraries = []Library{
 			l.(*zap.Logger).Info(largeMsg)
 		},
 		TenFields: func(l any) {
-			l.(*zap.Logger).Info("ten fields",
+			l.(*zap.Logger).Info(
+				"ten fields",
 				zap.String("f1", "v1"),
 				zap.String("f2", "v2"),
 				zap.String("f3", "v3"),
@@ -313,7 +320,8 @@ var libraries = []Library{
 			l.(*slog.Logger).Info("request completed")
 		},
 		InfoWithFields: func(l any) {
-			l.(*slog.Logger).Info("request completed",
+			l.(*slog.Logger).Info(
+				"request completed",
 				slog.String("method", "GET"),
 				slog.Int("status", 200),
 				slog.Float64("latency", 0.042),
@@ -348,7 +356,8 @@ var libraries = []Library{
 			l.(*slog.Logger).Info("accumulated context")
 		},
 		MixedTypes: func(l any) {
-			l.(*slog.Logger).Info("mixed types",
+			l.(*slog.Logger).Info(
+				"mixed types",
 				slog.String("str", "hello"),
 				slog.Int("num", 42),
 				slog.Float64("flt", 3.14),
@@ -366,7 +375,8 @@ var libraries = []Library{
 			l.(*slog.Logger).Info(largeMsg)
 		},
 		TenFields: func(l any) {
-			l.(*slog.Logger).Info("ten fields",
+			l.(*slog.Logger).Info(
+				"ten fields",
 				slog.String("f1", "v1"),
 				slog.String("f2", "v2"),
 				slog.String("f3", "v3"),
@@ -391,7 +401,8 @@ var libraries = []Library{
 			l.(*charmlog.Logger).Info("request completed")
 		},
 		InfoWithFields: func(l any) {
-			l.(*charmlog.Logger).Info("request completed",
+			l.(*charmlog.Logger).Info(
+				"request completed",
 				"method", "GET",
 				"status", 200,
 				"latency", 0.042,
@@ -418,7 +429,8 @@ var libraries = []Library{
 			l.(*charmlog.Logger).Info("accumulated context")
 		},
 		MixedTypes: func(l any) {
-			l.(*charmlog.Logger).Info("mixed types",
+			l.(*charmlog.Logger).Info(
+				"mixed types",
 				"str", "hello",
 				"num", 42,
 				"flt", 3.14,
@@ -436,7 +448,8 @@ var libraries = []Library{
 			l.(*charmlog.Logger).Info(largeMsg)
 		},
 		TenFields: func(l any) {
-			l.(*charmlog.Logger).Info("ten fields",
+			l.(*charmlog.Logger).Info(
+				"ten fields",
 				"f1", "v1", "f2", "v2", "f3", "v3", "f4", "v4", "f5", "v5",
 				"f6", 6, "f7", 7, "f8", true, "f9", 9.9, "f10", "v10",
 			)

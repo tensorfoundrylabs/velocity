@@ -40,7 +40,8 @@ func main() {
 				panic(err)
 			}
 		}()
-		opts = append(opts,
+		opts = append(
+			opts,
 			velocity.WithStructuredOutput(f),
 			velocity.WithStructuredLevel(velocity.LevelDebug),
 		)
@@ -57,7 +58,8 @@ func main() {
 	log.Newline()
 
 	// Olla's route-registration pattern: show which routes were bound.
-	log.Group(velocity.LevelInfo, "Registering translator routes",
+	log.Group(
+		velocity.LevelInfo, "Registering translator routes",
 		velocity.GroupItem{Text: "GET  /translate"},
 		velocity.GroupItem{Text: "POST /translate"},
 		velocity.GroupItem{Text: "GET  /languages"},
@@ -67,7 +69,8 @@ func main() {
 	log.Newline()
 
 	// Explicit markers: useful for check-list style output (pass / fail).
-	log.Group(velocity.LevelInfo, "Config validation",
+	log.Group(
+		velocity.LevelInfo, "Config validation",
 		velocity.GroupItem{Marker: "✓", Text: "API key present"},
 		velocity.GroupItem{Marker: "✓", Text: "Rate limit configured"},
 		velocity.GroupItem{Marker: "✓", Text: "Target language list loaded"},

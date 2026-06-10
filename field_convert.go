@@ -21,9 +21,10 @@ func FieldValueToString(f Field) string {
 	case FieldTypeString:
 		return *(*string)(f.value)
 	case FieldTypeInt:
-		var tmp [20]byte
-		n := formatInt(tmp[:], f.num)
-		return UnsafeString(tmp[:n])
+		// Use FormatInt rather than UnsafeString over a stack-local buffer; the
+		// latter creates a string header pointing at a stack array that may be
+		// overwritten after the function returns (latent dangling-pointer hazard).
+		return strconv.FormatInt(f.num, 10)
 	case FieldTypeInt64:
 		return strconv.FormatInt(f.num, 10)
 	case FieldTypeFloat64:
@@ -95,18 +96,14 @@ func FieldValueToString(f Field) string {
 			return "[0 items]"
 		}
 		items := *(*[]GroupItem)(f.value)
-		var tmp [20]byte
-		n := formatInt(tmp[:], int64(len(items)))
-		return "[" + UnsafeString(tmp[:n]) + " items]"
+		return "[" + strconv.FormatInt(int64(len(items)), 10) + " items]"
 	case FieldTypeContinuationLines:
 		// Return a human-readable hint; continuation-aware writers handle lines directly.
 		if f.value == nil {
 			return "[0 lines]"
 		}
 		lines := *(*[]string)(f.value)
-		var tmp [20]byte
-		n := formatInt(tmp[:], int64(len(lines)))
-		return "[" + UnsafeString(tmp[:n]) + " lines]"
+		return "[" + strconv.FormatInt(int64(len(lines)), 10) + " lines]"
 	case FieldTypeUnknown:
 		return ""
 	}

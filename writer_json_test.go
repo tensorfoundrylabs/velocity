@@ -147,3 +147,85 @@ func TestJSONWriter_CallerEscaping(t *testing.T) {
 		t.Errorf("expected numeric line value, got: %s", output)
 	}
 }
+
+// TestConsoleOnlyLogger_LevelGate verifies that a console-only logger with a high
+// console level does not process entries below that level. Previously, the default
+// StructuredLevel (Info) was included in the effective-level min even when no
+// structured output was configured, causing Debug entries to not be filtered when
+// the console level was set to Warn.
+func TestConsoleOnlyLogger_LevelGate(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = &buf
+	cfg.ConsoleLevel = LevelWarn
+	cfg.StructuredOutput = nil // no structured output
+	cfg.StructuredLevel = LevelInfo
+	log := newFromConfig(cfg)
+
+	log.Info("should not appear")
+	log.Debug("should not appear")
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for sub-Warn entries on console-only logger, got: %q", buf.String())
+	}
+
+	log.Warn("should appear")
+	if !strings.Contains(buf.String(), "should appear") {
+		t.Errorf("expected Warn entry to appear, got: %q", buf.String())
+	}
+}
+
+// TestStatus_CallerPoints_ToCallSite verifies that captureCaller is invoked
+// with the right skip depth for Status, so the reported caller is the test
+// function itself, not an internal dispatch helper.
+func TestStatus_CallerPoints_ToCallSite(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &buf
+	cfg.StructuredLevel = LevelDebug
+	cfg.AddCaller = true
+	log := newFromConfig(cfg)
+
+	log.Status(LevelInfo, StatusOK, "caller check") //nolint:testableexamples // line number pinned
+	out := buf.String()
+	if !strings.Contains(out, `writer_json_test.go`) {
+		t.Errorf("Status caller should point to this test file, got: %s", out)
+	}
+}
+
+// TestGroup_CallerPoints_ToCallSite verifies that captureCaller is invoked
+// with the right skip depth for Group.
+func TestGroup_CallerPoints_ToCallSite(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &buf
+	cfg.StructuredLevel = LevelDebug
+	cfg.AddCaller = true
+	log := newFromConfig(cfg)
+
+	log.Group(LevelInfo, "caller check", GroupItem{Text: "item"})
+	out := buf.String()
+	if !strings.Contains(out, `writer_json_test.go`) {
+		t.Errorf("Group caller should point to this test file, got: %s", out)
+	}
+}
+
+// TestContinue_CallerPoints_ToCallSite verifies that captureCaller is invoked
+// with the right skip depth for Continue.
+func TestContinue_CallerPoints_ToCallSite(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = nil
+	cfg.StructuredOutput = &buf
+	cfg.StructuredLevel = LevelDebug
+	cfg.AddCaller = true
+	log := newFromConfig(cfg)
+
+	log.Continue(LevelInfo, "caller check", "line one")
+	out := buf.String()
+	if !strings.Contains(out, `writer_json_test.go`) {
+		t.Errorf("Continue caller should point to this test file, got: %s", out)
+	}
+}

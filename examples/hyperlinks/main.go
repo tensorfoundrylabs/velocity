@@ -177,7 +177,8 @@ func main() {
 		metricsURL = velocity.Hyperlink(metricsURL, metricsURL)
 		dashURL = velocity.Hyperlink(dashURL, dashURL)
 	}
-	log.Continue(velocity.LevelInfo, "Server listening",
+	log.Continue(
+		velocity.LevelInfo, "Server listening",
 		"API:       "+apiURL,
 		"Metrics:   "+metricsURL,
 		"Dashboard: "+dashURL,

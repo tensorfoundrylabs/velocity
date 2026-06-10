@@ -156,3 +156,45 @@ func TestHyperlink_DefaultFallback_IsParens(t *testing.T) {
 		t.Errorf("default HyperlinkFallback should be HyperlinkFallbackParens (0), got %d", f)
 	}
 }
+
+// TestVisibleLen_OSC8 verifies that visibleLen correctly measures only the visible
+// link text inside an OSC 8 hyperlink sequence, not the escape bytes themselves.
+// Without this fix, column-width arithmetic in Table/KeyValue cells was wrong when
+// a cell value contained a hyperlink.
+func TestVisibleLen_OSC8(t *testing.T) {
+	t.Parallel()
+
+	// OSC 8 format: \x1b]8;;<uri>\x07<text>\x1b]8;;\x07
+	link := "\x1b]8;;https://example.com\x07click here\x1b]8;;\x07"
+
+	got := visibleLen(link)
+	want := len("click here") // 10 visible runes
+	if got != want {
+		t.Errorf("visibleLen(OSC 8 hyperlink) = %d, want %d", got, want)
+	}
+}
+
+// TestVisibleLen_SGR verifies that SGR colour sequences are still correctly skipped.
+func TestVisibleLen_SGR(t *testing.T) {
+	t.Parallel()
+
+	// Bold red "hello"
+	s := "\x1b[1;31mhello\x1b[0m"
+	got := visibleLen(s)
+	want := 5
+	if got != want {
+		t.Errorf("visibleLen(SGR string) = %d, want %d", got, want)
+	}
+}
+
+// TestVisibleLen_PlainASCII sanity-checks that plain strings are measured correctly.
+func TestVisibleLen_PlainASCII(t *testing.T) {
+	t.Parallel()
+
+	if got := visibleLen("hello"); got != 5 {
+		t.Errorf("visibleLen(plain) = %d, want 5", got)
+	}
+	if got := visibleLen(""); got != 0 {
+		t.Errorf("visibleLen(empty) = %d, want 0", got)
+	}
+}

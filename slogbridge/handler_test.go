@@ -118,7 +118,8 @@ func TestSlogHandler_FieldTypes(t *testing.T) {
 	sl := slogbridge.NewLogger(l)
 
 	now := time.Now()
-	sl.Info("typed fields",
+	sl.Info(
+		"typed fields",
 		slog.String("str", "hello"),
 		slog.Int("count", 42),
 		slog.Float64("ratio", 3.14),
@@ -239,6 +240,94 @@ func TestSlogHandler_SecureTagsRedacted(t *testing.T) {
 	}
 }
 
+// TestSlogHandler_CallerFromRecordPC verifies that when the velocity logger has
+// caller capture enabled, the slog record's PC is resolved into Caller/Line fields
+// rather than being silently dropped.
+func TestSlogHandler_CallerFromRecordPC(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	l := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+		velocity.WithLevel(velocity.LevelDebug),
+		velocity.WithCaller(true),
+	)
+	sl := slogbridge.NewLogger(l)
+
+	sl.Info("caller via PC")
+
+	out := jsonBuf.String()
+	if !strings.Contains(out, `"caller"`) {
+		t.Errorf("expected caller field in JSON output, got: %s", out)
+	}
+	if !strings.Contains(out, `_test.go`) {
+		t.Errorf("expected caller to reference a test file, got: %s", out)
+	}
+}
+
+// TestSlogHandler_CallerNotEmitted_WhenDisabled verifies that caller fields are
+// absent when the velocity logger does not have caller capture configured.
+func TestSlogHandler_CallerNotEmitted_WhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	l := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+		velocity.WithLevel(velocity.LevelDebug),
+		// caller capture NOT enabled
+	)
+	sl := slogbridge.NewLogger(l)
+
+	sl.Info("no caller")
+
+	out := jsonBuf.String()
+	if strings.Contains(out, `"caller"`) {
+		t.Errorf("expected no caller field when AddCaller is disabled, got: %s", out)
+	}
+}
+
+// TestLogEntry_BaseFieldPrependNoCorruption is a regression test for the field-
+// corruption bug where LogEntry prepended base fields in-place, clobbering the
+// first len(baseFields) user fields that the original slice alias still pointed at.
+// The entry must carry [base=B x=X y=Y z=Z] in that exact order with no loss.
+func TestLogEntry_BaseFieldPrependNoCorruption(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	parent := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+		velocity.WithLevel(velocity.LevelDebug),
+	)
+	// Child logger has one base field.
+	child := parent.With(velocity.String("base", "B"))
+
+	sl := slogbridge.NewLogger(child)
+
+	// Three user fields — more than the single base field — triggers the overwrite.
+	sl.Info(
+		"corruption check",
+		slog.String("x", "X"),
+		slog.String("y", "Y"),
+		slog.String("z", "Z"),
+	)
+
+	out := jsonBuf.String()
+	for _, want := range []string{`"base":"B"`, `"x":"X"`, `"y":"Y"`, `"z":"Z"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got: %s", want, out)
+		}
+	}
+	// base must come before x (prepend semantics).
+	baseIdx := strings.Index(out, `"base"`)
+	xIdx := strings.Index(out, `"x"`)
+	if baseIdx < 0 || xIdx < 0 || baseIdx > xIdx {
+		t.Errorf("base field must appear before x field; output: %s", out)
+	}
+}
+
 func BenchmarkSlogHandler_Info(b *testing.B) {
 	// WithNop discards all output so I/O cost doesn't dominate the measurement.
 	l := velocity.New(velocity.WithNop())
@@ -247,7 +336,8 @@ func BenchmarkSlogHandler_Info(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		sl.Info("benchmark message",
+		sl.Info(
+			"benchmark message",
 			slog.String("key1", "value1"),
 			slog.String("key2", "value2"),
 			slog.String("key3", "value3"),

@@ -153,9 +153,23 @@ func WithHighThroughput() Option {
 	}
 }
 
+// WithLevel sets the minimum level for console (pretty) output only. Structured
+// (JSON) output is unaffected. Use WithLevels to set both thresholds in one call,
+// or WithStructuredLevel to target the structured output independently.
 func WithLevel(level Level) Option {
 	return func(c *config) {
 		c.ConsoleLevel = level
+	}
+}
+
+// WithLevels sets the minimum level for both console and structured output in a
+// single call. Reach for this when all outputs should share the same threshold
+// (e.g. bumping everything to Warn in a test or in a noisy environment). Use
+// WithLevel or WithStructuredLevel when you need the thresholds to differ.
+func WithLevels(level Level) Option {
+	return func(c *config) {
+		c.ConsoleLevel = level
+		c.StructuredLevel = level
 	}
 }
 

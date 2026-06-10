@@ -43,7 +43,8 @@ func main() {
 				panic(err)
 			}
 		}()
-		opts = append(opts,
+		opts = append(
+			opts,
 			velocity.WithStructuredOutput(f),
 			velocity.WithStructuredLevel(velocity.LevelDebug),
 		)
@@ -72,7 +73,8 @@ func main() {
 	// The primary INFO line records the event in the structured pipeline.
 	// Continuation lines carry the human-readable context (URL, keybind) without
 	// polluting the structured log with ad-hoc fields.
-	log.Continue(velocity.LevelInfo, "HTTP server listening",
+	log.Continue(
+		velocity.LevelInfo, "HTTP server listening",
 		"Available at: "+hyperlink("http://localhost:8080"),
 		"Metrics:      "+hyperlink("http://localhost:9090/metrics"),
 		"Press Ctrl+C to stop",
@@ -83,7 +85,8 @@ func main() {
 	// --- Error context block ---
 	// Failed operations often benefit from inline context: the query that failed,
 	// the connection details, and a suggested action — all tied to one ERROR entry.
-	log.Continue(velocity.LevelError, "Database query failed",
+	log.Continue(
+		velocity.LevelError, "Database query failed",
 		"Query:      SELECT * FROM users WHERE active = true",
 		"Connection: db.internal:5432",
 		"Try:        check DB connectivity with `pg_isready -h db.internal`",
@@ -96,7 +99,8 @@ func main() {
 	// lets this be a proper log entry (timestamped, levelled) rather than a
 	// fmt.Println block that bypasses the structured pipeline.
 	buildTime := time.Date(2026, 5, 9, 10, 0, 0, 0, time.UTC)
-	log.Continue(velocity.LevelInfo, "Velocity example service starting",
+	log.Continue(
+		velocity.LevelInfo, "Velocity example service starting",
 		"Version:    v2.0.0-dev",
 		"Built:      "+buildTime.Format(time.RFC3339),
 		"Go:         1.24.3",
@@ -107,7 +111,8 @@ func main() {
 
 	// --- Single continuation line ---
 	// Works with just one additional line; no special case needed by the caller.
-	log.Continue(velocity.LevelWarn, "Rate limit approaching",
+	log.Continue(
+		velocity.LevelWarn, "Rate limit approaching",
 		"Current: 950/1000 requests per minute",
 	)
 

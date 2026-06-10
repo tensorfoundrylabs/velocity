@@ -172,7 +172,8 @@ func TestLoggerContinueTTYIndent(t *testing.T) {
 		WithColour(false),
 	)
 
-	log.Continue(LevelInfo, "HTTP server listening",
+	log.Continue(
+		LevelInfo, "HTTP server listening",
 		"Available at http://localhost:8080",
 		"Press Ctrl+C to stop",
 	)
@@ -199,7 +200,8 @@ func TestLoggerContinueJSON(t *testing.T) {
 		WithStructuredOutput(&buf),
 	)
 
-	log.Continue(LevelInfo, "HTTP server listening",
+	log.Continue(
+		LevelInfo, "HTTP server listening",
 		"Available at http://localhost:8080",
 		"Press Ctrl+C to stop",
 	)
@@ -311,7 +313,8 @@ func TestLoggerContinueBothWriters(t *testing.T) {
 		WithStructuredOutput(&jsonBuf),
 	)
 
-	log.Continue(LevelInfo, "startup complete",
+	log.Continue(
+		LevelInfo, "startup complete",
 		"listening on :8080",
 		"metrics on :9090",
 	)

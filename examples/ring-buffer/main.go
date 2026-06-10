@@ -32,7 +32,8 @@ func main() {
 	// Simulate a few requests so the ring has something to show.
 	routes := []string{"/api/users", "/api/orders", "/api/health"}
 	for i, route := range routes {
-		log.Info("Request handled",
+		log.Info(
+			"Request handled",
 			velocity.String("route", route),
 			velocity.Int("status", 200),
 			velocity.Duration("latency", time.Duration(i+1)*15*time.Millisecond),
