@@ -1,11 +1,29 @@
 package velocity
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 type (
 	contextKey       struct{}
 	contextFieldsKey struct{}
 )
+
+// nopLoggerOnce ensures the singleton nop logger is constructed exactly once.
+// Returning the same instance for every FromContext cache-miss avoids allocating
+// a new Logger + config on every undecorated context traversal.
+var (
+	nopLoggerOnce     sync.Once
+	nopLoggerInstance *Logger
+)
+
+func getNopLogger() *Logger {
+	nopLoggerOnce.Do(func() {
+		nopLoggerInstance = New(WithNop())
+	})
+	return nopLoggerInstance
+}
 
 // NewContext returns a new context carrying the logger.
 func NewContext(ctx context.Context, l *Logger) context.Context {
@@ -15,11 +33,11 @@ func NewContext(ctx context.Context, l *Logger) context.Context {
 // FromContext retrieves the logger from ctx.
 // If ctx carries additional fields via ContextWithFields, they are prepended
 // via With() before returning.
-// Returns New(WithNop()) if no logger is stored — never returns nil.
+// Returns a singleton nop logger if no logger is stored — never returns nil.
 func FromContext(ctx context.Context) *Logger {
 	l, ok := ctx.Value(contextKey{}).(*Logger)
 	if !ok || l == nil {
-		return New(WithNop())
+		return getNopLogger()
 	}
 	if fields, ok := ctx.Value(contextFieldsKey{}).([]Field); ok && len(fields) > 0 {
 		return l.With(fields...)
