@@ -328,10 +328,13 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	contentWidth := maxLen
 	boxWidth := contentWidth + 2
 
+	// Use a consistent single-line box-drawing set throughout (┌─┐│└┘).
+	// The previous code mixed double corners (╔╗╚╝) with single-line fills (─│),
+	// which looks broken in terminals and fonts that render them at different weights.
 	buf.WriteString(theme.CachedFieldKeyFg())
-	buf.WriteString("╔")
+	buf.WriteString("┌")
 	buf.WriteString(strings.Repeat("─", boxWidth))
-	buf.WriteString("╗")
+	buf.WriteString("┐")
 	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 
@@ -349,9 +352,9 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	}
 
 	buf.WriteString(theme.CachedFieldKeyFg())
-	buf.WriteString("╚")
+	buf.WriteString("└")
 	buf.WriteString(strings.Repeat("─", boxWidth))
-	buf.WriteString("╝")
+	buf.WriteString("┘")
 	buf.WriteString(theme.ResetStr())
 	buf.WriteString("\n")
 }
