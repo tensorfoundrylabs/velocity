@@ -531,8 +531,12 @@ func (l *Logger) logStatusStructuredWithFields(level Level, kind StatusKind, msg
 	}
 
 	// Nothing to do when there are no structured outputs.
-	hasStructured := (l.jsonWriter != nil && level >= l.cfg.StructuredLevel) ||
-		l.writers.mw != nil
+	// Guard the mw read with the RLock to avoid a race with concurrent AddWriter/Close
+	// calls that replace or nil-out the MultiWriter under the write lock.
+	l.writers.mu.RLock()
+	hasMW := l.writers.mw != nil
+	l.writers.mu.RUnlock()
+	hasStructured := (l.jsonWriter != nil && level >= l.cfg.StructuredLevel) || hasMW
 	if !hasStructured {
 		return
 	}
