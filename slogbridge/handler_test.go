@@ -240,6 +240,45 @@ func TestSlogHandler_SecureTagsRedacted(t *testing.T) {
 	}
 }
 
+// TestLogEntry_BaseFieldPrependNoCorruption is a regression test for the field-
+// corruption bug where LogEntry prepended base fields in-place, clobbering the
+// first len(baseFields) user fields that the original slice alias still pointed at.
+// The entry must carry [base=B x=X y=Y z=Z] in that exact order with no loss.
+func TestLogEntry_BaseFieldPrependNoCorruption(t *testing.T) {
+	t.Parallel()
+
+	var jsonBuf bytes.Buffer
+	parent := velocity.New(
+		velocity.WithConsoleOutput(io.Discard),
+		velocity.WithStructuredOutput(&jsonBuf),
+		velocity.WithLevel(velocity.LevelDebug),
+	)
+	// Child logger has one base field.
+	child := parent.With(velocity.String("base", "B"))
+
+	sl := slogbridge.NewLogger(child)
+
+	// Three user fields — more than the single base field — triggers the overwrite.
+	sl.Info("corruption check",
+		slog.String("x", "X"),
+		slog.String("y", "Y"),
+		slog.String("z", "Z"),
+	)
+
+	out := jsonBuf.String()
+	for _, want := range []string{`"base":"B"`, `"x":"X"`, `"y":"Y"`, `"z":"Z"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got: %s", want, out)
+		}
+	}
+	// base must come before x (prepend semantics).
+	baseIdx := strings.Index(out, `"base"`)
+	xIdx := strings.Index(out, `"x"`)
+	if baseIdx < 0 || xIdx < 0 || baseIdx > xIdx {
+		t.Errorf("base field must appear before x field; output: %s", out)
+	}
+}
+
 func BenchmarkSlogHandler_Info(b *testing.B) {
 	// WithNop discards all output so I/O cost doesn't dominate the measurement.
 	l := velocity.New(velocity.WithNop())

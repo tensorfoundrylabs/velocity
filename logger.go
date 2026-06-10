@@ -706,11 +706,15 @@ func (l *Logger) LogEntry(e *Entry) {
 		return
 	}
 	// Prepend base fields from With() so child loggers propagate their fields.
+	// Copy existing into a separate slice before zeroing e.Fields; if we simply
+	// re-slice to [:0] and append baseFields, the backing array is shared and
+	// the first len(baseFields) user fields get silently overwritten.
 	if len(l.baseFields) > 0 {
-		existing := e.Fields
+		saved := make([]Field, len(e.Fields))
+		copy(saved, e.Fields)
 		e.Fields = e.Fields[:0]
 		e.WithFields(l.baseFields...)
-		e.WithFields(existing...)
+		e.WithFields(saved...)
 	}
 	// Apply the same <secure> tag scan as logInternal so entries routed through
 	// external adapters (e.g. slogbridge) benefit from message-level redaction.
