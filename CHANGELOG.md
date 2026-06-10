@@ -6,6 +6,8 @@ Tag when ready (after CI is green): `git tag v2.1.0`
 
 ### New features
 
+- `MultiWriter.DroppedCount() uint64` exposes a running count of entries silently discarded when a worker's buffered channel is full. Mirrors the same metric on `RingBuffer` so callers can observe back-pressure from slow writers without polling `Stats()`.
+- `WithLevels(level Level) Option` sets both `ConsoleLevel` and `StructuredLevel` in a single call. Reach for it when all outputs should share the same threshold; use `WithLevel` or `WithStructuredLevel` when the thresholds need to differ.
 - `Logger.CallerEnabled()` reports whether the logger is configured to capture caller information. Adapters that carry their own program counter (such as `slogbridge`, which receives `record.PC` from slog) use it to decide whether to resolve that PC into `Caller`/`Line`/`Function` fields.
 - `FORCE_COLOR=<non-empty>` environment variable forces ANSI colour output regardless of whether stdout is a real terminal. Useful on Windows where terminal emulators proxy stdout through a named pipe, causing `term.IsTerminal` to return false even in a colour-capable terminal.
 - `NO_COLOR=<non-empty>` environment variable unconditionally disables ANSI colour output, following the https://no-color.org convention. Takes precedence over `FORCE_COLOR`.
