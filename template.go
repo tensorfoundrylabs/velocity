@@ -614,13 +614,16 @@ func (t *Template) writeTimingSuffix(buf *bytes.Buffer, entry *Entry, scan indic
 // Duration fields (field.num as time.Duration) use the same compact logic.
 // This avoids time.Duration.String() and fmt.Sprintf entirely.
 func writeSmartDuration(buf *bytes.Buffer, f Field) {
-	var ns int64
+	// Integer timing fields carry milliseconds and Duration fields carry
+	// nanoseconds. scale converts a magnitude in the field's own unit to
+	// milliseconds, so integer values never pass through nanoseconds:
+	// ms * 1e6 overflows int64 once |ms| exceeds ~9.2e12.
+	var scale uint64
 	switch f.Type {
 	case FieldTypeDuration:
-		ns = f.num // already nanoseconds
+		scale = uint64(time.Millisecond)
 	case FieldTypeInt, FieldTypeInt64:
-		// Treat as milliseconds.
-		ns = f.num * int64(time.Millisecond)
+		scale = 1
 	default:
 		// Fallback: write the raw int.
 		var tmp [20]byte
@@ -629,43 +632,53 @@ func writeSmartDuration(buf *bytes.Buffer, f Field) {
 		return
 	}
 
-	if ns < 0 {
+	if f.num < 0 {
 		_ = buf.WriteByte('-')
-		ns = -ns
+	}
+	// Unsigned magnitude via the two-step abs: plain negation overflows for
+	// MinInt64 nanoseconds (and previously left it negative, double-printing
+	// the sign through formatInt).
+	var mag uint64
+	if f.num < 0 {
+		mag = uint64(-(f.num + 1)) + 1 //nolint:gosec // G115: two-step abs, not a value conversion
+	} else {
+		mag = uint64(f.num) //nolint:gosec // G115: non-negative, conversion is safe
 	}
 
-	ms := ns / int64(time.Millisecond)
-	us := ns / int64(time.Microsecond)
-	sec := ns / int64(time.Second)
-
 	switch {
-	case ns < int64(time.Millisecond):
-		// Sub-millisecond: render in microseconds.
+	case mag < scale:
+		// Sub-millisecond: render in microseconds. Integer-millisecond input
+		// has no sub-ms magnitudes other than zero, so a floor of 1 keeps the
+		// divisor defined.
+		usDiv := scale / 1000
+		if usDiv == 0 {
+			usDiv = 1
+		}
 		var tmp [20]byte
-		n := formatInt(tmp[:], us)
+		n := formatUint(tmp[:], mag/usDiv)
 		buf.Write(tmp[:n])
 		buf.WriteString("µs")
 
-	case ns < int64(time.Second):
+	case mag < 1000*scale:
 		// Millisecond range: render as "NNNms".
 		var tmp [20]byte
-		n := formatInt(tmp[:], ms)
+		n := formatUint(tmp[:], mag/scale)
 		buf.Write(tmp[:n])
 		buf.WriteString("ms")
 
 	default:
 		// Second range: render as "X.XXs" (2 decimal places).
-		remainMs := (ns - sec*int64(time.Second)) / int64(time.Millisecond)
+		sec := mag / (1000 * scale)
+		// Two decimal digits from millisecond remainder (0-999 → 00-99 after /10).
+		centis := (mag % (1000 * scale)) / scale / 10
 		var tmp [20]byte
-		n := formatInt(tmp[:], sec)
+		n := formatUint(tmp[:], sec)
 		buf.Write(tmp[:n])
 		_ = buf.WriteByte('.')
-		// Two decimal digits from millisecond remainder (0-999 → 00-99 after /10).
-		centis := remainMs / 10
 		if centis < 10 {
 			_ = buf.WriteByte('0')
 		}
-		m := formatInt(tmp[:], centis)
+		m := formatUint(tmp[:], centis)
 		buf.Write(tmp[:m])
 		_ = buf.WriteByte('s')
 	}

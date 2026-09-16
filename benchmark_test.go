@@ -732,3 +732,30 @@ func BenchmarkIndicators_Disabled(b *testing.B) {
 	b.StopTimer()
 	reportSink(b, console, structured)
 }
+
+// BenchmarkIndicators_Timing_IntMs isolates the timing-render path: an integer
+// millisecond field promoted into the timing bracket and formatted by
+// writeSmartDuration. Integer input now formats in ms units directly, so this
+// path must stay allocation-free.
+func BenchmarkIndicators_Timing_IntMs(b *testing.B) {
+	console := &benchSink{}
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = console
+	cfg.StructuredOutput = nil
+	cfg.ConsoleLevel = LevelDebug
+	cfg.Indicators = inlineIndicators{
+		timingFields:   []string{"startup_ms"},
+		removeFromTree: true,
+		showGlyphs:     false,
+		glyphsExplicit: true,
+	}
+	l := newFromConfig(cfg)
+	fields := []Field{Int("startup_ms", 2000)}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("started", fields...)
+	}
+	b.StopTimer()
+	reportSink(b, console)
+}
