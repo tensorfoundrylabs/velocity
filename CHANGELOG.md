@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 (2026-09-16)
 
 Behaviour and API changes from the logging-hardening fix-and-finish run
-(uncommitted working tree; see `docs/specs/logging-hardening-finish-report.md`
-in the development tree for the full mapping to tests and measurements).
+(see `docs/specs/logging-hardening-finish-report.md` in the development
+tree for the full mapping to tests and measurements).
 
 ### Behaviour changes
 
