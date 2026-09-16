@@ -173,7 +173,7 @@ func appendAttrFields(fields []velocity.Field, prefix string, attr slog.Attr) []
 	case slog.KindInt64:
 		return append(fields, velocity.Int64(key, attr.Value.Int64()))
 	case slog.KindUint64:
-		return append(fields, velocity.Int64(key, int64(attr.Value.Uint64()))) //nolint:gosec // slog uint64 -> int64 bit cast is intentional
+		return append(fields, velocity.Uint64(key, attr.Value.Uint64()))
 	case slog.KindFloat64:
 		return append(fields, velocity.Float64(key, attr.Value.Float64()))
 	case slog.KindBool:

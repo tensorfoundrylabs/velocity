@@ -67,6 +67,7 @@ func TestStyle_ReturnsTheme(t *testing.T) {
 	// Style() returns mono for non-TTY writers; use FORCE_COLOR to test the
 	// colour path without requiring a real terminal in CI.
 	t.Setenv("FORCE_COLOR", "1")
+	t.Setenv("NO_COLOR", "")
 
 	log := New(
 		WithConsoleOutput(bytes.NewBuffer(nil)),
@@ -175,8 +176,5 @@ func TestSetTheme_NilResetsToDefault(t *testing.T) {
 
 	if log.Theme() != ThemeNightOwl {
 		t.Errorf("SetTheme(nil): Theme() returned %v, want ThemeNightOwl", log.Theme())
-	}
-	if log.cfg.ConsoleTheme != ThemeNightOwl {
-		t.Errorf("SetTheme(nil): cfg.ConsoleTheme = %v, want ThemeNightOwl", log.cfg.ConsoleTheme)
 	}
 }

@@ -273,8 +273,8 @@ func TestEnvVar_ForceColour(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewConsoleWriter(&buf, ThemeNightOwl)
 
-	if !w.isTTY {
-		t.Error("expected isTTY=true when FORCE_COLOR is set, but got false")
+	if w.isTTY {
+		t.Error("FORCE_COLOR must not turn a buffer into a trusted terminal")
 	}
 	if !w.template.useColours {
 		t.Error("expected template.useColours=true when FORCE_COLOR is set, but got false")
@@ -323,9 +323,14 @@ func TestStatusItem_ColourViaLoggerRender(t *testing.T) {
 }
 
 // TestStatusItem_NoColourViaLoggerRenderWhenNotTTY verifies that a StatusItem
-// rendered via Logger.Render emits plain text when the console writer is not a TTY.
+// rendered via Logger.Render emits plain text when styling is not permitted
+// for the destination. The colour env is pinned: under FORCE_COLOR a non-TTY
+// buffer is legitimately styled (styling follows permission, trust follows the
+// destination — see StatusItem.RenderStyled), so the plain-output expectation
+// only holds with the overrides cleared.
 func TestStatusItem_NoColourViaLoggerRenderWhenNotTTY(t *testing.T) {
-	t.Parallel()
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
 
 	var buf bytes.Buffer
 	log := New(WithDevelopment(), WithConsoleOutput(&buf))

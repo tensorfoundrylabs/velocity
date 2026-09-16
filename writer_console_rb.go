@@ -8,14 +8,13 @@ import (
 	"time"
 )
 
-// ConsoleWriterRB is a high-performance console writer using a lock-free ring buffer.
+// ConsoleWriterRB is a console writer backed by a batching byte queue.
 //
-// Deprecated: ConsoleWriterRB is not integrated with the standard Logger pipeline
-// and has known concurrency issues (the direct-write fallback path races with the
-// ring-buffer flusher). Use ConsoleWriter, which buffers output via the logger's
-// own mutex and is the supported path. ConsoleWriterRB will be removed in v3.
+// Deprecated: ConsoleWriterRB is not integrated with the standard Logger
+// pipeline. Use ConsoleWriter, which buffers output via the logger's own
+// mutex and is the supported path. ConsoleWriterRB will be removed in v3.
 type ConsoleWriterRB struct {
-	out             io.Writer // the raw destination; writes must go through outMu
+	out             io.Writer // the raw destination; only the drain goroutine writes to it after construction
 	theme           *Theme
 	bufPool         *BufferPool
 	template        *Template
@@ -23,32 +22,20 @@ type ConsoleWriterRB struct {
 	ringBuffer      *RingBuffer
 	closed          atomic.Bool
 
-	// outMu serialises all writes to out — both the ring-buffer flusher's batch
-	// writes and the direct-write fallback path that fires when the ring is full.
-	// Without this, the two paths race on the underlying io.Writer.
-	outMu sync.Mutex
-
 	// isTTY mirrors ConsoleWriter's trust model: TTY = trusted (human terminal),
 	// non-TTY = untrusted (pipe or file). The template is rendered via the secure
 	// path so Secure fields are redacted when piping to a file or non-TTY sink.
 	isTTY bool
 
+	// colourAllowed is the stable colour permission resolved at construction
+	// (NO_COLOR / FORCE_COLOR / terminal detection). SetTheme re-derives
+	// useColours from it rather than from the previous theme, so a
+	// mono-to-coloured swap restores colour when permission allows.
+	colourAllowed bool
+
 	mu     sync.Mutex // Protects theme and template
 	writes atomic.Uint64
 	errors atomic.Uint64
-}
-
-// syncWriter wraps an io.Writer and a mutex so the ring buffer's flusher and
-// the direct-write fallback in Write() use the same lock when writing to out.
-type syncWriter struct {
-	mu  *sync.Mutex
-	out io.Writer
-}
-
-func (s *syncWriter) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.out.Write(p)
 }
 
 func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Location, fieldMode FieldDisplayMode) *ConsoleWriterRB {
@@ -71,16 +58,14 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 		displayTimezone: displayTimezone,
 		// Respect NO_COLOR / FORCE_COLOR / TTY detection; don't blindly emit ANSI
 		// into pipes or files (fixes L4: useColours was previously hardcoded true).
-		isTTY: resolveColourForWriter(actualOut),
+		isTTY:         IsTerminalWriter(actualOut),
+		colourAllowed: resolveColourForWriter(actualOut),
 	}
 
-	// Pass a syncWriter so the ring flusher's w.out.Write calls are serialised
-	// via the same outMu as the direct-write fallback, eliminating the H2 race.
-	sw := &syncWriter{mu: &w.outMu, out: actualOut}
-	w.ringBuffer = NewRingBuffer(sw, DefaultRingBufferSize)
+	w.ringBuffer = NewRingBuffer(actualOut, DefaultRingBufferSize)
 
 	if theme != nil {
-		useColours := w.isTTY && !theme.noColour
+		useColours := w.colourAllowed && !theme.noColour
 		w.template = initTemplate(&Template{
 			showTime:         true,
 			timeFormat:       time.RFC3339,
@@ -98,8 +83,10 @@ func NewConsoleWriterRB(out io.Writer, theme *Theme, displayTimezone *time.Locat
 	return w
 }
 
-// Write writes a formatted log entry using the ring buffer.
-// This method is lock-free and optimised for high throughput.
+// Write writes a formatted log entry through the byte queue.
+// When the queue is full the entry is dropped and counted in Metrics rather
+// than written directly: a direct fallback raced with Close and could overtake
+// records already queued ahead of it (R10).
 func (w *ConsoleWriterRB) Write(e *Entry) error {
 	if w.closed.Load() {
 		return ErrWriterClosed
@@ -132,15 +119,10 @@ func (w *ConsoleWriterRB) Write(e *Entry) error {
 		formattedData = buf.Bytes()
 	}
 
-	// Lock-free write to ring buffer.
 	if !w.ringBuffer.Write(formattedData) {
+		// Queue full or closed. Counted as an error here and as a drop by the
+		// queue; never re-ordered ahead of accepted records.
 		w.errors.Add(1)
-		// Fallback: ring is full; write directly but serialise via outMu so this
-		// path cannot interleave with the ring flusher (which uses syncWriter).
-		w.outMu.Lock()
-		_, err := w.out.Write(formattedData)
-		w.outMu.Unlock()
-		return err
 	}
 
 	return nil
@@ -184,11 +166,13 @@ func (w *ConsoleWriterRB) formatEntry(buf *BytesBuffer, e *Entry) {
 	}
 }
 
+// Close rejects further writes and drains every accepted entry. It is safe to
+// call concurrently: RingBuffer.Close is idempotent and every caller waits for
+// the same drain, so no Close returns while entries are still in flight.
 func (w *ConsoleWriterRB) Close() error {
-	if !w.closed.CompareAndSwap(false, true) {
-		return ErrWriterClosed
-	}
-
+	// Gate new writes before shutting the queue. A Write racing past this
+	// store is rejected by the queue's own closed check and counted as a drop.
+	w.closed.Store(true)
 	return w.ringBuffer.Close()
 }
 
@@ -198,8 +182,10 @@ func (w *ConsoleWriterRB) SetTheme(theme *Theme) {
 
 	w.theme = theme
 	if theme != nil {
-		// Preserve TTY/colour state from construction when updating the theme.
-		useColours := w.isTTY && !theme.noColour
+		// Re-derive useColours from the construction-time colour permission, not
+		// from the previous template — a mono-to-coloured swap must restore
+		// colour when NO_COLOR/FORCE_COLOR/TTY permission allows it.
+		useColours := w.colourAllowed && !theme.noColour
 		w.template = initTemplate(&Template{
 			showTime:         true,
 			timeFormat:       time.RFC3339,

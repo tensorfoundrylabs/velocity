@@ -121,17 +121,16 @@ func TestEntry_Reset_ClearsRefCount(t *testing.T) {
 	}
 }
 
-func TestEntry_ReleaseWithoutWritten_DoesNotReturnToPool(t *testing.T) {
+func TestEntry_ReleaseWithoutWritten_ReturnsToPool(t *testing.T) {
 	entry := GetEntry()
 	entry.SetMessage("test")
 	// Don't set written = true
 
 	entry.Release()
 
-	// Entry should not have been returned to pool
-	// refCount should still be 1
-	if entry.refCount.Load() != 1 {
-		t.Errorf("Expected refCount to still be 1, got %d", entry.refCount.Load())
+	// A skipped dispatch still owns an acquired entry and must release it.
+	if entry.refCount.Load() != -1 {
+		t.Errorf("Expected pooled marker -1, got %d", entry.refCount.Load())
 	}
 }
 

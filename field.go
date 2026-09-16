@@ -44,6 +44,9 @@ const (
 	// Stored as a typed Field so Entry layout stays unchanged — entries that never
 	// call Logger.Continue pay zero cost.
 	FieldTypeContinuationLines
+
+	// FieldTypeUint64 is appended so existing FieldType values remain stable.
+	FieldTypeUint64
 )
 
 // Field represents a structured log field optimised for minimal allocations.
@@ -85,6 +88,12 @@ func Int64(key string, val int64) Field {
 		Type: FieldTypeInt64,
 		num:  val,
 	}
+}
+
+// Uint64 records an unsigned integer without converting it through float64 or
+// int64. It preserves the complete uint64 range in JSON and slog adapters.
+func Uint64(key string, val uint64) Field {
+	return Field{Key: key, Type: FieldTypeUint64, num: int64(val)} //nolint:gosec // G115: bit-pattern storage, not a value conversion — the whole point of this constructor is preserving the full uint64 range
 }
 
 func Float64(key string, val float64) Field {
@@ -300,6 +309,8 @@ func (f Field) Value() any {
 		return int(f.num)
 	case FieldTypeInt64:
 		return f.num
+	case FieldTypeUint64:
+		return uint64(f.num) //nolint:gosec // G115: bit-pattern reinterpretation of the storage num, not a value conversion
 	case FieldTypeFloat64:
 		// Safe conversion: int64 back to uint64 for bit pattern
 		return math.Float64frombits(uint64(f.num)) // #nosec G115 - bit pattern conversion, not value conversion
@@ -355,6 +366,11 @@ func (f Field) writeFormatted(buf interface {
 	case FieldTypeInt, FieldTypeInt64:
 		var tmp [20]byte
 		n := formatInt(tmp[:], f.num)
+		_, _ = buf.Write(tmp[:n])
+	case FieldTypeUint64:
+		// Stack-buffer form: strconv.FormatUint allocates for values >= 100.
+		var tmp [20]byte
+		n := formatUint(tmp[:], uint64(f.num)) //nolint:gosec // G115: field storage is bit-pattern int64, reinterpretation is the contract
 		_, _ = buf.Write(tmp[:n])
 	case FieldTypeFloat64:
 		val := math.Float64frombits(uint64(f.num)) //nolint:gosec // G115: bit-pattern reinterpretation, not value conversion

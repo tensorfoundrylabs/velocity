@@ -62,6 +62,11 @@ func GetFieldSlice() []Field {
 	return result
 }
 
+// GetFieldSliceWithCapacity returns a pooled field slice with at least the
+// requested capacity. It exists for API compatibility and external callers:
+// the library itself only uses GetFieldSlice (entries rarely need more than the
+// pooled default), so this helper has no production callers inside velocity.
+// Behaviour is identical to GetFieldSlice except the capacity guarantee.
 func GetFieldSliceWithCapacity(capacity int) []Field {
 	slicePtr, ok := fieldSlicePool.pool.Get().(*[]Field)
 	if !ok || slicePtr == nil {
@@ -90,7 +95,12 @@ var slicePtrPool = sync.Pool{
 }
 
 // PutFieldSlice returns a field slice to the pool for reuse.
-// The slice is reset to avoid data leakage.
+// The whole backing array is cleared through cap(fields) before pooling:
+// Field carries unsafe.Pointer values, so any populated slot — including
+// stale storage between len and cap left by earlier re-slicing — would
+// otherwise keep the pointed-at values alive (and readable by the next
+// borrower) until the array is overwritten. Matches putFieldSnapshot's
+// clearing semantics with the same 64-element cap.
 func PutFieldSlice(fields []Field) {
 	if fields == nil {
 		return
@@ -100,6 +110,10 @@ func PutFieldSlice(fields []Field) {
 	if cap(fields) > 64 {
 		return
 	}
+
+	// Clear through the full capacity: len(fields) may under-report what was
+	// populated earlier in this array's life.
+	clear(fields[:cap(fields)])
 
 	// Borrow a *[]Field wrapper from slicePtrPool, store the slice into it, and
 	// put the wrapper into fieldSlicePool. This avoids the per-call heap allocation

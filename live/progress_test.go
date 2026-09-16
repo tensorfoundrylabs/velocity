@@ -159,8 +159,8 @@ func TestProgressBar_ForceColor_EnablesOnNonTTY(t *testing.T) {
 
 	pb := NewProgressBar(io.Discard, 10, "loading")
 
-	if !pb.isTTY {
-		t.Error("ProgressBar.isTTY should be true under FORCE_COLOR=1 regardless of fd type")
+	if pb.isTTY {
+		t.Error("FORCE_COLOR must not turn a non-terminal into a terminal display")
 	}
 	pb.Complete()
 }
@@ -171,22 +171,25 @@ func TestSpinner_ForceColor_EnablesOnNonTTY(t *testing.T) {
 
 	s := NewSpinner(io.Discard, "working")
 
-	if !s.isTTY {
-		t.Error("Spinner.isTTY should be true under FORCE_COLOR=1 regardless of fd type")
+	if s.isTTY {
+		t.Error("FORCE_COLOR must not turn a non-terminal into a terminal display")
 	}
 	s.Stop()
 }
 
-// TestProgressBar_NoColor_Disables verifies that NO_COLOR=1 suppresses the isTTY flag
-// even when FORCE_COLOR is absent.
-func TestProgressBar_NoColor_Disables(t *testing.T) {
+// TestProgressBar_NoColor_NonTerminalStaysNonTerminal pins that cursor
+// capability is destination-based: io.Discard is never a terminal, so no
+// colour environment combination can flip it. NO_COLOR alone does NOT stop
+// cursor movement on a real terminal — the terminal-destination case is
+// covered in output_test.go (TestOutput_NoColorKeepsCursorControlOnTerminal).
+func TestProgressBar_NoColor_NonTerminalStaysNonTerminal(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("FORCE_COLOR", "") // ensure FORCE_COLOR does not interfere
 
 	pb := NewProgressBar(io.Discard, 10, "loading")
 
 	if pb.isTTY {
-		t.Error("ProgressBar.isTTY should be false under NO_COLOR=1")
+		t.Error("ProgressBar.isTTY must stay false: io.Discard is not a terminal under any colour policy")
 	}
 	pb.Complete()
 }

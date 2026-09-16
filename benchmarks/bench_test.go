@@ -1,5 +1,8 @@
 // Package benchmarks compares velocity against other Go logging libraries.
-// All loggers write to io.Discard so only formatting overhead is measured.
+// Every library writes to a real counting sink: all libraries serialize and
+// deliver their output, so the comparison measures comparable work. Output
+// validity and disabled-path silence are asserted by TestPreflight_* in
+// preflight_test.go, outside the timed loops.
 package benchmarks
 
 import (
@@ -7,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,18 +23,50 @@ import (
 	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
+// benchSink is a real io.Writer that counts delivered bytes and write calls.
+// Each benchmark constructs a fresh sink so per-op delivery volume can be
+// reported next to ns/op. The atomics are identical for every library, so the
+// comparison stays fair.
+type benchSink struct {
+	bytes  atomic.Int64
+	writes atomic.Int64
+}
+
+func (s *benchSink) Write(p []byte) (int, error) {
+	s.bytes.Add(int64(len(p)))
+	s.writes.Add(1)
+	return len(p), nil
+}
+
+func reportSink(b *testing.B, s *benchSink) {
+	b.Helper()
+	if b.N == 0 {
+		return
+	}
+	n := float64(b.N)
+	b.ReportMetric(float64(s.bytes.Load())/n, "sinkB/op")
+	b.ReportMetric(float64(s.writes.Load())/n, "sinkW/op")
+}
+
 // Library describes the subset of a logging library's API needed for comparison.
+// Setup receives the shared sink so every library writes to the same kind of
+// destination. Format records the output encoding the configuration produces,
+// used by the preflight assertions ("json" output must parse as JSON; "text"
+// output must contain the message).
 // Add new libraries by appending to the libraries slice below.
 type Library struct {
-	Name           string
-	Setup          func() any
+	Name  string
+	Setup func(w io.Writer) any
+
+	Format string
+
 	Info           func(logger any)
 	InfoWithFields func(logger any)
 	InfoDisabled   func(logger any)
 	WithFields     func(logger any) any
 
 	// AccumulatedCtx returns a logger pre-loaded with 10 contextual fields.
-	AccumulatedCtx  func() any
+	AccumulatedCtx  func(w io.Writer) any
 	InfoAccumulated func(logger any)
 
 	// MixedTypes logs 8 different field types in a single call.
@@ -49,16 +85,17 @@ type Library struct {
 var libraries = []Library{
 	{
 		Name: "velocity",
-		Setup: func() any {
-			// JSON-only to io.Discard: console level set to Off so only the
-			// JSON serialisation path runs. Makes the comparison fair against
-			// pure structured loggers (zap, zerolog, slog).
+		Setup: func(w io.Writer) any {
+			// JSON-only to the shared sink: console level set to Off so only
+			// the JSON serialisation path runs. Makes the comparison fair
+			// against pure structured loggers (zap, zerolog, slog).
 			return velocity.New(
 				velocity.WithLevel(velocity.LevelOff),
-				velocity.WithStructuredOutput(io.Discard),
+				velocity.WithStructuredOutput(w),
 				velocity.WithStructuredLevel(velocity.LevelDebug),
 			)
 		},
+		Format: "json",
 		Info: func(l any) {
 			l.(*velocity.Logger).Info("request completed")
 		},
@@ -79,10 +116,10 @@ var libraries = []Library{
 				velocity.String("region", "ap-southeast-2"),
 			)
 		},
-		AccumulatedCtx: func() any {
+		AccumulatedCtx: func(w io.Writer) any {
 			l := velocity.New(
 				velocity.WithLevel(velocity.LevelOff),
-				velocity.WithStructuredOutput(io.Discard),
+				velocity.WithStructuredOutput(w),
 				velocity.WithStructuredLevel(velocity.LevelDebug),
 			)
 			return l.With(
@@ -141,14 +178,15 @@ var libraries = []Library{
 	},
 	{
 		Name: "zap",
-		Setup: func() any {
+		Setup: func(w io.Writer) any {
 			core := zapcore.NewCore(
 				zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-				zapcore.AddSync(io.Discard),
+				zapcore.AddSync(w),
 				zap.DebugLevel,
 			)
 			return zap.New(core)
 		},
+		Format: "json",
 		Info: func(l any) {
 			l.(*zap.Logger).Info("request completed")
 		},
@@ -169,10 +207,10 @@ var libraries = []Library{
 				zap.String("region", "ap-southeast-2"),
 			)
 		},
-		AccumulatedCtx: func() any {
+		AccumulatedCtx: func(w io.Writer) any {
 			core := zapcore.NewCore(
 				zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-				zapcore.AddSync(io.Discard),
+				zapcore.AddSync(w),
 				zap.DebugLevel,
 			)
 			return zap.New(core).With(
@@ -228,9 +266,10 @@ var libraries = []Library{
 	},
 	{
 		Name: "zerolog",
-		Setup: func() any {
-			return zerolog.New(io.Discard).Level(zerolog.DebugLevel)
+		Setup: func(w io.Writer) any {
+			return zerolog.New(w).Level(zerolog.DebugLevel)
 		},
+		Format: "json",
 		Info: func(l any) {
 			lg := l.(zerolog.Logger)
 			lg.Info().Msg("request completed")
@@ -254,8 +293,8 @@ var libraries = []Library{
 				Str("region", "ap-southeast-2").
 				Logger()
 		},
-		AccumulatedCtx: func() any {
-			return zerolog.New(io.Discard).Level(zerolog.DebugLevel).With().
+		AccumulatedCtx: func(w io.Writer) any {
+			return zerolog.New(w).Level(zerolog.DebugLevel).With().
 				Str("k1", "v1").
 				Str("k2", "v2").
 				Str("k3", "v3").
@@ -311,11 +350,12 @@ var libraries = []Library{
 	},
 	{
 		Name: "slog",
-		Setup: func() any {
-			return slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{
+		Setup: func(w io.Writer) any {
+			return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
 				Level: slog.LevelDebug,
 			}))
 		},
+		Format: "json",
 		Info: func(l any) {
 			l.(*slog.Logger).Info("request completed")
 		},
@@ -336,8 +376,8 @@ var libraries = []Library{
 				slog.String("region", "ap-southeast-2"),
 			)
 		},
-		AccumulatedCtx: func() any {
-			return slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{
+		AccumulatedCtx: func(w io.Writer) any {
+			return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
 				Level: slog.LevelDebug,
 			})).With(
 				slog.String("k1", "v1"),
@@ -392,11 +432,12 @@ var libraries = []Library{
 	},
 	{
 		Name: "charmbracelet",
-		Setup: func() any {
-			lg := charmlog.New(io.Discard)
+		Setup: func(w io.Writer) any {
+			lg := charmlog.New(w)
 			lg.SetLevel(charmlog.DebugLevel)
 			return lg
 		},
+		Format: "text",
 		Info: func(l any) {
 			l.(*charmlog.Logger).Info("request completed")
 		},
@@ -417,8 +458,8 @@ var libraries = []Library{
 				"region", "ap-southeast-2",
 			)
 		},
-		AccumulatedCtx: func() any {
-			lg := charmlog.New(io.Discard)
+		AccumulatedCtx: func(w io.Writer) any {
+			lg := charmlog.New(w)
 			lg.SetLevel(charmlog.DebugLevel)
 			return lg.With(
 				"k1", "v1", "k2", "v2", "k3", "v3", "k4", "v4", "k5", "v5",
@@ -457,10 +498,11 @@ var libraries = []Library{
 	},
 	{
 		Name: "pterm",
-		Setup: func() any {
-			lg := pterm.DefaultLogger.WithLevel(pterm.LogLevelTrace).WithWriter(io.Discard)
+		Setup: func(w io.Writer) any {
+			lg := pterm.DefaultLogger.WithLevel(pterm.LogLevelTrace).WithWriter(w)
 			return lg
 		},
+		Format: "text",
 		Info: func(l any) {
 			lg := l.(*pterm.Logger)
 			lg.Info("request completed")
@@ -495,7 +537,8 @@ var libraries = []Library{
 			lg.Error("something failed", lg.Args("err", benchErr))
 		},
 		LargeMsg: func(l any) {
-			l.(*pterm.Logger).Info(largeMsg)
+			lg := l.(*pterm.Logger)
+			lg.Info(largeMsg)
 		},
 		TenFields: func(l any) {
 			lg := l.(*pterm.Logger)
@@ -512,36 +555,39 @@ var libraries = []Library{
 var disabledLibraries = []Library{
 	{
 		Name: "velocity",
-		Setup: func() any {
+		Setup: func(w io.Writer) any {
 			return velocity.New(
 				velocity.WithLevel(velocity.LevelOff),
-				velocity.WithStructuredOutput(io.Discard),
+				velocity.WithStructuredOutput(w),
 				velocity.WithStructuredLevel(velocity.LevelError),
 			)
 		},
+		Format: "json",
 		InfoDisabled: func(l any) {
 			l.(*velocity.Logger).Debug("suppressed")
 		},
 	},
 	{
 		Name: "zap",
-		Setup: func() any {
+		Setup: func(w io.Writer) any {
 			core := zapcore.NewCore(
 				zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-				zapcore.AddSync(io.Discard),
+				zapcore.AddSync(w),
 				zap.ErrorLevel,
 			)
 			return zap.New(core)
 		},
+		Format: "json",
 		InfoDisabled: func(l any) {
 			l.(*zap.Logger).Debug("suppressed")
 		},
 	},
 	{
 		Name: "zerolog",
-		Setup: func() any {
-			return zerolog.New(io.Discard).Level(zerolog.ErrorLevel)
+		Setup: func(w io.Writer) any {
+			return zerolog.New(w).Level(zerolog.ErrorLevel)
 		},
+		Format: "json",
 		InfoDisabled: func(l any) {
 			lg := l.(zerolog.Logger)
 			lg.Debug().Msg("suppressed")
@@ -549,31 +595,34 @@ var disabledLibraries = []Library{
 	},
 	{
 		Name: "slog",
-		Setup: func() any {
-			return slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{
+		Setup: func(w io.Writer) any {
+			return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
 				Level: slog.LevelError,
 			}))
 		},
+		Format: "json",
 		InfoDisabled: func(l any) {
 			l.(*slog.Logger).Debug("suppressed")
 		},
 	},
 	{
 		Name: "charmbracelet",
-		Setup: func() any {
-			lg := charmlog.New(io.Discard)
+		Setup: func(w io.Writer) any {
+			lg := charmlog.New(w)
 			lg.SetLevel(charmlog.ErrorLevel)
 			return lg
 		},
+		Format: "text",
 		InfoDisabled: func(l any) {
 			l.(*charmlog.Logger).Debug("suppressed")
 		},
 	},
 	{
 		Name: "pterm",
-		Setup: func() any {
-			return pterm.DefaultLogger.WithLevel(pterm.LogLevelError).WithWriter(io.Discard)
+		Setup: func(w io.Writer) any {
+			return pterm.DefaultLogger.WithLevel(pterm.LogLevelError).WithWriter(w)
 		},
+		Format: "text",
 		InfoDisabled: func(l any) {
 			l.(*pterm.Logger).Debug("suppressed")
 		},
@@ -590,78 +639,102 @@ var (
 func BenchmarkLibraries(b *testing.B) {
 	for _, lib := range libraries {
 		lib := lib
-		logger := lib.Setup()
 
 		b.Run(lib.Name+"/Info_NoFields", func(b *testing.B) {
+			sink := &benchSink{}
+			logger := lib.Setup(sink)
 			b.ReportAllocs()
 			for b.Loop() {
 				lib.Info(logger)
 			}
+			reportSink(b, sink)
 		})
 
 		b.Run(lib.Name+"/Info_ThreeFields", func(b *testing.B) {
+			sink := &benchSink{}
+			logger := lib.Setup(sink)
 			b.ReportAllocs()
 			for b.Loop() {
 				lib.InfoWithFields(logger)
 			}
+			reportSink(b, sink)
 		})
 
 		b.Run(lib.Name+"/With_TwoFields", func(b *testing.B) {
+			sink := &benchSink{}
+			logger := lib.Setup(sink)
 			b.ReportAllocs()
 			for b.Loop() {
 				child := lib.WithFields(logger)
 				lib.Info(child)
 			}
+			reportSink(b, sink)
 		})
 
 		if lib.TenFields != nil {
 			b.Run(lib.Name+"/Info_TenFields", func(b *testing.B) {
+				sink := &benchSink{}
+				logger := lib.Setup(sink)
 				b.ReportAllocs()
 				for b.Loop() {
 					lib.TenFields(logger)
 				}
+				reportSink(b, sink)
 			})
 		}
 
 		if lib.AccumulatedCtx != nil && lib.InfoAccumulated != nil {
-			accLogger := lib.AccumulatedCtx()
 			b.Run(lib.Name+"/Accumulated_10Fields", func(b *testing.B) {
+				sink := &benchSink{}
+				accLogger := lib.AccumulatedCtx(sink)
 				b.ReportAllocs()
 				for b.Loop() {
 					lib.InfoAccumulated(accLogger)
 				}
+				reportSink(b, sink)
 			})
 		}
 
 		if lib.MixedTypes != nil {
 			b.Run(lib.Name+"/MixedFieldTypes", func(b *testing.B) {
+				sink := &benchSink{}
+				logger := lib.Setup(sink)
 				b.ReportAllocs()
 				for b.Loop() {
 					lib.MixedTypes(logger)
 				}
+				reportSink(b, sink)
 			})
 		}
 
 		if lib.ErrorLog != nil {
 			b.Run(lib.Name+"/ErrorField", func(b *testing.B) {
+				sink := &benchSink{}
+				logger := lib.Setup(sink)
 				b.ReportAllocs()
 				for b.Loop() {
 					lib.ErrorLog(logger)
 				}
+				reportSink(b, sink)
 			})
 		}
 
 		// Large message: 1 KB body, tests buffer management.
 		if lib.LargeMsg != nil {
 			b.Run(lib.Name+"/LargeMessage", func(b *testing.B) {
+				sink := &benchSink{}
+				logger := lib.Setup(sink)
 				b.ReportAllocs()
 				for b.Loop() {
 					lib.LargeMsg(logger)
 				}
+				reportSink(b, sink)
 			})
 		}
 
 		b.Run(lib.Name+"/Parallel_4", func(b *testing.B) {
+			sink := &benchSink{}
+			logger := lib.Setup(sink)
 			b.ReportAllocs()
 			b.SetParallelism(4)
 			b.RunParallel(func(pb *testing.PB) {
@@ -669,9 +742,12 @@ func BenchmarkLibraries(b *testing.B) {
 					lib.InfoWithFields(logger)
 				}
 			})
+			reportSink(b, sink)
 		})
 
 		b.Run(lib.Name+"/Parallel_16", func(b *testing.B) {
+			sink := &benchSink{}
+			logger := lib.Setup(sink)
 			b.ReportAllocs()
 			b.SetParallelism(16)
 			b.RunParallel(func(pb *testing.PB) {
@@ -679,21 +755,26 @@ func BenchmarkLibraries(b *testing.B) {
 					lib.InfoWithFields(logger)
 				}
 			})
+			reportSink(b, sink)
 		})
 	}
 }
 
-// BenchmarkDisabledLevel measures the cost of a level check that rejects the entry.
-// A well-designed logger should approach zero allocations here.
+// BenchmarkDisabledLevel measures the cost of a level check that rejects the
+// entry. A well-designed logger should approach zero allocations here.
+// TestPreflight_DisabledWritesNothing proves these configurations deliver
+// zero output for the exact benchmark workload.
 func BenchmarkDisabledLevel(b *testing.B) {
 	for _, lib := range disabledLibraries {
 		lib := lib
-		logger := lib.Setup()
 		b.Run(lib.Name, func(b *testing.B) {
+			sink := &benchSink{}
+			logger := lib.Setup(sink)
 			b.ReportAllocs()
 			for b.Loop() {
 				lib.InfoDisabled(logger)
 			}
+			reportSink(b, sink)
 		})
 	}
 }

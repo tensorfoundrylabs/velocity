@@ -1,5 +1,94 @@
 # Changelog
 
+## Unreleased
+
+Behaviour and API changes from the logging-hardening fix-and-finish run
+(uncommitted working tree; see `docs/specs/logging-hardening-finish-report.md`
+in the development tree for the full mapping to tests and measurements).
+
+### Behaviour changes
+
+- Logger family lifetime is now shared. Once any `Close` completes, the whole
+  parent/child family is closed for good: later log calls are dropped,
+  `AddWriter` can no longer revive output, and concurrent `Close` calls all
+  wait for the same drain and return the same recorded result. Close also
+  drains calls that were already admitted: console and JSON writes register as
+  in-flight for the whole formatting cycle, and the render helpers
+  (`Render`, `RenderRaw`, `Newline`, `BannerLines`) register before running,
+  so a call that passed admission completes (or is dropped) rather than
+  writing after Close returned. `Notify`/`NotifyLines`/`NotifyBox` remain a
+  documented bypass with their own caller-owned destination.
+- `MultiWriter.Close` (and `Logger.Close` through it) now returns worker close
+  errors joined with `errors.Join`; previously all but one error were dropped.
+- `Logger.Fatal` is exempt from the sampler in every dispatch path and takes a
+  reliable ordered delivery: it waits for preceding accepted entries, its own
+  write and a flush before invoking `FatalHandler`/exiting. Delivery is
+  acknowledged per queue item (a FIFO barrier sentinel closed by the worker
+  that dequeues it), so the wait cannot be satisfied by aggregate counters
+  racing an ordinary sender. A custom handler
+  that returns leaves the logger reusable. `LogEntry` and slog records at
+  `LevelFatal` are logged but never exit the process.
+- `<secure>` tag handling is now content-driven: the maybe-secure flag is
+  derived from message content whenever scanning is enabled, independent of
+  the current writer mix, so adding a writer after a scan can no longer leak
+  plaintext. On topologies where every writer is trusted, the markers are
+  stripped (plaintext shown); untrusted writers still see redaction. Group
+  item text and continuation lines now follow the same policy as headers on
+  console and JSON output.
+- Colour permission is fixed at writer construction: `WithColour(false)`
+  survives every theme swap, and a mono-to-coloured swap restores colour only
+  where permission allows. `FORCE_COLOR` can style non-terminals but never
+  grants trust or cursor control.
+- A second `ConsoleWriterRB.Close` now waits for the same drain and returns
+  `nil` instead of an error.
+- `ConsoleWriterRB`'s ring-full direct-write fallback has been removed: when
+  the byte queue is full the record is dropped, counted in `DroppedCount`
+  (and the metrics error count), and `Write` returns `nil`. The deprecated
+  writer is scheduled for removal in v3; use `ConsoleWriter`.
+- Live widgets finalise exactly once: concurrent `Stop`/`Complete` calls all
+  wait for the one finalisation, and no frame or summary is written after they
+  return. Cursor-control capability now depends on the real destination, not
+  on `FORCE_COLOR`.
+- Table, box, banner, component-column and truncation widths are measured in
+  terminal cells (uniseg grapheme widths) with an allocation-free printable
+  ASCII fast path. Absent table cells are padded to the declared geometry and
+  negative `Bullet` nesting is clamped.
+- `Logger.Status` now respects the logger's resolved colour permission on
+  terminals: `WithColour(false)` and `NO_COLOR` suppress status styling that
+  previously leaked through the raw terminal flag. Styling and trust are
+  propagated separately, so a trusted terminal with styling disabled still
+  shows `Secure` field plaintext, without ANSI.
+- Multi-row live displays no longer walk down the terminal on each repaint:
+  clearing now returns the cursor to the first live row, so repeated
+  repaints, grow/shrink, widget removal and interleaved log lines hold a
+  stable vertical position.
+
+### New APIs
+
+- `live.NewOutput(io.Writer) *live.Output`: opt-in shared terminal
+  coordinator. Pass the same `*Output` to `WithConsoleOutput` and the widget
+  constructors so log records and live displays serialise on one destination.
+- `StyledRenderable`: optional extension to `Renderable` for types that need
+  resolved styling and trust propagated separately at render time
+  (`RenderStyled(w, styled, trusted)`). `Logger.Render` and `RenderRaw`
+  dispatch to it first; `StatusItem` implements it. Legacy `Renderable` and
+  `TTYRenderable` implementations are unaffected.
+- `velocity.Uint64(key string, val uint64) Field`: lossless unsigned integer
+  field on every output path, stored as bits without a float64 round trip.
+
+### Internal
+
+- `ringbuffer.go` rewritten as a mutex-guarded bounded byte queue with owned
+  byte storage and a single drainer goroutine; the speculative CAS/skip
+  reclamation protocol is gone.
+- The unused per-Logger buffer pool (`Logger.bufPool`) was removed.
+  `WithBufferSize` and `WithFieldPoolSize` remain deprecated compatibility
+  options that do not tune the shared pools.
+- `PutFieldSlice` now clears the pooled slice through its capacity, so a
+  later, smaller use cannot observe stale field pointers.
+- New direct dependency: `github.com/rivo/uniseg` v0.4.7 for terminal cell
+  widths. `golang.org/x/term` remains.
+
 ## v2.1.0
 
 Tag when ready (after CI is green): `git tag v2.1.0`

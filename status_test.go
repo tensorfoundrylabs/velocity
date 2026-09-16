@@ -67,7 +67,7 @@ func TestStatusKindSlot(t *testing.T) {
 
 // --- StatusItem.Render (TTY path, tested via internal helper) ---
 
-// TestStatusItemRenderTTY exercises the TTY render path via renderStatusItemTTY
+// TestStatusItemRenderTTY exercises the TTY render path via renderStatusItemStyled
 // directly, since bytes.Buffer is not a terminal and Render(w) auto-detects TTY
 // from w. ThemeMono is used so assertions don't need to strip ANSI codes.
 func TestStatusItemRenderTTY(t *testing.T) {
@@ -80,7 +80,7 @@ func TestStatusItemRenderTTY(t *testing.T) {
 	)
 
 	var buf bytes.Buffer
-	renderStatusItemTTY(&buf, item.kind, item.msg, item.theme, item.fields)
+	renderStatusItemStyled(&buf, item.kind, item.msg, item.theme, item.fields, true)
 
 	out := buf.String()
 	// Badge must be present with correct token.
@@ -112,7 +112,7 @@ func TestStatusItemBadgeCompact(t *testing.T) {
 	for k, want := range cases {
 		item := NewStatusItem(k, "msg", ThemeMono)
 		var buf bytes.Buffer
-		renderStatusItemTTY(&buf, item.kind, item.msg, item.theme, item.fields)
+		renderStatusItemStyled(&buf, item.kind, item.msg, item.theme, item.fields, true)
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("kind %s: expected badge %q in output, got %q", k.String(), want, buf.String())
 		}
@@ -421,7 +421,7 @@ func TestLoggerStatus_BaseFieldsPropagated(t *testing.T) {
 
 // TestStatusItem_SecureFieldRedactedOnNonTTY verifies that Secure fields passed to a
 // StatusItem are redacted when rendered via renderStatusItemPlain (non-TTY path),
-// and shown as plaintext via renderStatusItemTTY (trusted TTY path).
+// and shown as plaintext via renderStatusItemStyled (trusted TTY path).
 // Regression guard for the bug where writeStatusFields always called writeFormatted
 // regardless of trust, causing Secure fields to be redacted on trusted TTY output too.
 func TestStatusItem_SecureFieldRedactedOnNonTTY(t *testing.T) {

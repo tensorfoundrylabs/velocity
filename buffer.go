@@ -186,7 +186,7 @@ func (b *BytesBuffer) AppendTime(t time.Time, layout string) {
 }
 
 func (b *BytesBuffer) String() string {
-	return UnsafeString(b.buf.Bytes())
+	return b.buf.String()
 }
 
 type Formatter struct {
@@ -221,12 +221,38 @@ func (f *Formatter) Bytes() []byte {
 }
 
 func (f *Formatter) String() string {
-	return UnsafeString(f.buf.Bytes())
+	return f.buf.String()
 }
 
 func (f *Formatter) Release() {
 	PutBuffer(f.buf)
 	f.buf = nil
+}
+
+// formatUint mirrors formatInt for the FieldTypeUint64 path: strconv.FormatUint
+// would allocate for values >= 100, and CLAUDE.md forbids strconv on hot paths.
+// Writes the decimal form of u at the start of b and returns the byte count.
+func formatUint(b []byte, u uint64) int {
+	if u == 0 {
+		if len(b) > 0 {
+			b[0] = '0'
+			return 1
+		}
+		return 0
+	}
+
+	idx := len(b)
+	for u > 0 && idx > 0 {
+		idx--
+		b[idx] = byte(u%10) + '0'
+		u /= 10
+	}
+
+	written := len(b) - idx
+	if idx > 0 {
+		copy(b, b[idx:])
+	}
+	return written
 }
 
 func formatInt(b []byte, i int64) int {

@@ -26,6 +26,72 @@ type ConsoleWriter struct {
 	mu           sync.Mutex
 	isTTY        bool
 	closed       bool
+
+	// colourAllowed is the stable presentation permission, resolved once at
+	// construction from NO_COLOR / FORCE_COLOR / terminal detection. Theme
+	// swaps re-derive useColours from this bit; they never re-resolve the
+	// environment and never infer permission from the previous theme's
+	// useColours value (a mono theme must not revoke FORCE_COLOR permission).
+	colourAllowed bool
+
+	// colourExplicitlyDisabled records WithColour(false) from the owning
+	// logger. It outranks colourAllowed forever: no theme swap can restore
+	// ANSI after an explicit disable.
+	colourExplicitlyDisabled bool
+
+	// inFlight tracks admitted write cycles: a caller that passed the closed
+	// check and registered here may still be formatting (a Stringer or
+	// Renderable callback can block indefinitely) before its final write.
+	// Close drains on it, so no admitted write lands after Close returned and
+	// no admitted call is cut off mid-flight (the F2 finding: the closed check
+	// alone only stopped calls begun after close, not paused admitted calls).
+	inFlight sync.WaitGroup
+
+	// Family close lifecycle for direct Close callers, mirroring MultiWriter:
+	// the drain runs exactly once, every concurrent Close waits on closeDone
+	// and returns the same recorded closeErr rather than racing a flag and
+	// reporting success while the first Close is still draining (WP2 contract).
+	closeOnce sync.Once
+	closeDone chan struct{}
+	closeErr  error
+}
+
+// consoleAdmission carries the state snapshot taken atomically with the
+// in-flight registration. ok is false exactly when the writer is closed —
+// otherwise the caller MUST balance with w.inFlight.Done() exactly once after
+// its final write. There is deliberately no done func() field: storing the
+// w.inFlight.Done method value boxes the receiver and allocates on every
+// admitted write (measured +16 B/+1 alloc on the console hot path), so the
+// call sites defer w.inFlight.Done() directly.
+type consoleAdmission struct {
+	tmpl    *Template
+	theme   *Theme
+	tz      *time.Location
+	isTTY   bool
+	colours [6]string
+}
+
+// admit is the single admission point for every console write path: the
+// closed check and the in-flight registration happen under one mutex
+// acquisition, so Close (which sets closed then waits on inFlight under the
+// same mutex ordering) can never slip between them. The state snapshot rides
+// the same critical section the callers previously took anyway.
+func (w *ConsoleWriter) admit() (consoleAdmission, bool) {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return consoleAdmission{}, false
+	}
+	w.inFlight.Add(1)
+	adm := consoleAdmission{
+		tmpl:    w.template,
+		theme:   w.theme,
+		tz:      w.displayTimezone,
+		isTTY:   w.isTTY,
+		colours: w.levelColours,
+	}
+	w.mu.Unlock()
+	return adm, true
 }
 
 func NewConsoleWriter(out io.Writer, theme *Theme) *ConsoleWriter {
@@ -52,12 +118,16 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 	// NO_COLOR / FORCE_COLOR first, then falls back to fd-level detection.
 	// On Windows, terminal emulators often proxy stdout as a named pipe;
 	// FORCE_COLOR=1 is the escape hatch for those environments.
-	isTTY := resolveColourForWriter(out)
+	// Trust is a property of the destination, while colour is a presentation
+	// choice. FORCE_COLOR affects only the latter.
+	isTTY := IsTerminalWriter(out)
 
-	// useColours is true only when both the writer can render colour AND the
-	// theme actually carries colour slots. A no-colour theme (noColourTheme,
-	// ThemeMono) always produces plain output regardless of TTY state.
-	useColours := isTTY && themeHasColour
+	// useColours is true only when both the writer is permitted to render
+	// colour AND the theme actually carries colour slots. A no-colour theme
+	// (noColourTheme, ThemeMono) always produces plain output regardless of
+	// TTY state; FORCE_COLOR permits styling on pipes and files.
+	colourAllowed := resolveColourForWriter(out)
+	useColours := colourAllowed && themeHasColour
 
 	templateCopy := *TemplateDefault
 	templateCopy.fieldDisplayMode = fieldDisplayMode
@@ -77,6 +147,7 @@ func NewConsoleWriterWithOptions(out io.Writer, theme *Theme, displayTimezone *t
 		bufPool:         NewBufferPool(),
 		displayTimezone: displayTimezone,
 		isTTY:           isTTY,
+		colourAllowed:   colourAllowed,
 	}
 
 	if useColours {
@@ -108,16 +179,12 @@ func (w *ConsoleWriter) WriteStatus(e *Entry) error {
 
 // WriteStatusSecure is the trust-aware status write path, mirroring WriteSecure.
 func (w *ConsoleWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark string) error {
-	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
+	adm, ok := w.admit()
+	if !ok {
 		return ErrWriterClosed
 	}
-	tmpl := w.template
-	theme := w.theme
-	tz := w.displayTimezone
-	isTTY := w.isTTY
-	w.mu.Unlock()
+	defer w.inFlight.Done()
+	tmpl, theme, tz, isTTY := adm.tmpl, adm.theme, adm.tz, adm.isTTY
 
 	tempBuf := GetTemplateBuffer()
 	defer PutTemplateBuffer(tempBuf)
@@ -268,17 +335,15 @@ func (w *ConsoleWriter) Write(e *Entry) error {
 // plaintext is shown and <secure> markers are stripped. When false, both are
 // replaced with redactionMark.
 func (w *ConsoleWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) error {
-	// Snapshot mutable state under a brief lock so formatting runs unlocked.
-	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
+	// Admission + state snapshot in one critical section: formatting runs
+	// unlocked below (and may block in a Stringer), Close drains this cycle
+	// before it returns, and the final write happens under mu as before.
+	adm, ok := w.admit()
+	if !ok {
 		return ErrWriterClosed
 	}
-	tmpl := w.template
-	theme := w.theme
-	tz := w.displayTimezone
-	lvlColours := w.levelColours
-	w.mu.Unlock()
+	defer w.inFlight.Done()
+	tmpl, theme, tz, lvlColours := adm.tmpl, adm.theme, adm.tz, adm.colours
 
 	if tmpl != nil {
 		tempBuf := GetTemplateBuffer()
@@ -433,6 +498,11 @@ func consoleFormatValueCore(buf *BytesBuffer, f Field) {
 
 	case FieldTypeInt64:
 		buf.WriteInt(f.num)
+	case FieldTypeUint64:
+		// Stack-buffer form: strconv.FormatUint allocates for values >= 100.
+		var tmp [20]byte
+		n := formatUint(tmp[:], uint64(f.num)) //nolint:gosec // G115: field storage is bit-pattern int64, reinterpretation is the contract
+		_, _ = buf.Write(tmp[:n])
 
 	case FieldTypeFloat64:
 		floatValue := math.Float64frombits(uint64(f.num)) //nolint:gosec // G115: bit-pattern reinterpretation, not value conversion
@@ -539,16 +609,12 @@ func (w *ConsoleWriter) WriteGroup(e *Entry, items []GroupItem) error {
 
 // WriteGroupSecure is the trust-aware group write path.
 func (w *ConsoleWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool, redactionMark string) error {
-	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
+	adm, ok := w.admit()
+	if !ok {
 		return ErrWriterClosed
 	}
-	tmpl := w.template
-	theme := w.theme
-	tz := w.displayTimezone
-	isTTY := w.isTTY
-	w.mu.Unlock()
+	defer w.inFlight.Done()
+	tmpl, theme, tz, isTTY := adm.tmpl, adm.theme, adm.tz, adm.isTTY
 
 	tempBuf := GetTemplateBuffer()
 	defer PutTemplateBuffer(tempBuf)
@@ -559,13 +625,14 @@ func (w *ConsoleWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bo
 		buildGroupLineTTY(tempBuf, e, theme, tz, trusted, redactionMark, items, tmpl)
 	case tmpl != nil:
 		// Non-TTY: standard template for the header (level + plain message with count),
-		// then plain item lines appended directly.
+		// then plain item lines appended directly. Item text gets the same
+		// secure-tag treatment as the header — non-header payloads must not leak.
 		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
 		// The template appends a trailing '\n'; item lines follow without extra spacing.
-		writeGroupConsoleItems(tempBuf, items)
+		writeGroupConsoleItems(tempBuf, items, e.maybeSecure, trusted, redactionMark)
 	default:
 		fmt.Fprintf(tempBuf, "%s\n", e.Message)
-		writeGroupConsoleItems(tempBuf, items)
+		writeGroupConsoleItems(tempBuf, items, e.maybeSecure, trusted, redactionMark)
 	}
 
 	w.mu.Lock()
@@ -657,7 +724,7 @@ func buildGroupLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Locat
 			buf.WriteString(Reset)
 			buf.WriteString(theme.CachedMessageFg())
 		}
-		buf.WriteString(item.Text)
+		buf.WriteString(applySecureTags(item.Text, e.maybeSecure, trusted, redactionMark))
 		if theme != nil {
 			buf.WriteString(Reset)
 		}
@@ -674,16 +741,12 @@ func (w *ConsoleWriter) WriteContinue(e *Entry, lines []string) error {
 
 // WriteContinueSecure is the trust-aware continuation write path.
 func (w *ConsoleWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool, redactionMark string) error {
-	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
+	adm, ok := w.admit()
+	if !ok {
 		return ErrWriterClosed
 	}
-	tmpl := w.template
-	theme := w.theme
-	tz := w.displayTimezone
-	isTTY := w.isTTY
-	w.mu.Unlock()
+	defer w.inFlight.Done()
+	tmpl, theme, tz, isTTY := adm.tmpl, adm.theme, adm.tz, adm.isTTY
 
 	tempBuf := GetTemplateBuffer()
 	defer PutTemplateBuffer(tempBuf)
@@ -692,12 +755,13 @@ func (w *ConsoleWriter) WriteContinueSecure(e *Entry, lines []string, trusted bo
 	case isTTY && tmpl != nil:
 		buildContinueLineTTY(tempBuf, e, theme, tz, trusted, redactionMark, lines, tmpl)
 	case tmpl != nil:
-		// Non-TTY: standard template for the header, then plain continuation lines.
+		// Non-TTY: standard template for the header, then plain continuation
+		// lines. Line text gets the same secure-tag treatment as the header.
 		tmpl.buildWithTimezoneSecure(tempBuf, e, theme, tz, trusted, redactionMark)
-		writeContinuationLines(tempBuf, lines, tmpl.CachedMessageIndentStr(), false, nil)
+		writeContinuationLines(tempBuf, lines, tmpl.CachedMessageIndentStr(), false, nil, e.maybeSecure, trusted, redactionMark)
 	default:
 		fmt.Fprintf(tempBuf, "%s\n", e.Message)
-		writeContinuationLines(tempBuf, lines, "", false, nil)
+		writeContinuationLines(tempBuf, lines, "", false, nil, e.maybeSecure, trusted, redactionMark)
 	}
 
 	w.mu.Lock()
@@ -713,13 +777,15 @@ func buildContinueLineTTY(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Lo
 	// Header: identical to the standard TTY log line.
 	tmpl.buildWithTimezoneSecure(buf, e, theme, tz, trusted, redactionMark)
 	// buildWithTimezoneSecure appends '\n'; continuation lines follow directly.
-	writeContinuationLines(buf, lines, tmpl.CachedMessageIndentStr(), true, theme)
+	writeContinuationLines(buf, lines, tmpl.CachedMessageIndentStr(), true, theme, e.maybeSecure, trusted, redactionMark)
 }
 
 // writeContinuationLines appends each line prefixed with the message-column indent
 // and the │ glyph. When styled is true and theme is non-nil, the glyph is wrapped
-// with SlotContinuation ANSI codes.
-func writeContinuationLines(buf *bytes.Buffer, lines []string, indent string, styled bool, theme *Theme) {
+// with SlotContinuation ANSI codes. secureActive applies the entry's secure-tag
+// policy to each line so non-header payloads follow the same redaction rules as
+// the header message.
+func writeContinuationLines(buf *bytes.Buffer, lines []string, indent string, styled bool, theme *Theme, secureActive, trusted bool, redactionMark string) {
 	var glyphPrefix, glyphSuffix string
 	if styled && theme != nil {
 		glyphPrefix, glyphSuffix = theme.Wrap(SlotContinuation)
@@ -734,44 +800,97 @@ func writeContinuationLines(buf *bytes.Buffer, lines []string, indent string, st
 		if glyphSuffix != "" {
 			buf.WriteString(glyphSuffix)
 		}
-		buf.WriteString(line)
+		buf.WriteString(applySecureTags(line, secureActive, trusted, redactionMark))
 		buf.WriteByte('\n')
 	}
 }
 
-func (w *ConsoleWriter) Close() error {
+// Flush drains the underlying buffered writer without closing this writer.
+// Only has effect when the output implements Flush. Fatal uses this before its
+// handler/exit decision so buffered bytes reach the destination while the
+// logger stays reusable for a returning custom handler.
+func (w *ConsoleWriter) Flush() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if w.closed {
-		return nil
+		return ErrWriterClosed
 	}
-
-	w.closed = true
-	// Sync is best-effort: pipes and redirected streams reject it on Windows.
-	if s, ok := w.out.(interface{ Sync() error }); ok {
-		_ = s.Sync()
+	if f, ok := w.out.(interface{ Flush() error }); ok {
+		return f.Flush()
 	}
 	return nil
 }
 
-// SetTheme replaces the active theme. When colour was disabled at construction
-// (e.g. no-colour theme or non-TTY writer) it stays disabled — switching to a
-// coloured theme on a non-TTY writer does not re-enable ANSI output.
-// When the writer is a TTY and the new theme has colour, colour is re-enabled.
+func (w *ConsoleWriter) Close() error {
+	w.closeOnce.Do(func() {
+		// Created here (not at construction) so zero-value writers are safe;
+		// Once's completion guarantee makes the field visible to every caller
+		// before the receive below.
+		w.closeDone = make(chan struct{})
+		defer close(w.closeDone)
+
+		w.mu.Lock()
+		w.closed = true
+		w.mu.Unlock()
+
+		// Drain admitted callers outside the mutex — they need it for their
+		// final writes, so waiting while holding it would deadlock them. When
+		// Wait returns no in-flight write cycle remains: the flush below is
+		// the last underlying write and none can follow it after Close
+		// returns.
+		w.inFlight.Wait()
+
+		var flushErr error
+		if f, ok := w.out.(interface{ Flush() error }); ok {
+			flushErr = f.Flush()
+		}
+		// Sync is best-effort: pipes and redirected streams reject it on Windows.
+		if s, ok := w.out.(interface{ Sync() error }); ok {
+			_ = s.Sync()
+		}
+		w.closeErr = flushErr
+	})
+	// A second concurrent Close waits for the same completed drain and
+	// returns the same recorded result — never an early nil.
+	<-w.closeDone
+	return w.closeErr
+}
+
+// snapshotState returns a stable template pointer for lock-free rendering.
+// The template is replaced wholesale under mu (never mutated in place after
+// the writer is published), so holding the returned pointer is safe once
+// acquired. Style/KeyValues/Bullet read through this so a concurrent SetTheme
+// cannot race them. Write paths that can block in user callbacks use admit()
+// instead, which pairs the same snapshot with in-flight registration.
+func (w *ConsoleWriter) snapshotState() *Template {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.template
+}
+
+// SetTheme replaces the active theme. useColours is re-derived from the
+// construction-time colour permission (NO_COLOR / FORCE_COLOR / terminal
+// detection) and the new theme's own colour content — never from the previous
+// theme's useColours value, so a mono-to-coloured swap restores colour when
+// permission allows (including FORCE_COLOR on a non-terminal). An explicit
+// WithColour(false) on the owning logger survives every swap. Theme changes
+// never affect trust.
 func (w *ConsoleWriter) SetTheme(theme *Theme) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	w.theme = theme
-	// Re-derive useColours from the current TTY state and the new theme.
 	// Build a NEW Template rather than mutating the existing one in-place;
-	// WriteSecure snapshots the template pointer under the lock and then reads
-	// its fields outside the lock, so mutating the pointed-at struct would be a
-	// data race on that concurrent read path.
+	// WriteSecure and snapshotState read the template pointer under the lock
+	// and then read its fields outside the lock, so mutating the pointed-at
+	// struct would be a data race on those concurrent read paths.
 	themeHasColour := theme != nil && !theme.noColour
-	newTmpl := *w.template // copy all fields
-	newTmpl.useColours = w.isTTY && themeHasColour
+	var newTmpl Template
+	if w.template != nil {
+		newTmpl = *w.template // copy all fields
+	}
+	newTmpl.useColours = !w.colourExplicitlyDisabled && w.colourAllowed && themeHasColour
 	w.template = &newTmpl
 	w.cacheLevelColours()
 }
