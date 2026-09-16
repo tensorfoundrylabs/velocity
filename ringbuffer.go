@@ -30,15 +30,6 @@ type RingBufferEntry struct {
 type RingBuffer struct {
 	writer io.Writer
 
-	// mu guards the queue fields and the closed flag. It is held only for
-	// pointer/count updates and the payload copy — never across I/O.
-	mu      sync.Mutex
-	entries []RingBufferEntry
-	mask    int // len(entries) - 1; len is a power of 2
-	head    int // index of the oldest queued record
-	count   int // queued record count
-	closed  bool
-
 	// stopCh is closed exactly once by the first Close; doneCh is closed by the
 	// drainer after it has drained the final queue. Close blocks on doneCh, so
 	// concurrent Close calls all wait for the same drain to finish.
@@ -48,10 +39,19 @@ type RingBuffer struct {
 	// wake nudges the drainer without blocking; the ticker covers a dropped
 	// nudge so an entry never waits longer than one flush interval.
 	wake          chan struct{}
+	entries       []RingBufferEntry
+	mask          int // len(entries) - 1; len is a power of 2
+	head          int // index of the oldest queued record
+	count         int // queued record count
 	batchSize     int
 	flushInterval time.Duration
 
 	dropped atomic.Uint64
+
+	// mu guards the queue fields and the closed flag. It is held only for
+	// pointer/count updates and the payload copy — never across I/O.
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewRingBuffer creates a new ring buffer with the specified size.

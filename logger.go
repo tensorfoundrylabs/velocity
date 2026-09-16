@@ -17,8 +17,22 @@ import (
 // so that a writer added to the parent after a child is created is visible to
 // all siblings. AddWriter initialises the inner MultiWriter on first use.
 type writerSet struct {
-	mw *MultiWriter
-	mu sync.RWMutex
+	closeErr error
+
+	mw        *MultiWriter
+	closeDone chan struct{}
+
+	// outputInFlight tracks admitted operations that write to destinations the
+	// console writer does not cover (Notify/NotifyLines/NotifyBox to
+	// NotifyOutput, BannerLines' no-console fallback). They share the same
+	// Close contract as console admission: Close drains them instead of
+	// letting a paused admitted call write after it returned. Admission
+	// (check+Add) is atomic against the closing transition under mu, and the
+	// family drain waits with no locks held.
+	outputInFlight sync.WaitGroup
+	mu             sync.RWMutex
+
+	closeOnce sync.Once
 
 	// scanSecure reports whether <secure> tag scanning is enabled. It mirrors
 	// the WithSecureTags(false) opt-out and is derived from message content
@@ -36,19 +50,7 @@ type writerSet struct {
 	// drain finishes; closeErr is written before that and read after it, so
 	// concurrent Closes all wait for the same completion and all return the
 	// same recorded result rather than racing a flag.
-	closing   atomic.Bool
-	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
-
-	// outputInFlight tracks admitted operations that write to destinations the
-	// console writer does not cover (Notify/NotifyLines/NotifyBox to
-	// NotifyOutput, BannerLines' no-console fallback). They share the same
-	// Close contract as console admission: Close drains them instead of
-	// letting a paused admitted call write after it returned. Admission
-	// (check+Add) is atomic against the closing transition under mu, and the
-	// family drain waits with no locks held.
-	outputInFlight sync.WaitGroup
+	closing atomic.Bool
 }
 
 // admitOutput is the shutdown admission point for output paths that have no
@@ -123,8 +125,8 @@ func (ws *writerSet) isClosing() bool {
 // Theme(), Style() and all renderer reads share one synchronised source.
 // The mutex is never held while calling into writers or renderables.
 type themeState struct {
-	mu    sync.RWMutex
 	theme *Theme
+	mu    sync.RWMutex
 }
 
 // get returns the active theme, falling back to ThemeNightOwl for the
@@ -920,7 +922,7 @@ func (l *Logger) LogEntry(e *Entry) {
 // logInternal is the shared implementation for log and logReliable. reliable
 // selects the blocking fan-out path (used only by Fatal); the ordinary path
 // stays nonblocking with observable drops.
-func (l *Logger) logInternal(level Level, msg string, forceTree bool, reliable bool, fields ...Field) {
+func (l *Logger) logInternal(level Level, msg string, forceTree, reliable bool, fields ...Field) {
 	if l == nil {
 		return
 	}

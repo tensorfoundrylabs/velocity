@@ -26,17 +26,15 @@ type MultiWriter struct {
 
 	shutdownChan chan struct{}
 
+	closeDone chan struct{}
+
+	closeErrs []error
+
 	wg sync.WaitGroup
 
 	// dropped counts entries silently discarded because a worker channel was full.
 	// Atomic so DroppedCount() can be read without acquiring any lock.
 	dropped atomic.Uint64
-
-	// Worker Close errors, recorded by each worker goroutine as it exits and
-	// returned by Close after the drain. Guarded by closeErrMu because workers
-	// finish concurrently with the Close caller.
-	closeErrMu sync.Mutex
-	closeErrs  []error
 
 	// mu guards closed, writeChans, and workers. Write() takes RLock (reads
 	// writeChans without modifying them); AddWriter/RemoveWriter/Close take the
@@ -51,7 +49,11 @@ type MultiWriter struct {
 	// every concurrent Close waits for the same completion and returns the same
 	// recorded result (worker close errors joined).
 	closeOnce sync.Once
-	closeDone chan struct{}
+
+	// Worker Close errors, recorded by each worker goroutine as it exits and
+	// returned by Close after the drain. Guarded by closeErrMu because workers
+	// finish concurrently with the Close caller.
+	closeErrMu sync.Mutex
 
 	closed bool
 }

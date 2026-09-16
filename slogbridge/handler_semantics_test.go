@@ -163,7 +163,8 @@ func TestSlogSemantics_Uint64AttrExact(t *testing.T) {
 	l := newJSONBridgeLogger(&buf)
 	sl := slogbridge.NewLogger(l)
 
-	sl.Info("uint64 attr",
+	sl.Info(
+		"uint64 attr",
 		slog.Uint64("max", math.MaxUint64),
 		slog.Uint64("maxInt64Plus1", uint64(math.MaxInt64)+1),
 	)

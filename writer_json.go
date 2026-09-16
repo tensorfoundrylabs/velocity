@@ -12,10 +12,10 @@ import (
 )
 
 type JSONWriter struct {
-	out     io.Writer
-	bufPool *BufferPool
-	mu      sync.Mutex
-	closed  bool
+	out       io.Writer
+	closeErr  error
+	bufPool   *BufferPool
+	closeDone chan struct{}
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
 	// still formatting (a Stringer, Error or Any marshal can block or reenter)
@@ -27,8 +27,8 @@ type JSONWriter struct {
 	// and ConsoleWriter: concurrent Closes wait for the same completed drain
 	// and return the same recorded closeErr (WP2 contract).
 	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
+	mu        sync.Mutex
+	closed    bool
 }
 
 // admit is the admission critical section: the closed check and the in-flight

@@ -80,7 +80,8 @@ func BenchmarkInfo_FiveFields_Inline(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		l.Info("request completed",
+		l.Info(
+			"request completed",
 			String("service", "api-gateway"),
 			Int("port", 8080),
 			Float64("latency_ms", 1.23),

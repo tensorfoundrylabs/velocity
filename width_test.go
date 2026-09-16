@@ -73,7 +73,7 @@ func widthCells(s string) int { return uniseg.StringWidth(stripANSI(s)) }
 
 // requireUniformWidth asserts every rendered line occupies the same number of
 // terminal cells and reports the offending lines otherwise.
-func requireUniformWidth(t *testing.T, rendered string, context string) {
+func requireUniformWidth(t *testing.T, rendered, context string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
 	if len(lines) == 0 {

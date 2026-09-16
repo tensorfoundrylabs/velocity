@@ -96,6 +96,12 @@ var fieldSnapshotPtrPool = sync.Pool{
 // is far cheaper than the CAS machinery in ringbuffer.go, which is optimised
 // for byte-stream throughput, not snapshot semantics.
 type RingBufferWriter struct {
+	// closedCh is closed exactly once by Close. Subscription cleanup goroutines
+	// select on it so a context.Background subscriber cannot strand a goroutine
+	// after the ring is closed — cleanup must finish on EITHER context
+	// cancellation or ring closure.
+	closedCh chan struct{}
+
 	redactionMark string
 
 	// ring is the fixed-size circular snapshot store.
@@ -114,19 +120,13 @@ type RingBufferWriter struct {
 
 	mu sync.Mutex
 
-	// closed prevents writes after Close().
-	closed bool
-
-	// closedCh is closed exactly once by Close. Subscription cleanup goroutines
-	// select on it so a context.Background subscriber cannot strand a goroutine
-	// after the ring is closed — cleanup must finish on EITHER context
-	// cancellation or ring closure.
-	closedCh chan struct{}
-
 	// isTrusted mirrors the WriterTrusted() opt-in so IsTrusted() works
 	// without the caller needing to inspect writerOptions separately.
 	// Phase 4 reads this to decide whether to redact Secure fields.
 	isTrusted atomic.Bool
+
+	// closed prevents writes after Close().
+	closed bool
 }
 
 // NewRingBufferWriter creates a fixed-capacity snapshot ring.

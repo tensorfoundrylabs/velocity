@@ -75,7 +75,8 @@ func TestDispatch_Uint64Boundaries_ExactInJSON(t *testing.T) {
 	var buf bytes.Buffer
 	l := newJSONTestLogger(&buf)
 
-	l.Info("uint64-boundaries",
+	l.Info(
+		"uint64-boundaries",
 		Uint64("max", math.MaxUint64),
 		Uint64("maxInt64Plus1", uint64(math.MaxInt64)+1),
 		Uint64("zero", 0),
