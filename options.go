@@ -363,32 +363,39 @@ func WithComponentColumnWidth(n int) Option {
 }
 
 // WithCountFields registers field names whose integer values are promoted to a
-// "(N)" suffix after the message. The first matching field wins; the rest remain
-// in the tree. Pass multiple names for apps that use different field names
-// across components.
+// "(N)" suffix after the message. The first matching entry field (in field order)
+// wins; later matches remain in the tree. Pass multiple names for apps that use
+// different field names across components. Promoted values are hidden from the
+// console field tree by default; JSON output keeps every field.
 func WithCountFields(names ...string) Option {
 	return func(c *config) {
 		c.Indicators.countFields = append(c.Indicators.countFields, names...)
+		c.Indicators.removeFromTree = true
 	}
 }
 
 // WithTimingFields registers field names whose values are promoted to a timing
-// suffix after the message. Order is preserved; all matching fields appear inside
-// one bracket. Timing fields are intentionally not included in WithComponentStyling
-// because their names are application-specific.
+// suffix after the message. Matching fields appear in entry-field order, all
+// inside one bracket. Timing fields are intentionally not included in
+// WithComponentStyling because their names are application-specific. Promoted
+// values are hidden from the console field tree by default; JSON output keeps
+// every field.
 func WithTimingFields(names ...string) Option {
 	return func(c *config) {
 		c.Indicators.timingFields = append(c.Indicators.timingFields, names...)
+		c.Indicators.removeFromTree = true
 	}
 }
 
 // WithStateTransitionPairs registers pairs of field names that together represent
 // a state transition. When both fields of a pair are present on an entry, they are
-// collapsed into a "from → to" suffix in the header. Pairs are checked in order;
-// the first complete pair wins.
+// collapsed into a "from → to" suffix in the header. Pairs are checked in
+// configured order; the first pair with both sides present wins. Promoted values
+// are hidden from the console field tree by default; JSON output keeps every field.
 func WithStateTransitionPairs(pairs ...[2]string) Option {
 	return func(c *config) {
 		c.Indicators.statePairs = append(c.Indicators.statePairs, pairs...)
+		c.Indicators.removeFromTree = true
 	}
 }
 
