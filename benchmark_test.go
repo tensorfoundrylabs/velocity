@@ -239,6 +239,38 @@ func BenchmarkJSONWriter_FiveFields(b *testing.B) {
 	reportSink(b, sink)
 }
 
+// unicodeFields mirrors fiveFields with realistic non-ASCII content so the JSON
+// encoder's multibyte path stays measured alongside the ASCII control benchmark.
+func unicodeFields() []Field {
+	return []Field{
+		String("service", "api-gateway"),
+		String("payload", "ユーザー λογ audit ✓ 🎉 — done"),
+		Int("port", 8080),
+		Float64("latency_ms", 1.23),
+		Bool("success", true),
+	}
+}
+
+func BenchmarkJSONWriter_FiveFields_Unicode(b *testing.B) {
+	sink := &benchSink{}
+	w := NewJSONWriter(sink)
+	fields := unicodeFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		e := GetEntry()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("request completed ✓ 日本語")
+		e.SetTime(time.Now())
+		e.WithFields(fields...)
+		_ = w.Write(e)
+		e.Write()
+		e.Release()
+	}
+	b.StopTimer()
+	reportSink(b, sink)
+}
+
 func BenchmarkConsoleWriter_FiveFields(b *testing.B) {
 	// Template path (default): exercises theme + template formatting.
 	sink := &benchSink{}
