@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -328,14 +329,58 @@ func TestLogEntry_BaseFieldPrependNoCorruption(t *testing.T) {
 	}
 }
 
+// slogBenchSink is a real io.Writer so the slog bridge's structured
+// serialization actually runs. io.Discard (and WithNop) disable Velocity's
+// writers entirely — see the root package's bench_sink_test.go.
+type slogBenchSink struct {
+	bytes  atomic.Int64
+	writes atomic.Int64
+}
+
+func (s *slogBenchSink) Write(p []byte) (int, error) {
+	s.bytes.Add(int64(len(p)))
+	s.writes.Add(1)
+	return len(p), nil
+}
+
+// BenchmarkSlogHandler_Info measures the full bridge path: slog record →
+// velocity fields → JSON serialization → sink delivery.
 func BenchmarkSlogHandler_Info(b *testing.B) {
-	// WithNop discards all output so I/O cost doesn't dominate the measurement.
+	sink := &slogBenchSink{}
+	l := velocity.New(
+		velocity.WithStructuredOutput(sink),
+		velocity.WithStructuredLevel(velocity.LevelDebug),
+	)
+	sl := slogbridge.NewLogger(l)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		sl.Info(
+			"benchmark message",
+			slog.String("key1", "value1"),
+			slog.String("key2", "value2"),
+			slog.String("key3", "value3"),
+		)
+	}
+	b.StopTimer()
+	if b.N > 0 {
+		n := float64(b.N)
+		b.ReportMetric(float64(sink.bytes.Load())/n, "sinkB/op")
+		b.ReportMetric(float64(sink.writes.Load())/n, "sinkW/op")
+	}
+}
+
+// BenchmarkSlogHandler_NoOutput keeps the historical WithNop configuration,
+// separately labelled: it measures handler conversion and the level gate only,
+// never serialization. Do not compare it against BenchmarkSlogHandler_Info.
+func BenchmarkSlogHandler_NoOutput(b *testing.B) {
 	l := velocity.New(velocity.WithNop())
 	sl := slogbridge.NewLogger(l)
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		sl.Info(
 			"benchmark message",
 			slog.String("key1", "value1"),

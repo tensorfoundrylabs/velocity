@@ -32,9 +32,10 @@ func TestLogger_SetTheme(t *testing.T) {
 		t.Errorf("SetTheme had no effect: output unchanged after theme switch")
 	}
 
-	// cfg.ConsoleTheme must be updated so subsequent With() calls inherit the new theme.
-	if log.cfg.ConsoleTheme != ThemeSolarized {
-		t.Errorf("cfg.ConsoleTheme not updated: got %v, want ThemeSolarized", log.cfg.ConsoleTheme)
+	// The shared runtime theme state must be updated so Theme() and subsequent
+	// With() clones observe the new theme.
+	if log.Theme() != ThemeSolarized {
+		t.Errorf("Theme() not updated: got %v, want ThemeSolarized", log.Theme())
 	}
 }
 
@@ -43,8 +44,9 @@ func TestLogger_SetTheme(t *testing.T) {
 // case where SetTheme(nil) silently left cfg nil while Style() fell back elsewhere,
 // causing ANSI output under FORCE_COLOR=1 even though the caller intended a reset.
 func TestLogger_SetTheme_Nil(t *testing.T) {
-	// Cannot run in parallel — t.Setenv modifies a process-wide env var.
+	t.Setenv("NO_COLOR", "")
 	t.Setenv("FORCE_COLOR", "1")
+	// Cannot run in parallel — t.Setenv modifies a process-wide env var.
 
 	var buf bytes.Buffer
 	log := New(WithConsoleOutput(&buf))
@@ -52,12 +54,9 @@ func TestLogger_SetTheme_Nil(t *testing.T) {
 	// Must not panic.
 	log.SetTheme(nil)
 
-	// Theme(), cfg.ConsoleTheme, and Style() must all agree on NightOwl.
+	// Theme() and Style() must agree on NightOwl after the nil reset.
 	if got := log.Theme(); got != ThemeNightOwl {
 		t.Errorf("Theme() after SetTheme(nil): got %v, want ThemeNightOwl", got)
-	}
-	if log.cfg.ConsoleTheme != ThemeNightOwl {
-		t.Errorf("cfg.ConsoleTheme after SetTheme(nil): got %v, want ThemeNightOwl", log.cfg.ConsoleTheme)
 	}
 	// Style() must return a coloured theme (NightOwl) under FORCE_COLOR=1 after nil reset,
 	// not noColourTheme — the nil reset must not accidentally disable colour.
@@ -161,15 +160,15 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 
 	log.SetTheme(ThemeSolarized)
 
-	// With() reads cfg.ConsoleTheme to build the child's console writer theme.
+	// With() shares the runtime theme state, so children created after a swap
+	// observe it and further clones inherit it transitively.
 	child := log.With(String("child", "true"))
 	if child == nil {
 		t.Fatal("With() returned nil")
 	}
 
-	// The child's config must reflect the updated theme so further clones inherit it.
-	if child.cfg.ConsoleTheme != ThemeSolarized {
-		t.Errorf("With() clone cfg.ConsoleTheme = %v, want ThemeSolarized", child.cfg.ConsoleTheme)
+	if child.Theme() != ThemeSolarized {
+		t.Errorf("With() clone Theme() = %v, want ThemeSolarized", child.Theme())
 	}
 
 	// Produce output from the child logger and confirm it is distinct from ThemeNightOwl output.
@@ -198,6 +197,8 @@ func TestLogger_SetTheme_WithCloneInherits(t *testing.T) {
 // WithDevelopment() leaves ConsoleTheme nil (uses the default), so Style() must
 // return a coloured theme when colour is enabled (FORCE_COLOR=1 or real TTY).
 func TestLogger_Style_ColourFollowsActiveTheme(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "1")
 	// Cannot run in parallel because t.Setenv modifies a process-wide env var.
 	// Style() is colour-aware: it returns mono for non-TTY writers and the
 	// themed palette for TTY writers. Use FORCE_COLOR=1 to test the colour

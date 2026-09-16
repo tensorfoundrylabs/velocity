@@ -220,10 +220,13 @@ func TestBuiltInThemes_LevelCodesPresent(t *testing.T) {
 }
 
 // TestLogger_SetTheme_WithNewTheme verifies that a user-defined theme built via
-// NewTheme produces ANSI-coloured output after passing through SetTheme when the
-// writer is in TTY mode.
+// NewTheme produces ANSI-coloured output after passing through SetTheme when
+// colour is permitted for the destination. FORCE_COLOR simulates a
+// colour-capable terminal from test code (colour permission is resolved once
+// at construction; mutating isTTY afterwards no longer grants it).
 func TestLogger_SetTheme_WithNewTheme(t *testing.T) {
-	t.Parallel()
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "1")
 
 	customTheme := NewTheme(
 		"Custom",
@@ -248,11 +251,6 @@ func TestLogger_SetTheme_WithNewTheme(t *testing.T) {
 
 	log := newFromConfig(cfg)
 
-	// Simulate a real TTY so SetTheme re-enables ANSI. On a buffer (which is what
-	// test code uses), isTTY=false at construction because no fd is available.
-	// Setting isTTY=true before SetTheme mirrors the production path where the user
-	// calls SetTheme on a logger whose stdout is a real terminal.
-	log.consoleWriter.isTTY = true
 	log.SetTheme(customTheme)
 
 	log.Info("testing custom theme")

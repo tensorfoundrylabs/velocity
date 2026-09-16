@@ -5,13 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rivo/uniseg"
+
 	velocity "github.com/tensorfoundrylabs/velocity/v2"
 )
 
-// borderLen returns the visible character count of a line stripped of ANSI codes.
-// Box borders use multi-byte UTF-8 box-drawing characters, so we count runes.
+// borderLen returns the terminal cell width of a line stripped of ANSI codes.
+// Box geometry is defined in cells (CJK chars are double-wide), not runes or
+// bytes, so alignment is measured the way a terminal renders it.
 func borderLen(line string) int {
-	return len([]rune(removeANSI(line)))
+	return uniseg.StringWidth(removeANSI(line))
 }
 
 func TestBox_LongTitle(t *testing.T) {
