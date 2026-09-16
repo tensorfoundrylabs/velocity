@@ -20,7 +20,7 @@ make help               # All targets
 
 ## Packages
 
-Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no root imports; `slogbridge` imports root.
+Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no root imports; `slogbridge` imports root. Direct dependencies: `golang.org/x/term` (TTY detection) and `github.com/rivo/uniseg` v0.4.7 (terminal cell widths, pretty renderers only).
 
 ### Root
 
@@ -33,12 +33,12 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 | `options.go` | `New(opts...)` functional options; `WithDevelopment`, `WithProduction`, `WithContainer`, `WithNop`, `WithHighThroughput`, `WithTheme`, `WithLevel`, `WithStructuredLevel`, etc. |
 | `level.go` | Log levels, `ParseLevel`, `MustParseLevel`; level is stored as a bare `atomic.Int32` on `Logger` |
 | `writer.go` | `Writer`, `WriterFunc`, `NoOpWriter`, `FilteredWriter`, capability interfaces, `WriterTrusted()` |
-| `writer_console.go` | Themed ANSI console output |
-| `writer_console_rb.go` | Lock-free ring-buffer console writer |
-| `writer_json.go` | Hand-rolled JSON (no `encoding/json`) |
-| `writer_multi.go` | Async fan-out to named writers; workers close own writer on shutdown |
+| `writer_console.go` | Themed ANSI console output; colour permission fixed at construction (`colourAllowed`/`colourExplicitlyDisabled`) |
+| `writer_console_rb.go` | Deprecated batching console writer over the bounded byte queue; use `ConsoleWriter` |
+| `writer_json.go` | Hand-rolled JSON (no `encoding/json`); `encoding/json` only on the `Any` fallback |
+| `writer_multi.go` | Async fan-out to named writers; `WriteReliable` barrier for Fatal/Close; workers close own writer, errors joined |
 | `writer_ring.go` | `RingBufferWriter`, `EntrySnapshot`, `Snapshot`, `Subscribe`, `Stats` |
-| `ringbuffer.go` | CAS-based ring buffer, bounded spins, batched flush |
+| `ringbuffer.go` | Bounded power-of-2 byte queue: short mutex, owned byte storage, single drainer goroutine, drop-on-full counted |
 | `template.go` | Log line templates with level styles and caller |
 | `theme.go` | Immutable themes via `NewTheme` + `ThemeOption`; `StyleSlot` enum; `Theme.Format`/`Wrap`/`Stylish` |
 | `sampler.go` | `CountSampler` for high-volume reduction |
@@ -50,24 +50,28 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 | `group.go` | `Group`, `GroupItem`, `Logger.Group` |
 | `continuation.go` | `ContinuationBlock`, `Logger.Continue` |
 | `pretty.go` | `Pretty` facade, `NewPretty`, `NewPrettyFromLogger`, `CreateBanner` |
-| `secure.go` | `Secure`, `SecureURL`, `Redacted`, `Truncated` field constructors; `<secure>` tag scanner |
+| `secure.go` | `Secure`, `SecureURL`, `Redacted`, `Truncated` field constructors; `<secure>` tag scanner (`applySecureTags` extends it to group/continuation payloads) |
 | `hyperlink.go` | OSC 8 `Hyperlink`, `HyperlinksSupported`, `HyperlinkFallback`, `WithHyperlinkFallback` |
 
 ### `velocity/live`
 
-`progress.go` — `ProgressBar`, `Spinner`, `MultiProgress`, `SpinnerStyle` with CAS-guarded stop and TTY detection (NO_COLOR/FORCE_COLOR aware).
+`output.go`: `Output` and `NewOutput(w)`, an opt-in shared terminal coordinator. Pass the SAME `*Output` to `WithConsoleOutput` and the widget constructors; it serialises clearing live rows, whole log records and redraws. Terminal/cursor capability comes from the real destination only.
+`progress.go`: `ProgressBar`, `Spinner`, `MultiProgress`, `SpinnerStyle`. Exactly-once finalisation (CAS finaliser + waiter join); non-terminal output emits one summary line on Complete and no cursor escapes.
 
 ### `velocity/slogbridge`
 
-`handler.go` — `Handler` implementing `log/slog.Handler`. `NewHandler`, `NewLogger`. `WithAttrs` pre-converts to velocity `Field`s; `WithGroup` caches dotted prefix.
+`handler.go`: `Handler` implementing `log/slog.Handler`. `NewHandler`, `NewLogger`. `WithAttrs` pre-converts to velocity `Field`s; `WithGroup` caches dotted prefix. A record mapped to `LevelFatal` is logged but never exits the process; only `Logger.Fatal` has process-control semantics.
 
 ## Design
 
 - **Zero-alloc hot path**: `unsafe.Pointer` + `int64` field storage. Integer fields via `formatInt` stack buffer. Entry pooling with CAS-based return. ANSI codes pre-cached on `Theme`. Timestamps via `time.AppendFormat`. Writers format outside the mutex; lock only for I/O.
 - **Nil-safe**: every public method handles nil receivers. Typed nils caught via `reflect` in `Error`/`Stringer` constructors.
-- **Thread-safe**: atomic level checks, mutex-protected writers, lock-free ring buffer.
-- **Trust model**: writers default-untrusted. `WriterTrusted()` opt-in. `Secure` field plaintext only shown to trusted writers; `<secure>...</secure>` tags in messages auto-scanned and redacted for untrusted writers.
-- **Colour resolution**: `NO_COLOR` env disables. `FORCE_COLOR` env forces on. Otherwise `term.IsTerminal` on the writer's fd. All decisions go through `resolveColourForWriter`.
+- **Thread-safe**: atomic level checks and mutex-protected writers.
+- **Trust model**: writers default-untrusted. `WriterTrusted()` opt-in. `Secure` field plaintext only shown to trusted writers. `<secure>...</secure>` scanning is content-driven: the maybe-secure flag is derived from message content whenever scanning is on, independent of the current writer mix, so an `AddWriter` between scan and dispatch can never leak plaintext. Each writer then applies its own trust (redact for untrusted, strip markers for trusted). `WithSecureTags(false)` opts out of tag scanning, never of `Secure`-field redaction.
+- **Colour resolution**: permission is fixed at writer construction: `WithColour(false)` survives every theme swap, and a mono-to-coloured swap restores colour only where permission allows. `NO_COLOR` disables ANSI, `FORCE_COLOR` enables styling on non-terminals but never grants trust or cursor control; trust remains based on the actual writer fd.
+- **Family close**: parent and children share `writerSet` close state. After any member's `Close` completes the family is closed for good (no `AddWriter` revival); concurrent Closes all wait on the same drain and return the same recorded result. Built-in wrappers never close caller-owned `io.Writer`s; worker close errors are joined.
+- **Fatal semantics**: `Logger.Fatal` is exempt from the sampler and delivered via a reliable ordered path (awaits preceding accepted entries, its own write, Flush) before `FatalHandler`/exit; a returning handler leaves the logger reusable. `LogEntry`/slog at `LevelFatal` never exits. A stalled generic `io.Writer` can block Fatal/Close indefinitely; there is no fake timeout.
+- **Cell widths**: one three-tier `visibleLen` measures headers, cells, boxes, banners and component columns in terminal cells: allocation-free printable-ASCII fast path, then `uniseg.StringWidth`, then pooled escape-strip whole-measure for strings interleaving ESC with text. ANSI/OSC sequences are ignored; truncation never splits a grapheme cluster.
 - **`Logger.Status`** renders inline (indented under parent log line, no own timestamp) on the console; JSON writers still receive structured records with `status` field.
 - **Shared `writerSet`**: parent and child loggers (`With`, `Detailed`, `WithComponent`, `Request`) share writer topology and `scanSecure` atomic, so `AddWriter` after child creation is visible everywhere.
 - **No `encoding/json`** in hot paths.
@@ -75,11 +79,12 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 
 ## Concurrency
 
-- **Level gate**: `Logger.level` is a bare `atomic.Int32`; a single atomic load per log call means sub-threshold entries never allocate.
-- `MultiWriter`: per-writer buffered channels (256 cap), non-blocking send, `Retain`/`Release` lifecycle. Workers close their own writer via defer. Shutdown drain via `for range ch`.
-- `RingBuffer`: CAS-based, power-of-2 sized, atomic commit flags, batched flush. Bounded spins (1000 iterations).
-- `Entry`: `atomic.Int32` ref count; CAS to pool prevents double-release.
-- `Logger.Render`/`RenderRaw`/`Newline`: render into a pooled buffer outside the lock, acquire `consoleWriter.mu` only for the final write — same mutex as log calls, so rich output cannot interleave.
+- **Level gate**: `Logger.level` is a bare `atomic.Int32`; a single atomic load per log call means sub-threshold entries never allocate. `writerSet.closing` is the write-admission gate for the whole family.
+- `MultiWriter`: per-writer buffered channels (256 cap), non-blocking send, `Retain`/`Release` lifecycle. `WriteReliable` (Fatal/Close) blocks until workers process everything enqueued before it, then flushes in-line. Workers close their own writer via defer; close errors are joined into `Close`'s result. Lock order: `writers.mu` then `mw.mu`; external callbacks (e.g. `SetTheme`) run outside both.
+- `RingBuffer`: mutex-guarded bounded power-of-2 byte queue, owned byte storage, single drainer goroutine with wake-token-or-pending plus a 10ms backstop; drop-on-full is counted, accepted order preserved, Close drains then is idempotent.
+- `Entry`: `atomic.Int32` ref count; CAS to pool prevents double-release. Final release clears pointer-bearing storage and drops oversized field slices.
+- `themeState`: one mutex-guarded theme shared by a logger and all its children; renderers snapshot it before rendering and it is never held across writer or renderable calls.
+- `Logger.Render`/`RenderRaw`/`Newline`: render into a pooled buffer outside the lock, acquire `consoleWriter.mu` only for the final write: same mutex as log calls, so rich output cannot interleave.
 
 ## Linting
 

@@ -41,8 +41,8 @@ import (
 
 ## Features
 
-- **Zero-alloc on the hot path** — typed fields (`String`, `Int`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer` storage; 5 pre-built fields log at ~34 ns with 0 allocs
-- **Sub-100 ns logging** — ~27 ns with no fields, ~2 ns for disabled levels, ~5 ns through a sampler
+- **Zero-alloc field encoding, where measured**: typed fields (`String`, `Int`, `Uint64`, `Float64`, `Bool`, `Duration`, `Error`) use `unsafe.Pointer`/`int64` storage. What the benchmarks establish: the `Int`, `Uint64` and `Float64` constructors are allocation-free (~1.3 ns each), and JSON serialisation of pre-built fields allocates nothing (0 B/op). The remaining constructors are not individually benchmarked. Not zero-allocation: `Any` fields (an `encoding/json` fallback on that value only), `String()` copies that must survive pooling, and ring-buffer snapshots — deliberate costs listed under Performance
+- **Cheap disabled path**: a disabled level costs one atomic load: 2.1 ns/op with 0 B/op and 0 allocs/op, asserted by a test outside the benchmark suite
 - **Options-only construction** — single `New(opts ...Option)` with preset options: `WithDevelopment()`, `WithProduction()`, `WithContainer()`, `WithTesting(t)`, `WithNop()`
 - **Immutable themes** — `NewTheme` with `ThemeOption`, semantic `StyleSlot` enum, `Theme.Format(slot, s)` for coloured output without raw ANSI, five built-in themes
 - **Renderables in root** — `Box`, `Table`, `Tree`, `Banner`, `KeyValue`, `SystemInfo` all live in the root package; `log.Table(...)`, `log.Box(...)` etc. are convenience methods
@@ -52,50 +52,92 @@ import (
 - **Notify channel** — `Logger.Notify/NotifyLines/NotifyBox` for ephemeral operator output that bypasses the structured pipeline
 - **Ring buffer writer** — `RingBufferWriter` with `Snapshot(n)` and `Subscribe(ctx, bufSize)` for in-process log capture
 - **slog bridge** — `slogbridge.NewHandler` implements `log/slog.Handler` for incremental adoption
-- **Log sampling** — `CountSampler` checked before pool acquisition; no allocs on the skip path
+- **Log sampling**: `CountSampler` is consulted before any entry or pool work, so sampled-out calls stop after the level check; `Logger.Fatal` is exempt and always delivered
 - **Component-aware pretty output** — opt-in `WithComponentStyling()` folds service name, count, timing, and state-transition fields into compact inline indicators on the console; JSON output is unaffected and keeps every field expanded
 - **Nil-safe and testable** — every public method handles nil receivers; overridable `FatalHandler`; `WithTesting(t)` preset
 
 ## Performance
 
-### Comparative benchmarks
+The speedup tables that used to live here have been removed. They were measured
+against `io.Discard` sinks, and Velocity maps an `io.Discard` destination to a
+no-output fast path; those benchmarks exercised the level check and field
+encoding but never serialised a record, so the comparison tables and the
+sub-100 ns headlines built on them were invalid.
 
-AMD Ryzen 9 5950X, Go 1.24, all libraries writing structured output to `io.Discard`.
-Velocity runs JSON-only (console writer disabled via `WithLevel(LevelOff)`), same as every other library here.
+The numbers below are the corrected measurements: every enabled benchmark
+writes to a real sink that receives and counts the bytes, and a preflight test
+outside the timed loop asserts the output arrived and is valid for the claimed
+format. They are medians of six interleaved rounds on one machine (AMD Ryzen
+9 5950X, Go 1.26.5, GOMAXPROCS=32, colour env unset); a control benchmark held
+18.8 ns/op on both sides of the run, so deltas under ~5% are noise. Raw output,
+medians and the harness are kept in the development tree under
+`docs/benchmarks/hardening-finish/` (the `docs/` directory is not published
+with the repository).
 
-| Library | Info (no fields) | Info (3 fields) | With + Info (per call) | Disabled level |
-|---------|-----------------|-----------------|------------------------|---------------|
-| **velocity** | **30 ns** / 0 alloc | **63 ns** / 1 alloc | **155 ns** / 4 alloc | **3.3 ns** / 0 alloc |
-| [zerolog](https://github.com/rs/zerolog) | 66 ns / 0 alloc | 162 ns / 0 alloc | 459 ns / 2 alloc | 7.3 ns / 0 alloc |
-| [zap](https://github.com/uber-go/zap) | 233 ns / 0 alloc | 475 ns / 1 alloc | 3045 ns / 6 alloc | 6.5 ns / 0 alloc |
-| [slog](https://pkg.go.dev/log/slog) | 417 ns / 0 alloc | 992 ns / 4 alloc | 1177 ns / 11 alloc | 6.8 ns / 0 alloc |
-| [charmbracelet/log](https://github.com/charmbracelet/log) | 3.2 ns / 0 alloc | 3.9 ns / 0 alloc | 2815 ns / 5 alloc | 3.2 ns / 0 alloc |
-| [pterm](https://github.com/pterm/pterm) | 8376 ns / 65 alloc | 16637 ns / 144 alloc | 8213 ns / 65 alloc | 17 ns / 0 alloc |
+### Logging (console and JSON writers both active, both at Debug)
 
-Velocity leads zerolog by ~2x on Info throughput and zap by ~8x. The disabled-level check (~3 ns) is the fastest among the structured loggers. charmbracelet/log's sub-5 ns per-call numbers come from skipping format work when the output is not a TTY; its `With` cost (2815 ns) reflects the real allocation overhead. pterm is a display library, not a structured logger — its numbers are expected.
+| Operation | ns/op | B/op | allocs/op |
+|-----------|------:|-----:|----------:|
+| Info, no fields | 425.7 | 0 | 0 |
+| Info, 5 pre-built fields | 1078.0 | 32 | 3 |
+| Info, 5 inline fields | 1118.0 | 48 | 4 |
+| Info, 10 pre-built fields | 1572.0 | 60 | 5 |
+| Info, parallel | 476.5 | 32 | 3 |
+| JSON writer only, 5 fields | 679.9 | 0 | 0 |
+| Console writer only, 5 fields | 399.5 | 32 | 3 |
+| slog handler, info with 3 attrs | 3525.0 | 193 | 6 |
+| Async MultiWriter enqueue attempt (draining consumer) | 195.7 | 0 | 0 |
+| Async MultiWriter drop path | 101.1 | 0 | 0 |
+| Disabled level | 2.1 | 0 | 0 |
 
-### Internal benchmarks (v2.0.0, AMD Ryzen 9 5950X, Go 1.24)
+The async rows are enqueue attempts, not guaranteed delivery: the timed loop's
+non-blocking send drops when the worker channel is full, and the drain runs
+after the timer stops with every drop counted. Against this benchmark's single
+concurrent JSON worker, 48-62% of attempts dropped per round (median 46%
+delivered, 54% dropped); the ratio tracks producer/consumer speed balance, so
+treat it as a workload property, not a library constant. End-to-end cost per
+delivered record — timed loop plus Close drain divided by records actually
+written — is ~440 ns.
 
-| Operation | v1.1.3 ns/op | v2.0.0 ns/op | delta | B/op | allocs/op |
-|-----------|-------------:|-------------:|------:|-----:|----------:|
-| Info, no fields | 26 | 28 | +8% | 0 | 0 |
-| Info, 5 pre-built fields | 38 | 33 | -13% | 0 | 0 |
-| Info, 10 pre-built fields | 39 | 35 | -10% | 0 | 0 |
-| Info, tree mode | 36 | 33 | -8% | 0 | 0 |
-| Level check (disabled) | 2.1 | 2.2 | +5% | 0 | 0 |
-| Sampler check | 5.3 | 5.8 | +9% | 0 | 0 |
-| Entry pool round-trip | 14 | 14 | 0% | 0 | 0 |
-| Int field construction | 1.3 | 1.4 | +8% | 0 | 0 |
-| ConsoleWriter, 5 fields | 433 | 483 | +12% | 32 | 3 |
-| JSONWriter, 5 fields | 594 | 642 | +8% | 0 | 0 |
-| JSONWriter, parallel | 170 | 192 | +13% | 0 | 0 |
-| WithComponent child | 270 | 159 | -41% | 192 | 3 |
-| Secure scan, no match | 67 | 35 | -48% | 0 | 0 |
-| slog handler, 3 attrs | 468 | 99 | -79% | 144 | 3 |
+Provenance: all rows except "Disabled level" were re-measured on 2026-09-16,
+after two reliability reworks changed the serialisation paths — delivery
+acknowledgement became per-item, and every console/JSON write now registers
+as in-flight so Close drains admitted calls. That registration initially
+cost one 16 B allocation per console write; the method-value allocation was
+removed after re-measurement and admission is now allocation-free on the
+console and JSON paths alike. The
+disabled row never reaches a writer, and the pretty rows below render through
+the standalone `NewPretty`, which bypasses console admission entirely — both
+were re-checked flat on 2026-09-16 and keep their original campaign numbers.
+The rows in the table above come from that post-fix campaign (three rounds,
+same day, same set with the control benchmark flat at 18.8 ns; raw output in
+`remeasure-f2admission/fix-methodvalue/`).
 
-**Notes on v2 changes:** `Info (no fields)` and the writer paths carry a small overhead from the added `scanSecure` flag check and immutable theme lookup (vs mutable cached fields). The multi-field paths are faster due to the unified `any`-field path elimination. `WithComponent` improved significantly from child-logger construction changes. `SecureScan_NoMatch` halved due to early-exit on the `IndexByte` fast path. The slog bridge numbers dropped from ~468 ns to ~99 ns because the v1 benchmark was writing to stdout rather than discarding — that was a measurement bug, not a real v1 advantage.
+### Pretty rendering
 
-Run benchmarks: `go test -bench=. -benchmem -count=3 ./...`
+| Renderable | ASCII ns/op | Unicode ns/op |
+|------------|------------:|--------------:|
+| Table | 738.0 | 3272.5 |
+| Box | 308.8 | 1103.5 |
+| Banner | 231.4 | 610.8 |
+
+Tables, boxes, banners and component columns are measured in terminal cells
+(grapheme clusters via [uniseg](https://github.com/rivo/uniseg)), so Unicode
+output aligns correctly at the cost of the wider measurement. ASCII output
+(the common case) takes an allocation-free fast path and never touches uniseg.
+
+Snapshot copies are deliberate allocation costs, not regressions: `String()`
+results that must survive pooling copy their bytes (48 B, 1 alloc), and each
+ring-buffer subscriber receives a cloned field snapshot it owns (91 B, 3
+allocs). A 64-entry `Snapshot(n)` deep copy costs 10240 B / 65 allocs because
+the caller owns the result.
+
+Run the same benchmarks yourself:
+
+```bash
+go test -run '^$' -bench . -benchtime=1s -count=1 . ./slogbridge/
+cd benchmarks && go test -run '^$' -bench . -benchtime=1s -count=1
+```
 
 ## Usage
 
@@ -165,6 +207,11 @@ styled := theme.Format(velocity.SlotGood, "all systems go")
 
 `NO_COLOR` takes precedence over `FORCE_COLOR`. `FORCE_COLOR=1` is useful on Windows where terminal emulators such as VS Code, Windows Terminal, and Git Bash proxy stdout through a named pipe, which causes `term.IsTerminal` to return false even in a fully colour-capable terminal.
 
+`FORCE_COLOR` changes presentation only. It does not make a pipe, file, or
+buffer a trusted terminal: secure fields remain redacted there. `WithBufferSize`
+and `WithFieldPoolSize` remain accepted for v2 compatibility but no longer tune
+the shared pools.
+
 ### Renderables
 
 ```go
@@ -208,6 +255,46 @@ slog.SetDefault(slogbridge.NewLogger(vlog))
 slog.Info("request handled", "method", "GET", "status", 200)
 ```
 
+## Lifecycle and shutdown
+
+Parent and child loggers share one writer family and one lifetime. Once any
+`Close` completes, the whole family is closed for good: subsequent log calls
+are dropped, `AddWriter` cannot revive output, and concurrent `Close` calls
+all wait for the same drain and return the same recorded result (worker close
+errors are joined with `errors.Join`). Close also waits for calls that were
+already admitted: every console and JSON write registers as in-flight for its
+whole formatting cycle, so a paused call completes or is dropped rather than
+writing after Close returned. `Logger.Close` never closes an
+`io.Writer` you supplied; whoever constructed it still owns it.
+
+`Logger.Fatal` is exempt from sampling and never takes the queue-full drop
+path: it waits for preceding accepted entries, its own write, and a flush
+before invoking the `FatalHandler` (or exiting). A custom handler that returns
+leaves the logger reusable. Ordinary `io.Writer`s cannot be cancelled, so a
+stalled destination can block `Fatal` and `Close` indefinitely: delivery is
+not faked with a timeout. Records arriving through `log/slog` or
+`Logger.LogEntry` at the fatal level are logged like any other entry and never
+exit the process; only `Logger.Fatal` has process-control semantics.
+
+### Sharing a terminal with live widgets
+
+```go
+out := live.NewOutput(os.Stdout)
+log := velocity.New(velocity.WithConsoleOutput(out))
+spin := live.NewSpinner(out, "working")
+
+spin.Start()
+log.Info("logged while the spinner is running") // clears, writes, redraws
+spin.Stop()
+```
+
+Pass the same `*live.Output` to `WithConsoleOutput` and every widget
+constructor. Log records then clear the active live rows, write the whole
+record, and redraw the live area in one serialised operation, so lines never
+glue themselves onto spinner frames. Ordinary `io.Writer` constructors keep
+working standalone: they just don't coordinate, and raw writes that bypass
+the shared object are outside the guarantee.
+
 ## Integration
 
 ### Log rotation with lumberjack
@@ -222,12 +309,12 @@ log := velocity.New(
 
 ## Dependencies
 
-One: [`golang.org/x/term`](https://pkg.go.dev/golang.org/x/term) for TTY detection. No other external dependencies.
+Two: [`golang.org/x/term`](https://pkg.go.dev/golang.org/x/term) for TTY detection and [`github.com/rivo/uniseg`](https://github.com/rivo/uniseg) for terminal cell widths in the pretty renderers. No other external dependencies.
 
 ## Similar Libraries
 
 - [pTerm](https://github.com/pterm/pterm) — visually rich terminal output library; Velocity trades some visual features for speed and lower allocations
-- [logrus](https://github.com/sirupsen/logrus) — popular structured logger; Velocity targets significantly lower latency for high-volume CLI workloads
+- [logrus](https://github.com/sirupsen/logrus) — popular structured logger; Velocity targets lower per-call cost for high-volume CLI workloads
 
 ## Licence
 
