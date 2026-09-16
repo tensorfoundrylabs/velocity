@@ -431,22 +431,6 @@ func (w *ConsoleWriter) formatEntrySecure(buf *BytesBuffer, e *Entry, theme *The
 	}
 }
 
-func (w *ConsoleWriter) formatLevel(buf *BytesBuffer, level Level) {
-	_ = buf.WriteByte('[')
-
-	if w.isTTY && w.theme != nil && level >= 0 && int(level) < len(w.levelColours) {
-		buf.WriteString(w.levelColours[level])
-	}
-
-	buf.WriteString(level.ConciseLabel())
-
-	if w.isTTY && w.theme != nil && level >= 0 && int(level) < len(w.levelColours) {
-		buf.WriteString(Reset)
-	}
-
-	_ = buf.WriteByte(']')
-}
-
 func (w *ConsoleWriter) formatFieldsSecure(buf *BytesBuffer, fields []Field, trusted bool, redactionMark string) {
 	for _, f := range fields {
 		_ = buf.WriteByte(' ')
