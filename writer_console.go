@@ -262,7 +262,11 @@ func buildStatusLine(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Locatio
 		_ = buf.WriteByte('(')
 		buf.WriteString(e.Caller)
 		_ = buf.WriteByte(':')
-		buf.Write(strconv.AppendInt(nil, int64(e.Line), 10))
+		// Stack-buffer form, matching formatEntrySecure: strconv.AppendInt
+		// with a nil slice allocates once per status line.
+		var lineTmp [20]byte
+		n := formatInt(lineTmp[:], int64(e.Line))
+		buf.Write(lineTmp[:n])
 		_ = buf.WriteByte(')')
 	}
 

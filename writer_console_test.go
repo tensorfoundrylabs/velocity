@@ -2,6 +2,7 @@ package velocity
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,37 @@ func TestConsoleWriter_InvalidLevel(_ *testing.T) {
 	// Out-of-range levels must not panic on the levelColours array.
 	w.formatLevel(buf, Level(100))
 	w.formatLevel(buf, Level(6))
+}
+
+// TestConsoleWriter_WriteStatus_WithCaller_ZeroAllocs pins the allocation
+// contract for the direct status path with caller information: the line number
+// must go through the stack-buffer integer formatter, so rendering a status
+// line (caller included) allocates nothing. io.Discard keeps sink growth out
+// of the measurement. Not parallel: testing.AllocsPerRun panics inside
+// parallel subtests.
+func TestConsoleWriter_WriteStatus_WithCaller_ZeroAllocs(t *testing.T) {
+	w := NewConsoleWriter(io.Discard, nil)
+	// buildStatusLine only runs on the TTY path; force it like the other
+	// console tests do (the sink is not a terminal).
+	w.isTTY = true
+
+	e := GetEntry()
+	defer e.Release()
+	e.SetLevel(LevelInfo)
+	e.SetMessage("deployed")
+	e.SetTime(time.Now())
+	e.statusKind = StatusOK
+	e.Caller = "deploy/run.go"
+	e.Line = 42
+
+	allocs := testing.AllocsPerRun(200, func() {
+		if err := w.WriteStatus(e); err != nil {
+			t.Fatalf("WriteStatus: %v", err)
+		}
+	})
+	if allocs != 0 {
+		t.Errorf("WriteStatus with caller allocated %v times per call, want 0", allocs)
+	}
 }
 
 func TestConsoleWriter_AddCaller(t *testing.T) {

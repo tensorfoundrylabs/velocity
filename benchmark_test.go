@@ -316,6 +316,34 @@ func BenchmarkConsoleWriter_NoTemplate(b *testing.B) {
 	reportSink(b, sink)
 }
 
+// BenchmarkConsoleWriter_WriteStatus_WithCaller measures the direct status
+// path (WriteStatus/WriteStatusSecure with caller information), which only
+// runs on TTY consoles via buildStatusLine. The caller line number formats
+// through the stack-buffer helper, so this path must stay allocation-free.
+func BenchmarkConsoleWriter_WriteStatus_WithCaller(b *testing.B) {
+	sink := &benchSink{}
+	w := NewConsoleWriter(sink, ThemeNightOwl)
+	// buildStatusLine runs only when the writer is a TTY; force it (the sink
+	// is not a terminal) so the benchmark covers the status-shaped path.
+	w.isTTY = true
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		e := GetEntry()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("deployed")
+		e.SetTime(time.Now())
+		e.statusKind = StatusOK
+		e.Caller = "deploy/run.go"
+		e.Line = 42
+		_ = w.WriteStatus(e)
+		e.Write()
+		e.Release()
+	}
+	b.StopTimer()
+	reportSink(b, sink)
+}
+
 // ---- Entry pool benchmarks --------------------------------------------------
 
 func BenchmarkGetEntry_Release(b *testing.B) {
