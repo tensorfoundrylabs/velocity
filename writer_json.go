@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type JSONWriter struct {
@@ -340,8 +341,41 @@ const jsonHexDigits = "0123456789abcdef"
 func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 	_ = buf.WriteByte('"')
 
-	for i := range len(s) {
+	for i := 0; i < len(s); {
 		c := s[i]
+
+		// Multibyte sequences are decoded so malformed UTF-8 never reaches the
+		// stream raw: each undecodable byte becomes one \ufffd escape, matching
+		// encoding/json, which keeps the output valid UTF-8 for strict
+		// consumers. Valid runes are written through as their original bytes
+		// (U+2028 stays unescaped; it is legal raw in a JSON string).
+		if c >= utf8.RuneSelf {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				buf.WriteString(`\ufffd`)
+				i++
+			} else {
+				buf.WriteString(s[i : i+size])
+				i += size
+			}
+			continue
+		}
+
+		// Plain printable ASCII is copied as one run rather than byte-by-byte;
+		// the scan costs less than the per-byte WriteByte calls it replaces.
+		if c >= 0x20 && c != '"' && c != '\\' {
+			j := i + 1
+			for j < len(s) {
+				d := s[j]
+				if d < 0x20 || d >= utf8.RuneSelf || d == '"' || d == '\\' {
+					break
+				}
+				j++
+			}
+			buf.WriteString(s[i:j])
+			i = j
+			continue
+		}
 
 		switch c {
 		case '"':
@@ -359,21 +393,20 @@ func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 		case '\f':
 			buf.WriteString(`\f`)
 		default:
-			if c < 32 {
-				// Inline the \uXXXX escape using a stack buffer to avoid the fmt.Fprintf
-				// allocation and the intermediate string that fmt.Sprintf would produce.
-				var seq [6]byte
-				seq[0] = '\\'
-				seq[1] = 'u'
-				seq[2] = '0'
-				seq[3] = '0'
-				seq[4] = jsonHexDigits[c>>4]
-				seq[5] = jsonHexDigits[c&0x0f]
-				_, _ = buf.Write(seq[:])
-			} else {
-				_ = buf.WriteByte(c)
-			}
+			// Only control bytes reach the default: quote and backslash are
+			// cases above, and printable ASCII took the run path.
+			// Inline the \uXXXX escape using a stack buffer to avoid the fmt.Fprintf
+			// allocation and the intermediate string that fmt.Sprintf would produce.
+			var seq [6]byte
+			seq[0] = '\\'
+			seq[1] = 'u'
+			seq[2] = '0'
+			seq[3] = '0'
+			seq[4] = jsonHexDigits[c>>4]
+			seq[5] = jsonHexDigits[c&0x0f]
+			_, _ = buf.Write(seq[:])
 		}
+		i++
 	}
 
 	_ = buf.WriteByte('"')

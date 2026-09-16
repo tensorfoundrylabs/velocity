@@ -2,9 +2,12 @@ package velocity
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -228,4 +231,241 @@ func TestContinue_CallerPoints_ToCallSite(t *testing.T) {
 	if !strings.Contains(out, `writer_json_test.go`) {
 		t.Errorf("Continue caller should point to this test file, got: %s", out)
 	}
+}
+
+// jsonRefString round-trips s through encoding/json to obtain the exact string
+// the reference encoder yields for the same bytes: each malformed byte becomes
+// one U+FFFD, valid runes survive unchanged.
+func jsonRefString(t *testing.T, s string) string {
+	t.Helper()
+	ref, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("json.Marshal reference: %v", err)
+	}
+	var want string
+	if err := json.Unmarshal(ref, &want); err != nil {
+		t.Fatalf("json.Unmarshal reference: %v", err)
+	}
+	return want
+}
+
+// TestJSONWriter_InvalidUTF8Replacement pins the shared JSON string encoder to
+// encoding/json's malformed-UTF-8 behaviour: every undecodable byte becomes one
+// U+FFFD so the stream stays valid UTF-8 for strict consumers. json.Unmarshal
+// tolerates malformed UTF-8, so validity is asserted with utf8.Valid directly
+// and decoded values are compared against encoding/json's own output.
+func TestJSONWriter_InvalidUTF8Replacement(t *testing.T) {
+	t.Parallel()
+
+	// Error text carrying malformed UTF-8, built at runtime to keep the source
+	// printable.
+	errVal := errors.New("boom " + string([]byte{0xff, 0xfe}) + " end")
+
+	cases := []struct {
+		name     string
+		refInput string
+		build    func() *Entry
+		pluck    func(t *testing.T, m map[string]any) string
+		wantFFFD int
+	}{
+		{
+			name:     "message isolated continuation byte",
+			refInput: "broken \x80 byte",
+			build: func() *Entry {
+				return &Entry{Message: "broken \x80 byte"}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "message")
+			},
+			wantFFFD: 1,
+		},
+		{
+			name:     "message truncated three-byte sequence",
+			refInput: "trunc \xe2\x82",
+			build: func() *Entry {
+				return &Entry{Message: "trunc \xe2\x82"}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "message")
+			},
+			// Both bytes of the truncated sequence are individually undecodable.
+			wantFFFD: 2,
+		},
+		{
+			name:     "message malformed multibyte sequence",
+			refInput: "bad \xc3(A",
+			build: func() *Entry {
+				return &Entry{Message: "bad \xc3(A"}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "message")
+			},
+			// \xc3 lacks its continuation byte; "(A" survives.
+			wantFFFD: 1,
+		},
+		{
+			name:     "string field value with invalid bytes",
+			refInput: "value \x81\x82 here",
+			build: func() *Entry {
+				v := "value \x81\x82 here"
+				return &Entry{Fields: []Field{{
+					Key:   "v",
+					Type:  FieldTypeString,
+					value: unsafe.Pointer(&v),
+				}}}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "v")
+			},
+			wantFFFD: 2,
+		},
+		{
+			name:     "field key with invalid bytes",
+			refInput: "k\xff",
+			build: func() *Entry {
+				v := "v"
+				return &Entry{Fields: []Field{{
+					Key:   "k\xff",
+					Type:  FieldTypeString,
+					value: unsafe.Pointer(&v),
+				}}}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				for k := range m {
+					if k[0] == 'k' {
+						return k
+					}
+				}
+				t.Fatalf("no key starting with 'k' in decoded object: %v", m)
+				return ""
+			},
+			wantFFFD: 1,
+		},
+		{
+			name:     "error text with invalid bytes",
+			refInput: errVal.Error(),
+			build: func() *Entry {
+				return &Entry{Fields: []Field{{
+					Key:   "err",
+					Type:  FieldTypeError,
+					value: unsafe.Pointer(&errVal),
+				}}}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "err")
+			},
+			wantFFFD: 2,
+		},
+		{
+			name:     "message valid emoji passes through",
+			refInput: "done \U0001F389 well 日本語",
+			build: func() *Entry {
+				return &Entry{Message: "done \U0001F389 well 日本語"}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "message")
+			},
+			wantFFFD: 0,
+		},
+		{
+			name:     "message literal U+FFFD passes through",
+			refInput: "lit \uFFFD end",
+			build: func() *Entry {
+				return &Entry{Message: "lit \uFFFD end"}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "message")
+			},
+			// The one U+FFFD present came from the input, not from replacement.
+			wantFFFD: 1,
+		},
+		{
+			name:     "message U+2028 passes through",
+			refInput: "line1\u2028line2",
+			build: func() *Entry {
+				return &Entry{Message: "line1\u2028line2"}
+			},
+			pluck: func(t *testing.T, m map[string]any) string {
+				return jsonStringField(t, m, "message")
+			},
+			wantFFFD: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			w := NewJSONWriter(&buf)
+
+			e := tc.build()
+			e.Time = time.Now()
+			e.Level = LevelInfo
+			if err := w.Write(e); err != nil {
+				t.Fatalf("Write returned error: %v", err)
+			}
+
+			raw := buf.Bytes()
+			if !utf8.Valid(raw) {
+				t.Fatalf("output is not valid UTF-8: %q", raw)
+			}
+
+			var decoded map[string]any
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatalf("output is not parseable JSON: %v; raw: %s", err, raw)
+			}
+
+			got := tc.pluck(t, decoded)
+			if want := jsonRefString(t, tc.refInput); got != want {
+				t.Errorf("decoded value %q does not match encoding/json reference %q", got, want)
+			}
+			if n := strings.Count(got, "\uFFFD"); n != tc.wantFFFD {
+				t.Errorf("U+FFFD count = %d, want %d (value %q)", n, tc.wantFFFD, got)
+			}
+		})
+	}
+}
+
+// TestJSONWriter_ValidUnicodePassthrough asserts valid multibyte content keeps
+// its original bytes: velocity leaves U+2028 unescaped (legal in JSON strings;
+// escaping it like encoding/json is optional) and a literal U+FFFD from the
+// input is neither doubled nor escaped.
+func TestJSONWriter_ValidUnicodePassthrough(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: "emoji \U0001F389 ls \u2028 repl \uFFFD end",
+	}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	raw := buf.String()
+	if !utf8.ValidString(raw) {
+		t.Fatalf("output is not valid UTF-8: %q", raw)
+	}
+	for _, frag := range []string{"\U0001F389", "\u2028", "\uFFFD"} {
+		if !strings.Contains(raw, frag) {
+			t.Errorf("expected %q to pass through as raw bytes, got: %s", frag, raw)
+		}
+	}
+	// Exactly one U+FFFD: the literal one, with no replacement added.
+	if n := strings.Count(raw, "\uFFFD"); n != 1 {
+		t.Errorf("U+FFFD count = %d, want 1 (the literal from the message)", n)
+	}
+}
+
+func jsonStringField(t *testing.T, m map[string]any, key string) string {
+	t.Helper()
+	v, ok := m[key].(string)
+	if !ok {
+		t.Fatalf("decoded object has no string field %q: %v", key, m)
+	}
+	return v
 }
