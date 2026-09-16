@@ -122,7 +122,9 @@ func renderGroupPlain(buf *bytes.Buffer, msg string, items []GroupItem) {
 	buf.WriteByte(')')
 	buf.WriteByte('\n')
 
-	writeGroupConsoleItems(buf, items)
+	// Renderables render user-supplied text verbatim; secure-tag scanning is a
+	// Logger.Group pipeline concern (the entry carries the maybeSecure flag).
+	writeGroupConsoleItems(buf, items, false, false, "")
 }
 
 // resolvedMarker returns the item's explicit marker, or a default tree glyph.
@@ -180,13 +182,17 @@ func writeGroupConsoleTTYItems(buf *bytes.Buffer, items []GroupItem, theme *Them
 }
 
 // writeGroupConsoleItems writes plain (non-ANSI) item lines into buf.
-func writeGroupConsoleItems(buf *bytes.Buffer, items []GroupItem) {
+// secureActive applies the entry's secure-tag policy to item text so
+// non-header payloads follow the same redaction rules as the header; the
+// Renderable path passes false (callers render their own strings verbatim,
+// exactly like Box and Table cells).
+func writeGroupConsoleItems(buf *bytes.Buffer, items []GroupItem, secureActive, trusted bool, redactionMark string) {
 	for i, item := range items {
 		marker := resolvedMarker(item.Marker, i, len(items))
 		buf.WriteString(groupItemIndent)
 		buf.WriteString(marker)
 		buf.WriteByte(' ')
-		buf.WriteString(item.Text)
+		buf.WriteString(applySecureTags(item.Text, secureActive, trusted, redactionMark))
 		buf.WriteByte('\n')
 	}
 }

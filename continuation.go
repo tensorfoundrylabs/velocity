@@ -231,7 +231,7 @@ func (l *Logger) Continue(level Level, msg string, lines ...string) {
 		}
 		return
 	}
-	if l.closed.Load() || !l.isEnabled(level) {
+	if l.writers.isClosing() || !l.isEnabled(level) {
 		return
 	}
 	l.logContinue(level, msg, lines)
@@ -243,7 +243,8 @@ func (l *Logger) logContinue(level Level, msg string, lines []string) {
 		return
 	}
 
-	if l.sampler != nil && !l.sampler.Sample(level, msg) {
+	// Fatal is exempt on every dispatch path: the level is never suppressed.
+	if level != LevelFatal && l.sampler != nil && !l.sampler.Sample(level, msg) {
 		return
 	}
 
@@ -255,8 +256,20 @@ func (l *Logger) logContinue(level Level, msg string, lines []string) {
 	entry.SetTime(time.Now())
 	entry.forceTreeDisplay = l.forceTreeDisplay
 
-	if l.writers.scanSecure.Load() && strings.IndexByte(msg, '<') >= 0 {
-		entry.maybeSecure = true
+	// The scan covers the header AND every continuation line: writers apply the
+	// entry-wide flag to both, so non-header text follows the same redaction
+	// policy as the header.
+	if l.writers.scanSecure.Load() {
+		if strings.IndexByte(msg, '<') >= 0 {
+			entry.maybeSecure = true
+		} else {
+			for _, line := range lines {
+				if strings.IndexByte(line, '<') >= 0 {
+					entry.maybeSecure = true
+					break
+				}
+			}
+		}
 	}
 
 	if len(l.baseFields) > 0 {

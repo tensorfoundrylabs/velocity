@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -15,6 +16,32 @@ type JSONWriter struct {
 	bufPool *BufferPool
 	mu      sync.Mutex
 	closed  bool
+
+	// inFlight tracks admitted write cycles so Close drains calls that are
+	// still formatting (a Stringer, Error or Any marshal can block or reenter)
+	// rather than rejecting their bytes mid-flight. Same pattern as
+	// ConsoleWriter; see the F2 finding in the finish review.
+	inFlight sync.WaitGroup
+
+	// Family close lifecycle for direct Close callers, mirroring MultiWriter
+	// and ConsoleWriter: concurrent Closes wait for the same completed drain
+	// and return the same recorded closeErr (WP2 contract).
+	closeOnce sync.Once
+	closeDone chan struct{}
+	closeErr  error
+}
+
+// admit is the admission critical section: the closed check and the in-flight
+// registration happen under one mutex acquisition, so Close can never slip
+// between them. Returns false when the writer is closed.
+func (w *JSONWriter) admit() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return false
+	}
+	w.inFlight.Add(1)
+	return true
 }
 
 func NewJSONWriter(out io.Writer) *JSONWriter {
@@ -39,6 +66,11 @@ func (w *JSONWriter) WriteStatus(e *Entry) error {
 
 // WriteStatusSecure is the trust-aware JSON status write path.
 func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark string) error {
+	if !w.admit() {
+		return ErrWriterClosed
+	}
+	defer w.inFlight.Done()
+
 	rawBuf := w.bufPool.Get(HintStructuredLog)
 	buf := NewBytesBuffer(rawBuf)
 
@@ -49,11 +81,6 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		w.bufPool.Put(rawBuf)
-		return ErrWriterClosed
-	}
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
@@ -125,6 +152,11 @@ func (w *JSONWriter) WriteGroup(e *Entry, items []GroupItem) error {
 
 // WriteGroupSecure is the trust-aware group JSON write path.
 func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool, redactionMark string) error {
+	if !w.admit() {
+		return ErrWriterClosed
+	}
+	defer w.inFlight.Done()
+
 	rawBuf := w.bufPool.Get(HintStructuredLog)
 	buf := NewBytesBuffer(rawBuf)
 
@@ -132,11 +164,6 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		w.bufPool.Put(rawBuf)
-		return ErrWriterClosed
-	}
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
@@ -205,7 +232,8 @@ func (w *JSONWriter) formatJSONGroupSecure(buf *BytesBuffer, e *Entry, items []G
 		if i > 0 {
 			_ = buf.WriteByte(',')
 		}
-		w.writeJSONString(buf, item.Text)
+		// Item text gets the same secure-tag policy as the header message.
+		w.writeJSONString(buf, applySecureTags(item.Text, e.maybeSecure, trusted, redactionMark))
 	}
 	_ = buf.WriteByte(']')
 
@@ -228,6 +256,11 @@ func (w *JSONWriter) formatJSONGroupSecure(buf *BytesBuffer, e *Entry, items []G
 // called with trusted=false; a trusted JSON sink (e.g. an internal audit log)
 // can be registered via AddWriter with WriterTrusted().
 func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) error {
+	if !w.admit() {
+		return ErrWriterClosed
+	}
+	defer w.inFlight.Done()
+
 	rawBuf := w.bufPool.Get(HintStructuredLog)
 	buf := NewBytesBuffer(rawBuf)
 
@@ -236,11 +269,6 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		w.bufPool.Put(rawBuf)
-		return ErrWriterClosed
-	}
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
@@ -394,6 +422,12 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 	case FieldTypeInt64:
 		buf.WriteInt(f.num)
 
+	case FieldTypeUint64:
+		// Stack-buffer form: strconv.FormatUint allocates for values >= 100.
+		var tmp [20]byte
+		n := formatUint(tmp[:], uint64(f.num)) //nolint:gosec // G115: field storage is bit-pattern int64, reinterpretation is the contract
+		_, _ = buf.Write(tmp[:n])
+
 	case FieldTypeFloat64:
 		floatValue := math.Float64frombits(uint64(f.num)) //nolint:gosec // G115: bit-pattern reinterpretation, not value conversion
 
@@ -482,9 +516,14 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		_ = buf.WriteByte('"')
 
 	case FieldTypeAny:
-		// Fallback uses reflection but covers all cases
+		// Preserve arbitrary values as JSON. A marshal error still produces valid
+		// JSON with an explicit diagnostic rather than corrupting the log stream.
 		v := *(*any)(f.value)
-		w.writeJSONString(buf, fmt.Sprintf("%v", v))
+		if raw, err := json.Marshal(v); err == nil {
+			_, _ = buf.Write(raw)
+		} else {
+			w.writeJSONString(buf, "<velocity: JSON marshal failed: "+err.Error()+">")
+		}
 
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.
@@ -534,6 +573,11 @@ func (w *JSONWriter) WriteContinue(e *Entry, lines []string) error {
 
 // WriteContinueSecure is the trust-aware continuation JSON write path.
 func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool, redactionMark string) error {
+	if !w.admit() {
+		return ErrWriterClosed
+	}
+	defer w.inFlight.Done()
+
 	rawBuf := w.bufPool.Get(HintStructuredLog)
 	buf := NewBytesBuffer(rawBuf)
 
@@ -541,11 +585,6 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	_ = buf.WriteByte('\n')
 
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		w.bufPool.Put(rawBuf)
-		return ErrWriterClosed
-	}
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
@@ -602,7 +641,9 @@ func (w *JSONWriter) formatJSONContinueSecure(buf *BytesBuffer, e *Entry, lines 
 		if i > 0 {
 			_ = buf.WriteByte(',')
 		}
-		w.writeJSONString(buf, stripOSC8(line))
+		// Line text gets the same secure-tag policy as the header message;
+		// OSC 8 stripping is preserved on the post-policy text.
+		w.writeJSONString(buf, stripOSC8(applySecureTags(line, e.maybeSecure, trusted, redactionMark)))
 	}
 	_ = buf.WriteByte(']')
 
@@ -633,18 +674,28 @@ func (w *JSONWriter) Flush() error {
 }
 
 func (w *JSONWriter) Close() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.closeOnce.Do(func() {
+		// Created here (not at construction) so zero-value writers are safe;
+		// Once's completion guarantee makes the field visible to every caller
+		// before the receive below.
+		w.closeDone = make(chan struct{})
+		defer close(w.closeDone)
 
-	if w.closed {
-		return nil
-	}
+		w.mu.Lock()
+		w.closed = true
+		w.mu.Unlock()
 
-	w.closed = true
+		// Drain admitted callers outside the mutex — they need it for their
+		// final writes. When Wait returns no in-flight cycle remains, so the
+		// flush below is the last underlying write.
+		w.inFlight.Wait()
 
-	if f, ok := w.out.(interface{ Flush() error }); ok {
-		return f.Flush()
-	}
-
-	return nil
+		if f, ok := w.out.(interface{ Flush() error }); ok {
+			w.closeErr = f.Flush()
+		}
+	})
+	// A second concurrent Close waits for the same completed drain and
+	// returns the same recorded result — never an early nil.
+	<-w.closeDone
+	return w.closeErr
 }

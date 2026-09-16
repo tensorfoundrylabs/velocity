@@ -72,6 +72,17 @@ var fieldSnapshotPool = sync.Pool{
 	},
 }
 
+// fieldSnapshotPtrPool recycles the *[]FieldSnapshot wrapper handles so
+// putFieldSnapshot doesn't allocate one per call — the same pattern as
+// slicePtrPool in pool.go. Taking an address of the local parameter escapes
+// and heap-allocates; borrowing the handle avoids that.
+var fieldSnapshotPtrPool = sync.Pool{
+	New: func() any {
+		s := make([]FieldSnapshot, 0, 8)
+		return &s
+	},
+}
+
 // RingBufferWriter is a fixed-capacity in-process log sink.
 // It stores the most recent N log entries as value-typed snapshots, making
 // it safe to read after the original *Entry has been returned to its pool.
@@ -106,10 +117,16 @@ type RingBufferWriter struct {
 	// closed prevents writes after Close().
 	closed bool
 
+	// closedCh is closed exactly once by Close. Subscription cleanup goroutines
+	// select on it so a context.Background subscriber cannot strand a goroutine
+	// after the ring is closed — cleanup must finish on EITHER context
+	// cancellation or ring closure.
+	closedCh chan struct{}
+
 	// isTrusted mirrors the WriterTrusted() opt-in so IsTrusted() works
 	// without the caller needing to inspect writerOptions separately.
 	// Phase 4 reads this to decide whether to redact Secure fields.
-	isTrusted bool
+	isTrusted atomic.Bool
 }
 
 // NewRingBufferWriter creates a fixed-capacity snapshot ring.
@@ -132,6 +149,7 @@ func NewRingBufferWriter(capacity int, opts ...RingBufferOption) *RingBufferWrit
 		ring:          make([]EntrySnapshot, capacity),
 		capacity:      capacity,
 		redactionMark: o.redactionMark,
+		closedCh:      make(chan struct{}),
 	}
 }
 
@@ -140,13 +158,13 @@ func NewRingBufferWriter(capacity int, opts ...RingBufferOption) *RingBufferWrit
 // on writerOptions in MultiWriter — this method exists so callers can query
 // the writer directly without going through the logger.
 func (r *RingBufferWriter) IsTrusted() bool {
-	return r.isTrusted
+	return r.isTrusted.Load()
 }
 
 // SetTrusted is called by MultiWriter's AddWriter when WriterTrusted() is in
 // the option set. Not part of the public API — internal plumbing for Phase 4.
 func (r *RingBufferWriter) SetTrusted(v bool) {
-	r.isTrusted = v
+	r.isTrusted.Store(v)
 }
 
 // Write converts the live entry to a value snapshot and appends it to the ring.
@@ -154,7 +172,7 @@ func (r *RingBufferWriter) SetTrusted(v bool) {
 // Entries written after Close are silently discarded.
 // Secure fields are redacted unless the writer was registered with WriterTrusted().
 func (r *RingBufferWriter) Write(e *Entry) error {
-	return r.WriteSecure(e, r.isTrusted, r.redactionMark)
+	return r.WriteSecure(e, r.isTrusted.Load(), r.redactionMark)
 }
 
 // WriteSecure implements SecureWriter. trusted controls whether Secure field
@@ -190,8 +208,11 @@ func (r *RingBufferWriter) WriteSecure(e *Entry, trusted bool, redactionMark str
 	// Fan-out to subscribers before releasing the lock so they see a
 	// consistent snapshot. Non-blocking send: slow consumers drop, not block.
 	for _, sub := range r.subscribers {
+		// A channel handoff transfers ownership. The ring retains snap.Fields and
+		// will reuse it on overflow, therefore each subscriber needs its own copy.
+		delivered := cloneEntrySnapshot(snap)
 		select {
-		case sub.ch <- snap:
+		case sub.ch <- delivered:
 		default:
 			r.drops.Add(1)
 		}
@@ -201,6 +222,14 @@ func (r *RingBufferWriter) WriteSecure(e *Entry, trusted bool, redactionMark str
 
 	r.total.Add(1)
 	return nil
+}
+
+func cloneEntrySnapshot(src EntrySnapshot) EntrySnapshot {
+	dst := src
+	if len(src.Fields) != 0 {
+		dst.Fields = append([]FieldSnapshot(nil), src.Fields...)
+	}
+	return dst
 }
 
 // Snapshot returns the most recent n entries in chronological order (oldest first).
@@ -269,11 +298,15 @@ func (r *RingBufferWriter) Subscribe(ctx context.Context, bufSize int) <-chan En
 	r.subscribers = append(r.subscribers, sub)
 	r.mu.Unlock()
 
-	// Unregister and close when the context is cancelled.
-	// sub.close() is idempotent via sync.Once, so it is safe even if
-	// Close() fired concurrently and already closed the channel.
+	// Unregister and close when EITHER the context is cancelled or the ring is
+	// closed — a context.Background subscription must not strand this goroutine
+	// after Close. sub.close() is idempotent via sync.Once, so concurrent
+	// firing of both paths is safe.
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-r.closedCh:
+		}
 		r.mu.Lock()
 		r.removeSubscriber(sub)
 		r.mu.Unlock()
@@ -308,6 +341,9 @@ func (r *RingBufferWriter) Close() error {
 	}
 
 	r.closed = true
+	// Signal every subscription cleanup goroutine; idempotent via the closed
+	// flag (Close is only ever run once past this point under r.mu).
+	close(r.closedCh)
 
 	// Close all subscriber channels. sub.close() is guarded by sync.Once,
 	// so it is safe even if the ctx-cancel goroutine fires concurrently.
@@ -331,8 +367,16 @@ func toSnapshotSecure(e *Entry, trusted bool, redactionMark string) EntrySnapsho
 			s := make([]FieldSnapshot, 0, len(e.Fields))
 			ptr = &s
 		}
-
 		fs := (*ptr)[:0]
+
+		// The wrapper handle is no longer needed now that the slice value is
+		// taken: recycle it for putFieldSnapshot's next Put instead of letting
+		// that allocate a fresh one. fs already carries the array pointer, so
+		// a later borrower overwriting *ptr cannot alias this snapshot's
+		// storage. Must happen after fs is read — after the Put, *ptr is
+		// shared property.
+		fieldSnapshotPtrPool.Put(ptr)
+
 		if cap(fs) < len(e.Fields) {
 			fs = make([]FieldSnapshot, 0, len(e.Fields))
 		}
@@ -411,6 +455,15 @@ func putFieldSnapshot(fs []FieldSnapshot) {
 	if cap(fs) > 64 {
 		return
 	}
+	clear(fs)
 	fs = fs[:0]
-	fieldSnapshotPool.Put(&fs)
+	// Borrow a wrapper handle rather than allocating &fs (the local would
+	// escape to the heap). See fieldSnapshotPtrPool.
+	p, _ := fieldSnapshotPtrPool.Get().(*[]FieldSnapshot)
+	if p == nil {
+		s := make([]FieldSnapshot, 0, cap(fs))
+		p = &s
+	}
+	*p = fs
+	fieldSnapshotPool.Put(p)
 }

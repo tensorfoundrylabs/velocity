@@ -173,6 +173,14 @@ func WithLevels(level Level) Option {
 	}
 }
 
+// WithConsoleOutput sets the console (pretty) output destination.
+//
+// To coordinate console logs with live widgets (velocity/live ProgressBar,
+// Spinner, MultiProgress), pass the SAME *live.Output to this option and to
+// the widget constructors: the coordinator serialises clearing live rows,
+// writing whole log records and redrawing the live area. Ordinary io.Writers
+// still work standalone, but writes through them and any raw writes
+// bypassing a shared Output are outside that coordination guarantee.
 func WithConsoleOutput(w io.Writer) Option {
 	return func(c *config) {
 		c.ConsoleOutput = w
@@ -218,12 +226,16 @@ func WithTimeFormat(format string) Option {
 	}
 }
 
+// WithBufferSize is retained for v2 source compatibility. Deprecated: active
+// pools are shared and this option does not tune their size.
 func WithBufferSize(size int) Option {
 	return func(c *config) {
 		c.BufferSize = size
 	}
 }
 
+// WithFieldPoolSize is retained for v2 source compatibility. Deprecated: active
+// pools are shared and this option does not tune their size.
 func WithFieldPoolSize(size int) Option {
 	return func(c *config) {
 		c.FieldPoolSize = size

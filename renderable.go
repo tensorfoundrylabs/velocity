@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/rivo/uniseg"
 )
 
 // Renderable is implemented by any value that can write a formatted representation
@@ -30,6 +32,29 @@ type Renderable interface {
 type TTYRenderable interface {
 	Renderable
 	RenderTTY(w io.Writer, isTTY bool) error
+}
+
+// StyledRenderable is an optional extension to Renderable for types that need
+// STYLING (resolved colour permission) and TRUST (actual terminal destination)
+// as separate inputs. Logger.Render checks for this interface first and passes
+// both bits from the console writer's runtime state:
+//
+//   - styled comes from the template's useColours — the resolved
+//     !colourExplicitlyDisabled && colourAllowed && themeHasColour — so
+//     WithColour(false) and NO_COLOR suppress ANSI and FORCE_COLOR permits it
+//     even on non-terminals, exactly matching ordinary log lines;
+//   - trusted is the actual terminal classification and is never influenced
+//     by colour or theme choices: secure plaintext stays visible on a trusted
+//     terminal even when styling is off.
+//
+// Implementations that only care about terminal-ness can keep TTYRenderable;
+// types where colour and content visibility must diverge (StatusItem) need
+// this one. The F4 finding in the finish review: StatusItem previously
+// selected its coloured path from the TTY bool alone, so explicit no-colour
+// was ignored on terminals.
+type StyledRenderable interface {
+	Renderable
+	RenderStyled(w io.Writer, styled, trusted bool) error
 }
 
 // Box-drawing constants shared by tree, box, and table renderers.
@@ -98,21 +123,21 @@ func renderBox(buf *bytes.Buffer, theme *Theme, title, content string) {
 		lines = lines[:len(lines)-1]
 	}
 
-	maxLineRunes := 0
+	maxLineCells := 0
 	for _, line := range lines {
-		if n := len([]rune(line)); n > maxLineRunes {
-			maxLineRunes = n
+		if n := visibleLen(line); n > maxLineCells {
+			maxLineCells = n
 		}
 	}
 
-	width := max(maxLineRunes+4, 42)
-	if titleWidth := len([]rune(title)) + 6; titleWidth > width {
+	width := max(maxLineCells+4, 42)
+	if titleWidth := visibleLen(title) + 6; titleWidth > width {
 		width = titleWidth
 	}
 
 	topFill := width - 2 - 1
 	if title != "" {
-		topFill -= len([]rune(title)) + 1
+		topFill -= visibleLen(title) + 1
 	}
 
 	buf.WriteString(theme.CachedFieldKeyFg())
@@ -131,7 +156,7 @@ func renderBox(buf *bytes.Buffer, theme *Theme, title, content string) {
 		buf.WriteString("│ ")
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedMessageFg())
-		buf.WriteString(padRightRunes(line, width-3))
+		writePaddedVisible(buf, line, width-3)
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString("│")
@@ -196,7 +221,7 @@ func renderTable(buf *bytes.Buffer, theme *Theme, headers []string, rows [][]str
 func calcColumnWidths(headers []string, rows [][]string) []int {
 	colWidths := make([]int, len(headers))
 	for i, h := range headers {
-		colWidths[i] = len(h)
+		colWidths[i] = visibleLen(h)
 	}
 	for _, row := range rows {
 		for i, cell := range row {
@@ -231,7 +256,7 @@ func writeTableHeaders(buf *bytes.Buffer, theme *Theme, headers []string, colWid
 		buf.WriteString(" ")
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedTableHeaderFg())
-		buf.WriteString(padRight(header, colWidths[i]))
+		writePaddedVisible(buf, header, colWidths[i])
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString(" ")
@@ -254,13 +279,17 @@ func writeTableHeaderSeparator(buf *bytes.Buffer, theme *Theme, colWidths []int)
 
 func writeTableRow(buf *bytes.Buffer, theme *Theme, row []string, colWidths []int) {
 	buf.WriteString(theme.CachedFieldKeyFg())
-	for i, cell := range row {
-		if i >= len(colWidths) {
-			break
+	for i := range colWidths {
+		// Absent cells pad to the declared column geometry so short rows keep
+		// the borders and column edges intact; extra cells beyond the header
+		// count are dropped, matching the previous behaviour.
+		var cell string
+		if i < len(row) {
+			cell = row[i]
 		}
 		buf.WriteString(" ")
 		buf.WriteString(theme.CachedMessageFg())
-		buf.WriteString(padRightVisible(cell, colWidths[i]))
+		writePaddedVisible(buf, cell, colWidths[i])
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString(" ")
@@ -320,7 +349,7 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 	maxLen := 0
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " \t")
-		if n := len([]rune(lines[i])); n > maxLen {
+		if n := visibleLen(lines[i]); n > maxLen {
 			maxLen = n
 		}
 	}
@@ -343,7 +372,7 @@ func renderBanner(buf *bytes.Buffer, theme *Theme, text string) {
 		buf.WriteString("│ ")
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedMessageFg())
-		buf.WriteString(padRightRunes(line, contentWidth))
+		writePaddedVisible(buf, line, contentWidth)
 		buf.WriteString(theme.ResetStr())
 		buf.WriteString(theme.CachedFieldKeyFg())
 		buf.WriteString(" │")
@@ -496,7 +525,7 @@ func (s *SystemInfo) Render(w io.Writer) error {
 
 	for _, pair := range s.info.Fields {
 		buf.WriteString(s.theme.CachedFieldKeyFg())
-		buf.WriteString(padRight(pair.Key+":", 20))
+		writePaddedVisible(buf, pair.Key+":", 20)
 		buf.WriteString(s.theme.ResetStr())
 		buf.WriteString(" ")
 		buf.WriteString(s.theme.CachedMessageFg())
@@ -516,37 +545,74 @@ func (s *SystemInfo) String() string {
 	return buf.String()
 }
 
-// visibleLen returns the number of visible runes in s, ignoring ANSI escape
+// isPrintableASCII reports whether s is entirely printable ASCII (0x20–0x7E).
+// Such strings occupy exactly one terminal cell per byte — the allocation-free
+// common case for headers, cells, box lines and component names, so uniseg is
+// only reached when non-ASCII bytes or escapes are actually present.
+func isPrintableASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// visibleLen returns the terminal cell width of s, ignoring ANSI escape
 // sequences and OSC 8 hyperlink sequences.
 //
 // SGR escapes: ESC [ ... m  (ends on 'm')
 // OSC sequences: ESC ] ... BEL  or  ESC ] ... ESC \
 // Both forms are transparent to column-width arithmetic — only the visible link
 // text (between the OSC 8 open/close sequences) contributes to the count.
+//
+// Three tiers, cheapest first: printable ASCII is one cell per byte; strings
+// without ESC go straight to uniseg; strings interleaving ESC with text are
+// stripped into a pooled scratch buffer and measured whole, so a grapheme
+// cluster split by an embedded control sequence (a colour change between a
+// base character and its combining mark, say) still counts as the single
+// cluster a terminal renders. Stepping cluster-by-cluster across a skipped
+// escape loses the cluster continuation and over-counts.
 func visibleLen(s string) int {
-	n := 0
+	if isPrintableASCII(s) {
+		return len(s)
+	}
+	if !strings.ContainsRune(s, '\033') {
+		return uniseg.StringWidth(s)
+	}
+	buf := GetBuffer(len(s))
+	defer PutBuffer(buf)
+	writeEscapeStripped(buf, s)
+	stripped := UnsafeString(buf.Bytes())
+	if isPrintableASCII(stripped) {
+		return buf.Len()
+	}
+	return uniseg.StringWidth(stripped)
+}
+
+// writeEscapeStripped copies s to buf with ANSI CSI/OSC escape sequences
+// removed — the bytes a terminal actually renders.
+func writeEscapeStripped(buf *bytes.Buffer, s string) {
 	i := 0
 	for i < len(s) {
 		if s[i] != '\033' {
-			// Fast path: count the rune and advance.
-			_, size := runeAt(s, i)
-			n++
-			i += size
+			_ = buf.WriteByte(s[i])
+			i++
 			continue
 		}
-		// ESC seen — peek at the next byte.
 		if i+1 >= len(s) {
+			// Trailing lone ESC — nothing visible follows.
 			break
 		}
 		switch s[i+1] {
 		case '[':
-			// SGR / CSI sequence: skip until 'm' (or any final byte 0x40–0x7E).
+			// SGR / CSI sequence: skip to the final byte (0x40–0x7E).
 			i += 2
-			for i < len(s) && (s[i] < 0x40 || s[i] > 0x7E) {
+			for i < len(s) && (s[i] < 0x40 || s[i] > 0x7e) {
 				i++
 			}
 			if i < len(s) {
-				i++ // consume the final byte
+				i++
 			}
 		case ']':
 			// OSC sequence: skip until BEL (\a) or ESC \ (ST).
@@ -567,78 +633,27 @@ func visibleLen(s string) int {
 			i++
 		}
 	}
-	return n
 }
 
-// runeAt decodes the rune at position i in s without allocating.
-// Falls back to a single byte if the sequence is invalid.
-func runeAt(s string, i int) (rune, int) {
-	b := s[i]
-	if b < 0x80 {
-		return rune(b), 1
-	}
-	// Delegate to the unicode/utf8 package for multi-byte sequences.
-	r, size := rune(b), 1
-	if b >= 0xC0 && i+1 < len(s) {
-		r2, sz := decodeRuneInString(s[i:])
-		if sz > 0 {
-			return r2, sz
-		}
-	}
-	return r, size
-}
+// padSpaces avoids a strings.Repeat allocation per padded cell.
+const padSpaces = "                                "
 
-// decodeRuneInString is a thin wrapper so we don't need a top-level import of
-// unicode/utf8 just for runeAt.
-func decodeRuneInString(s string) (rune, int) {
-	// Inline the first-byte decode to stay branch-cheap.
-	b0 := s[0]
-	switch {
-	case b0 < 0x80:
-		return rune(b0), 1
-	case b0 < 0xC0:
-		return '�', 1
-	case b0 < 0xE0:
-		if len(s) < 2 {
-			return '�', 1
-		}
-		r := rune(b0&0x1F)<<6 | rune(s[1]&0x3F)
-		return r, 2
-	case b0 < 0xF0:
-		if len(s) < 3 {
-			return '�', 1
-		}
-		r := rune(b0&0x0F)<<12 | rune(s[1]&0x3F)<<6 | rune(s[2]&0x3F)
-		return r, 3
-	default:
-		if len(s) < 4 {
-			return '�', 1
-		}
-		r := rune(b0&0x07)<<18 | rune(s[1]&0x3F)<<12 | rune(s[2]&0x3F)<<6 | rune(s[3]&0x3F)
-		return r, 4
+// writeSpaces writes exactly n spaces to buf without allocating.
+func writeSpaces(buf *bytes.Buffer, n int) {
+	for n > len(padSpaces) {
+		buf.WriteString(padSpaces)
+		n -= len(padSpaces)
+	}
+	if n > 0 {
+		buf.WriteString(padSpaces[:n])
 	}
 }
 
-// padRightVisible pads s to width based on visible rune count, accounting for ANSI codes.
-func padRightVisible(s string, width int) string {
-	visible := visibleLen(s)
-	if visible >= width {
-		return s
+// writePaddedVisible writes s, then pads with spaces to width terminal cells.
+// Text wider than width is written verbatim — callers size columns to fit.
+func writePaddedVisible(buf *bytes.Buffer, s string, width int) {
+	buf.WriteString(s)
+	if n := width - visibleLen(s); n > 0 {
+		writeSpaces(buf, n)
 	}
-	return s + strings.Repeat(" ", width-visible)
-}
-
-func padRight(s string, length int) string {
-	if len(s) >= length {
-		return s
-	}
-	return s + strings.Repeat(" ", length-len(s))
-}
-
-func padRightRunes(s string, length int) string {
-	runeLen := len([]rune(s))
-	if runeLen >= length {
-		return s
-	}
-	return s + strings.Repeat(" ", length-runeLen)
 }

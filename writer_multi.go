@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"errors"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,12 @@ type MultiWriter struct {
 	// Atomic so DroppedCount() can be read without acquiring any lock.
 	dropped atomic.Uint64
 
+	// Worker Close errors, recorded by each worker goroutine as it exits and
+	// returned by Close after the drain. Guarded by closeErrMu because workers
+	// finish concurrently with the Close caller.
+	closeErrMu sync.Mutex
+	closeErrs  []error
+
 	// mu guards closed, writeChans, and workers. Write() takes RLock (reads
 	// writeChans without modifying them); AddWriter/RemoveWriter/Close take the
 	// full write lock. This is safe: Close sets closed=true under the write lock,
@@ -40,6 +47,12 @@ type MultiWriter struct {
 
 	shutdownOnce sync.Once
 
+	// Family close lifecycle for this MultiWriter alone: the drain runs once,
+	// every concurrent Close waits for the same completion and returns the same
+	// recorded result (worker close errors joined).
+	closeOnce sync.Once
+	closeDone chan struct{}
+
 	closed bool
 }
 
@@ -48,6 +61,7 @@ func NewMultiWriter() *MultiWriter {
 		workers:      make(map[string]workerState),
 		writeChans:   make(map[string]chan *Entry),
 		shutdownChan: make(chan struct{}),
+		closeDone:    make(chan struct{}),
 	}
 }
 
@@ -64,9 +78,9 @@ func (mw *MultiWriter) AddWriter(name string, w Writer, opts ...WriterOption) {
 		return
 	}
 
-	if ch, ok := mw.writeChans[name]; ok {
+	if old, ok := mw.writeChans[name]; ok {
 		// Close the channel so the old worker drains and closes its writer.
-		close(ch)
+		close(old)
 	}
 
 	ws := workerState{
@@ -163,17 +177,93 @@ func (mw *MultiWriter) Write(e *Entry) error {
 	return nil
 }
 
+// WriteReliable delivers e to every registered worker and blocks until each
+// has processed it — and therefore everything accepted before it (channels are
+// FIFO with a single consumer). It never takes the queue-full drop branch:
+// sends block until the worker makes room. Used by Logger.Fatal so the fatal
+// entry is ordered behind all accepted entries and cannot be dropped before
+// the FatalHandler or exit decision.
+//
+// The acknowledgement is tied to the specific queue position: immediately
+// after e, a barrier sentinel is enqueued on the same channel, and the worker
+// closes the sentinel's channel when it reaches it. Aggregate counters are
+// deliberately not used — a producer can be preempted between its channel
+// send and publishing any count it maintains, letting already-processed
+// entries satisfy the wait while the barrier item is still queued (the F1
+// finding from the independent finish review).
+//
+// Limitation, by design: a generic io.Writer cannot be cancelled, so this
+// waits for a stalled writer indefinitely. No timeout is faked and no
+// goroutine is spawned — the caller (Fatal or Close) simply blocks.
+//
+// Entry lifetime: the entry is Retained per channel and Released by the worker
+// before the sentinel behind it is acknowledged, so returning guarantees every
+// reference is gone.
+func (mw *MultiWriter) WriteReliable(e *Entry) error {
+	if e == nil {
+		return nil
+	}
+
+	// Snapshot channels under RLock and perform the blocking sends while still
+	// holding it: Close marks closed and closes channels under the write lock,
+	// so holding RLock across the sends makes a send-on-closed-channel
+	// impossible. Workers never take mw.mu, so this cannot self-deadlock.
+	mw.mu.RLock()
+	if mw.closed {
+		mw.mu.RUnlock()
+		return ErrWriterClosed
+	}
+	chans := make([]chan *Entry, 0, len(mw.writeChans))
+	for _, ch := range mw.writeChans {
+		chans = append(chans, ch)
+	}
+	barriers := make([]chan struct{}, 0, len(chans))
+	for _, ch := range chans {
+		e.Retain()
+		ch <- e // blocking: wait for room rather than drop
+		// The sentinel rides directly behind e on the same FIFO channel; its
+		// processing by the single consumer proves e itself was processed and
+		// released first.
+		b := make(chan struct{})
+		ch <- &Entry{barrier: b}
+		barriers = append(barriers, b)
+	}
+	mw.mu.RUnlock()
+
+	// Wait outside the lock: each sentinel closes only after its channel
+	// consumed the entry ahead of it.
+	for _, b := range barriers {
+		<-b
+	}
+	return nil
+}
+
 func (mw *MultiWriter) writerWorker(ws workerState, ch chan *Entry) {
 	defer mw.wg.Done()
 	// Worker owns the writer lifecycle. Closing here ensures no concurrent
 	// Write() calls happen after the worker exits, regardless of why it stopped.
-	defer func() { _ = ws.w.Close() }()
+	// The close error is recorded so Close can report AddWriter sink failures.
+	defer func() {
+		if err := ws.w.Close(); err != nil {
+			mw.closeErrMu.Lock()
+			mw.closeErrs = append(mw.closeErrs, err)
+			mw.closeErrMu.Unlock()
+		}
+	}()
 
 	write := func(e *Entry) {
 		if ws.sw != nil {
 			_ = ws.sw.WriteSecure(e, ws.isTrusted, ws.redactionMark)
 		} else {
 			_ = ws.w.Write(e)
+		}
+		// Fatal entries flush flushable sinks in-line: the reliable-write
+		// barrier guarantees this has happened before the FatalHandler runs.
+		// Non-fatal entries keep the ordinary nonblocking contract.
+		if e.Level == LevelFatal {
+			if f, ok := ws.w.(FlushableWriter); ok {
+				_ = f.Flush()
+			}
 		}
 	}
 
@@ -183,14 +273,27 @@ func (mw *MultiWriter) writerWorker(ws workerState, ch chan *Entry) {
 			if !ok {
 				return
 			}
+			if e.barrier != nil {
+				// WriteReliable sentinel: everything ahead of it on this FIFO
+				// channel (including the entry it was sent behind) has been
+				// written and released. Not pooled, never retained — just ack.
+				close(e.barrier)
+				continue
+			}
 			write(e)
-			// CRITICAL: Balance the Retain() from Write()
+			// CRITICAL: Balance the Retain() from Write()/WriteReliable().
 			e.Release()
 
 		case <-mw.shutdownChan:
 			// Drain all remaining entries. Close() guarantees ch will be closed
-			// after shutdownChan, so range terminates once the channel is empty and closed.
+			// after shutdownChan, so range terminates once the channel is empty
+			// and closed. Sentinels queued by an in-flight WriteReliable still
+			// acknowledge so that barrier cannot hang on shutdown.
 			for e := range ch {
+				if e.barrier != nil {
+					close(e.barrier)
+					continue
+				}
 				write(e)
 				e.Release()
 			}
@@ -200,34 +303,38 @@ func (mw *MultiWriter) writerWorker(ws workerState, ch chan *Entry) {
 }
 
 func (mw *MultiWriter) Close() error {
-	mw.mu.Lock()
+	// The drain runs exactly once; concurrent Close callers all wait for the
+	// same completion and receive the same recorded result instead of racing a
+	// flag and reporting success early.
+	mw.closeOnce.Do(func() {
+		// Always close closeDone when the body finishes, even on the (currently
+		// unreachable) already-closed path, so no Close caller can block forever.
+		defer close(mw.closeDone)
 
-	if mw.closed {
+		mw.mu.Lock()
+		mw.closed = true
+		channels := make(map[string]chan *Entry)
+		maps.Copy(channels, mw.writeChans)
 		mw.mu.Unlock()
-		return nil
-	}
 
-	mw.closed = true
+		mw.shutdownOnce.Do(func() {
+			close(mw.shutdownChan)
+		})
 
-	channels := make(map[string]chan *Entry)
+		for _, ch := range channels {
+			close(ch)
+		}
 
-	maps.Copy(channels, mw.writeChans)
-
-	mw.mu.Unlock()
-
-	mw.shutdownOnce.Do(func() {
-		close(mw.shutdownChan)
+		// Workers close their own writers when they exit, so wg.Wait() ensures
+		// all writers are flushed and closed before we record the result. The
+		// wait runs with no mw.mu held: workers never need it.
+		mw.wg.Wait()
 	})
 
-	for _, ch := range channels {
-		close(ch)
-	}
-
-	// Workers close their own writers when they exit, so wg.Wait() ensures
-	// all writers are flushed and closed before we return.
-	mw.wg.Wait()
-
-	return nil
+	<-mw.closeDone
+	mw.closeErrMu.Lock()
+	defer mw.closeErrMu.Unlock()
+	return errors.Join(mw.closeErrs...)
 }
 
 func (mw *MultiWriter) Stats() map[string]int {

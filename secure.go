@@ -35,6 +35,20 @@ func redactSecureTags(s, mark string) string {
 	return b.String()
 }
 
+// applySecureTags applies the entry's secure-tag policy to an arbitrary text
+// payload (group item text, continuation lines). active is the entry's
+// maybeSecure flag, so the string scan stays pay-for-use: no work happens on
+// entries whose message and payloads never contained '<' while scanning was on.
+func applySecureTags(s string, active, trusted bool, redactionMark string) string {
+	if !active {
+		return s
+	}
+	if trusted {
+		return stripSecureTags(s)
+	}
+	return redactSecureTags(s, redactionMark)
+}
+
 // stripSecureTags removes the <secure> and </secure> markers from s, leaving
 // the content between them intact. Used by trusted TTY console writers to show
 // plaintext while stripping the markup.

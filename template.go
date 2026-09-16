@@ -5,7 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
 )
 
 // referenceTime is a fixed timestamp used to measure formatted time width at construction.
@@ -426,8 +427,8 @@ func (t *Template) writeComponentPrefix(buf *bytes.Buffer, f Field, theme *Theme
 		}
 	}
 
-	// Write name padded/truncated to width runes.
-	writeRunePadded(buf, name, width)
+	// Write name padded/truncated to width terminal cells.
+	writeCellPadded(buf, name, width)
 
 	if colCode != "" {
 		buf.WriteString(Reset)
@@ -447,39 +448,47 @@ func (t *Template) writeComponentPrefix(buf *bytes.Buffer, f Field, theme *Theme
 	}
 }
 
-// writeRunePadded writes s to buf, left-aligned, exactly width runes wide.
-// Truncates with '…' if s is longer; pads with spaces if shorter.
-func writeRunePadded(buf *bytes.Buffer, s string, width int) {
+// writeCellPadded writes s to buf, left-aligned, in exactly width terminal
+// cells. Truncates with '…' when s is wider, never splitting a grapheme
+// cluster; pads with spaces when narrower. Printable ASCII takes an
+// allocation-free fast path where one byte is one cell.
+func writeCellPadded(buf *bytes.Buffer, s string, width int) {
 	if width <= 0 {
 		// Compact: natural width, no column padding or truncation.
 		buf.WriteString(s)
 		return
 	}
-	n := utf8.RuneCountInString(s)
-	if n > width {
-		// Truncate: write width-1 runes then '…'.
-		count := 0
-		for _, r := range s {
-			if count == width-1 {
-				break
-			}
-			writeRune(buf, r)
-			count++
+	if isPrintableASCII(s) {
+		if len(s) > width {
+			buf.WriteString(s[:width-1])
+			buf.WriteString("…")
+			return
 		}
-		buf.WriteString("…")
+		buf.WriteString(s)
+		writeSpaces(buf, width-len(s))
 		return
 	}
-	buf.WriteString(s)
-	for i := n; i < width; i++ {
-		_ = buf.WriteByte(' ')
+	if total := uniseg.StringWidth(s); total <= width {
+		buf.WriteString(s)
+		writeSpaces(buf, width-total)
+		return
 	}
-}
-
-// writeRune writes a single rune into a bytes.Buffer.
-func writeRune(buf *bytes.Buffer, r rune) {
-	var tmp [utf8.UTFMax]byte
-	n := utf8.EncodeRune(tmp[:], r)
-	buf.Write(tmp[:n])
+	// Truncate by whole grapheme clusters until the next cluster would
+	// overflow the width-1 cells reserved for the ellipsis.
+	state := -1
+	rest := s
+	written := 0
+	for len(rest) > 0 {
+		cluster, next, w, nextState := uniseg.FirstGraphemeClusterInString(rest, state)
+		if written+w > width-1 {
+			break
+		}
+		buf.WriteString(cluster)
+		rest, state = next, nextState
+		written += w
+	}
+	buf.WriteString("…")
+	writeSpaces(buf, width-written-1)
 }
 
 // writeCountSuffix appends " (N)" after the message using SlotCount colour.

@@ -39,6 +39,14 @@ type Entry struct {
 	// Kept on Entry (not inlined into every Field) because the common case is false.
 	maybeSecure bool
 
+	// barrier is set only on private sentinel entries created by
+	// MultiWriter.WriteReliable (never on pooled or user entries). A worker
+	// that dequeues a barrier entry closes the channel instead of writing it,
+	// acknowledging that everything ahead of it on the same FIFO channel —
+	// including the entry the barrier was sent behind — has been processed.
+	// See the F1 finding: aggregate counters cannot provide this guarantee.
+	barrier chan struct{}
+
 	// statusKind carries the StatusKind for Logger.Status calls.
 	// statusKindNone (0xFF) means no status was set; this allows StatusOK (0) to be
 	// a valid value without ambiguity. One byte — measured to have zero hot-path cost
@@ -86,6 +94,7 @@ func (e *Entry) Reset() {
 	e.Message = ""
 	e.logger = nil
 
+	clear(e.Fields)
 	e.Fields = e.Fields[:0]
 
 	// Don't reset e.buffer — nil stays nil, allocated buffer keeps its capacity
@@ -98,6 +107,7 @@ func (e *Entry) Reset() {
 	e.written.Store(0)
 	e.forceTreeDisplay = false
 	e.maybeSecure = false
+	e.barrier = nil
 	e.statusKind = statusKindNone
 	e.refCount.Store(0)
 }
@@ -111,11 +121,6 @@ func (e *Entry) Retain() {
 // Release decrements the reference count and returns to pool when zero.
 // Uses atomic swap to ensure only one goroutine performs cleanup and pool return.
 func (e *Entry) Release() {
-	// Fast path: not written yet, skip release (atomic read)
-	if e.written.Load() == 0 {
-		return
-	}
-
 	// Decrement ref count
 	newCount := e.refCount.Add(-1)
 
@@ -146,9 +151,16 @@ func (e *Entry) Release() {
 		// CAS failed, retry
 	}
 
-	// We won the race - return to pool
-	// Note: Reset() handles e.Fields = e.Fields[:0] when entry is reused
-	// Don't nil out Fields here as other goroutines may still be reading
+	// We won the race. No asynchronous owner remains, so clear references before
+	// pooling and don't retain unusually large field arrays indefinitely.
+	clear(e.Fields)
+	if cap(e.Fields) > 64 {
+		e.Fields = nil
+	}
+	e.Message, e.Caller, e.Function, e.logger = "", "", "", nil
+	if e.buffer != nil && e.buffer.Cap() > 65536 {
+		e.buffer = nil
+	}
 	entryPool.Put(e)
 }
 

@@ -165,12 +165,22 @@ func resolveColourForWriter(w io.Writer) bool {
 // IsTerminalWriter reports whether w is a terminal, using term.IsTerminal when possible.
 // Used to auto-detect colour support.
 //
+// Writers that coordinate a destination they do not own — velocity/live's
+// Output is the built-in example — can forward the real destination's
+// capability by implementing interface{ IsTerminal() bool }. It is checked
+// before the *os.File case, so wrapping os.Stdout does not lose detection,
+// while a wrapped pipe still reports false: a wrapper never makes a pipe
+// into a terminal, and FORCE_COLOR can only affect styling, never this.
+//
 // Note: on Windows, terminal emulators that run shells as child processes (VS Code,
 // Git Bash, Windows Terminal) may proxy stdout through a pipe, causing this to return
 // false even when the output is visible in a colour-capable terminal. In that case,
 // set FORCE_COLOR=1 to override detection, or use resolveColourForWriter which
 // handles both env vars and fd detection.
 func IsTerminalWriter(w io.Writer) bool {
+	if detector, ok := w.(interface{ IsTerminal() bool }); ok {
+		return detector.IsTerminal()
+	}
 	if f, ok := w.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: uintptr fd fits in int on all supported platforms
 	}

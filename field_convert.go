@@ -27,6 +27,13 @@ func FieldValueToString(f Field) string {
 		return strconv.FormatInt(f.num, 10)
 	case FieldTypeInt64:
 		return strconv.FormatInt(f.num, 10)
+	case FieldTypeUint64:
+		// The string contract makes one allocation unavoidable here; formatUint
+		// keeps the digit rendering shared with the hot paths. A stack-buffer
+		// string header would dangle (see the FormatInt note above).
+		var tmp [20]byte
+		n := formatUint(tmp[:], uint64(f.num)) //nolint:gosec // G115: field storage is bit-pattern int64, reinterpretation is the contract
+		return string(tmp[:n])
 	case FieldTypeFloat64:
 		// Convert int64 bits back to float64
 		// #nosec G115 - bit pattern conversion, not value conversion

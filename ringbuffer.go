@@ -2,7 +2,6 @@ package velocity
 
 import (
 	"io"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,31 +13,41 @@ const (
 	DefaultFlushInterval  = 10 * time.Millisecond
 )
 
+// RingBufferEntry is one queued record. The queue owns the payload copy held in
+// data; producers never retain access to it after Write returns.
 type RingBufferEntry struct {
-	data      []byte
-	expected  atomic.Uint64 // which head value owns this slot next
-	size      atomic.Int32
-	committed atomic.Uint32
+	data []byte
 }
 
-// RingBuffer implements a lock-free ring buffer for batched writing.
-// Uses atomic operations to minimise contention and provide high throughput.
+// RingBuffer implements a bounded byte queue for batched writing.
+//
+// Producers copy their payload into queue-owned storage under a short mutex and
+// never touch slot storage after that; a single draining goroutine is the only
+// consumer. This replaces the previous speculative CAS/skip reclamation design,
+// in which a bounded spin budget could retire slot storage still owned by a
+// preempted writer (R10). Ownership is now transferred by the mutex, so no spin
+// budget can lose a writer's bytes.
 type RingBuffer struct {
 	writer io.Writer
+
+	// mu guards the queue fields and the closed flag. It is held only for
+	// pointer/count updates and the payload copy — never across I/O.
+	mu      sync.Mutex
+	entries []RingBufferEntry
+	mask    int // len(entries) - 1; len is a power of 2
+	head    int // index of the oldest queued record
+	count   int // queued record count
+	closed  bool
+
+	// stopCh is closed exactly once by the first Close; doneCh is closed by the
+	// drainer after it has drained the final queue. Close blocks on doneCh, so
+	// concurrent Close calls all wait for the same drain to finish.
 	stopCh chan struct{}
 	doneCh chan struct{}
-	// writeCh is a single-element signal channel: Write sends a non-blocking
-	// notification after committing an entry so the flusher can wake immediately
-	// rather than waiting for the next ticker tick. This avoids the previous
-	// busy-poll default branch that caused ~10k wakeups/sec when the ring was idle.
-	writeCh chan struct{}
-	entries []RingBufferEntry
-	wg      sync.WaitGroup
 
-	mask uint64 // Size - 1 for fast modulo using bitwise AND
-	head atomic.Uint64
-	tail atomic.Uint64
-
+	// wake nudges the drainer without blocking; the ticker covers a dropped
+	// nudge so an entry never waits longer than one flush interval.
+	wake          chan struct{}
 	batchSize     int
 	flushInterval time.Duration
 
@@ -86,288 +95,144 @@ func NewRingBuffer(writer io.Writer, size int) *RingBuffer {
 
 	rb := &RingBuffer{
 		entries:       make([]RingBufferEntry, size),
-		mask:          uint64(size) - 1, // #nosec G115 -- size is bounded by checks above
+		mask:          size - 1,
 		writer:        writer,
 		stopCh:        make(chan struct{}),
 		doneCh:        make(chan struct{}),
-		writeCh:       make(chan struct{}, 1),
+		wake:          make(chan struct{}, 1),
 		batchSize:     DefaultBatchSize,
 		flushInterval: DefaultFlushInterval,
 	}
 
-	for i := range rb.entries {
-		rb.entries[i].data = make([]byte, 0, 512)
-		rb.entries[i].expected.Store(uint64(i)) // #nosec G115 -- i is always non-negative
-	}
-
-	rb.wg.Add(1)
-	go rb.flusher()
+	go rb.drainer()
 
 	return rb
 }
 
-// afterSequenceSpinHook is called in tests between the sequence-spin exit and
-// the CAS claim to simulate preemption and expose double-claim races.
-// Stored as an atomic pointer so concurrent test goroutines can read and clear
-// it without a data race (package-level vars are shared across parallel tests).
-var afterSequenceSpinHook atomic.Pointer[func()]
-
-// Write adds a log entry to the ring buffer.
-// Returns false if the buffer is full and the message was dropped.
+// Write adds a record to the queue.
+// Returns false if the queue is full or closed and the record was dropped.
+// On success the record's bytes are copied into queue-owned storage before
+// Write returns, so the caller may reuse its slice immediately.
 func (rb *RingBuffer) Write(data []byte) bool {
-	for {
-		head := rb.head.Load()
-		nextHead := head + 1
-		tail := rb.tail.Load()
+	rb.mu.Lock()
+	if rb.closed || rb.count == len(rb.entries) {
+		rb.mu.Unlock()
+		rb.dropped.Add(1)
+		return false
+	}
 
-		if nextHead-tail > rb.mask {
-			rb.dropped.Add(1)
-			return false
-		}
+	// The copy happens under the lock while the caller's bytes are still
+	// valid; after this point the queue solely owns the payload.
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	rb.entries[(rb.head+rb.count)&rb.mask].data = buf
+	rb.count++
+	rb.mu.Unlock()
 
-		if rb.head.CompareAndSwap(head, nextHead) {
-			idx := head & rb.mask
-			entry := &rb.entries[idx]
+	select {
+	case rb.wake <- struct{}{}:
+	default:
+	}
 
-			// Wait until the slot's sequence counter matches our head value.
-			// This prevents two writers whose head values alias the same index
-			// from writing concurrently when the ring wraps.
-			spins := 0
-			for entry.expected.Load() != head {
-				runtime.Gosched()
-				spins++
-				if spins > 1000 {
-					rb.dropped.Add(1)
-					return false
-				}
-			}
+	return true
+}
 
-			// Allow tests to inject a pause between spin exit and the claim CAS,
-			// reproducing the preemption window the fix targets.
-			if h := afterSequenceSpinHook.Load(); h != nil {
-				(*h)()
-			}
+// drain pops up to batchSize records into buf and returns the updated buffer
+// and the number of records popped. Byte copies happen under the lock, after
+// which the queue releases its payload reference.
+func (rb *RingBuffer) drain(buf []byte) ([]byte, int) {
+	rb.mu.Lock()
+	n := min(rb.batchSize, rb.count)
+	for range n {
+		e := &rb.entries[rb.head]
+		buf = append(buf, e.data...)
+		e.data = nil
+		rb.head = (rb.head + 1) & rb.mask
+	}
+	rb.count -= n
+	rb.mu.Unlock()
+	return buf, n
+}
 
-			// Atomically claim the write section by advancing expected from head to
-			// head+1. This prevents the flusher's bounded-spin skip from racing with
-			// a preempted writer that exited the spin above but hasn't yet written
-			// entry.data. The flusher's skip only fires when expected == tail (meaning
-			// no writer ever claimed this slot for the current round).
-			if !entry.expected.CompareAndSwap(head, head+1) {
-				// Flusher already advanced expected past our round. Drop.
-				rb.dropped.Add(1)
-				return false
-			}
-
-			dataLen := len(data)
-
-			if cap(entry.data) >= dataLen {
-				entry.data = entry.data[:dataLen]
-				copy(entry.data, data)
-			} else {
-				entry.data = make([]byte, dataLen)
-				copy(entry.data, data)
-			}
-
-			entry.size.Store(int32(dataLen)) // #nosec G115 - dataLen is from len() which is always non-negative
-			entry.committed.Store(1)
-
-			// Wake the flusher without blocking; if the channel already has a
-			// pending signal the flusher will pick up this entry on its next drain.
-			select {
-			case rb.writeCh <- struct{}{}:
-			default:
-			}
-
-			return true
-		}
+// writeBatch hands one drained batch to the underlying writer. On error the
+// whole batch is counted dropped in DroppedCount — records are never re-queued
+// after a failed write, so a record is either delivered (possibly with a
+// partial trailing record if the sink wrote some bytes before failing) or
+// counted, never both. Zero-byte batches skip the sink entirely.
+func (rb *RingBuffer) writeBatch(buf []byte, records int) {
+	if len(buf) == 0 {
+		return
+	}
+	if _, err := rb.writer.Write(buf); err != nil {
+		// records is a batch count bounded by batchSize, always non-negative.
+		rb.dropped.Add(uint64(records)) // #nosec G115 -- bounded by batchSize
 	}
 }
 
-// waitForCommit spins until entry.committed == 1 or the spin limit is reached.
-// Returns true if committed was observed.
-func waitForCommit(entry *RingBufferEntry, limit int) bool {
-	for spins := 0; entry.committed.Load() != 1 && spins < limit; spins++ {
-		runtime.Gosched()
-	}
-	return entry.committed.Load() == 1
-}
-
-// skipSlot resets a stalled or orphaned slot and advances tail.
-// Only safe to call when the slot is unclaimed (expected == tail).
-func (rb *RingBuffer) skipSlot(entry *RingBufferEntry, tail uint64) {
-	rb.dropped.Add(1)
-	entry.size.Store(0)
-	entry.committed.Store(0)
-	entry.expected.Store(tail + uint64(len(rb.entries)))
-	rb.tail.Store(tail + 1)
-}
-
-func (rb *RingBuffer) flusher() {
-	defer rb.wg.Done()
+func (rb *RingBuffer) drainer() {
 	defer close(rb.doneCh)
 
 	ticker := time.NewTicker(rb.flushInterval)
 	defer ticker.Stop()
 
-	// Single reusable buffer avoids per-entry and per-flush allocations.
+	// Single reusable buffer avoids per-batch allocations.
 	batchBuf := make([]byte, 0, DefaultBatchSize*512)
 
 	for {
+		// Drain everything currently queued before blocking again, so the
+		// queue empties in bursts and a dropped wake nudge costs at most one
+		// flush interval of latency.
+		for {
+			var n int
+			batchBuf, n = rb.drain(batchBuf)
+			if n == 0 {
+				break
+			}
+			rb.writeBatch(batchBuf, n)
+			batchBuf = batchBuf[:0]
+		}
+
 		select {
 		case <-rb.stopCh:
-			// Flush data already collected into batchBuf before draining the ring.
-			if len(batchBuf) > 0 {
-				if _, err := rb.writer.Write(batchBuf); err != nil {
-					rb.dropped.Add(1)
+			// Close set closed=true (rejecting further writes) before closing
+			// stopCh, so the queue is now final: drain everything still queued
+			// after the signal was observed, then exit. A write that enqueued
+			// between the drain above and this point is caught here.
+			for {
+				var n int
+				batchBuf, n = rb.drain(batchBuf)
+				if n == 0 {
+					return
 				}
-			}
-			rb.flushAll()
-			return
-
-		case <-rb.writeCh:
-			// A writer committed at least one entry; drain what we can.
-			batchBuf = rb.collectBatch(batchBuf)
-			if len(batchBuf) > 0 {
-				if _, err := rb.writer.Write(batchBuf); err != nil {
-					rb.dropped.Add(1)
-				}
+				rb.writeBatch(batchBuf, n)
 				batchBuf = batchBuf[:0]
 			}
-
+		case <-rb.wake:
 		case <-ticker.C:
-			// Periodic flush: catches any entries that arrived between writeCh
-			// signals and were not yet drained (e.g. due to burst batching).
-			batchBuf = rb.collectBatch(batchBuf)
-			if len(batchBuf) > 0 {
-				if _, err := rb.writer.Write(batchBuf); err != nil {
-					rb.dropped.Add(1)
-				}
-				batchBuf = batchBuf[:0]
-			}
 		}
 	}
 }
 
-// collectBatch drains up to batchSize committed entries into buf and returns the
-// updated slice. Stops early if the ring is empty or a stalled writer is encountered.
-func (rb *RingBuffer) collectBatch(buf []byte) []byte {
-	for range rb.batchSize {
-		tail := rb.tail.Load()
-		head := rb.head.Load()
-
-		if tail >= head {
-			break
-		}
-
-		idx := tail & rb.mask
-		entry := &rb.entries[idx]
-
-		// Load committed FIRST as the acquire barrier to ensure all writes to
-		// entry.data are visible before we read them. This is critical for
-		// weakly-ordered architectures like ARM.
-		//
-		// Spin briefly if a writer claimed the slot but has not committed yet.
-		// Without a limit, a stalled writer would block the flusher forever.
-		if !waitForCommit(entry, 1000) {
-			// Check whether a writer atomically claimed this slot (expected == tail+1)
-			// or never entered the write section (expected == tail, writer gave up in
-			// its bounded spin before the claim CAS). Only skip unclaimed slots —
-			// advancing expected while a writer is still active races on entry.data.
-			if entry.expected.Load() == tail {
-				rb.skipSlot(entry, tail)
-			}
-			// else: writer claimed (expected == tail+1) but is slow to commit.
-			// Break and retry on the next tick rather than race the active writer.
-			break
-		}
-
-		size := entry.size.Load()
-		if size > 0 {
-			buf = append(buf, entry.data[:size]...)
-		}
-		entry.size.Store(0)
-		entry.committed.Store(0)
-		// Advance the sequence so the next round's writer can claim this slot.
-		entry.expected.Store(tail + uint64(len(rb.entries)))
-		rb.tail.Store(tail + 1)
-	}
-
-	return buf
-}
-
-func (rb *RingBuffer) flushAll() {
-	for {
-		tail := rb.tail.Load()
-		head := rb.head.Load()
-
-		if tail >= head {
-			return
-		}
-
-		idx := tail & rb.mask
-		entry := &rb.entries[idx]
-
-		// Load committed FIRST as the acquire barrier to ensure all writes to
-		// entry.data are visible before we read them. This is critical for
-		// weakly-ordered architectures like ARM.
-		//
-		// Spin briefly if a writer claimed the slot but has not committed yet.
-		// Without a limit, a stalled writer would block Close() forever.
-		if !waitForCommit(entry, 1000) {
-			rb.handleStalledSlotOnClose(entry, tail)
-			continue
-		}
-
-		size := entry.size.Load()
-		if size > 0 {
-			if _, err := rb.writer.Write(entry.data[:size]); err != nil {
-				rb.dropped.Add(1)
-			}
-		}
-		entry.size.Store(0)
-		entry.committed.Store(0)
-		// Advance the sequence so the next round's writer can claim this slot.
-		entry.expected.Store(tail + uint64(len(rb.entries)))
-		rb.tail.Store(tail + 1)
-	}
-}
-
-// handleStalledSlotOnClose handles a slot that has not committed within the initial
-// spin budget during Close(). Applies the same claimed-vs-unclaimed check as the
-// batch flusher to avoid racing an active writer, but spins longer because Close()
-// must drain as many entries as possible before returning.
-func (rb *RingBuffer) handleStalledSlotOnClose(entry *RingBufferEntry, tail uint64) {
-	if entry.expected.Load() == tail {
-		// Slot unclaimed: writer gave up before the claim CAS. Safe to skip.
-		rb.skipSlot(entry, tail)
-		return
-	}
-
-	// Writer claimed (expected == tail+1) but is slow. Spin longer to avoid
-	// losing data on shutdown — the write section is nanoseconds, so extra
-	// Gosched iterations cost very little and recover the entry.
-	if !waitForCommit(entry, 9000) {
-		// Still not committed after extended wait. Skip to avoid hanging Close().
-		rb.skipSlot(entry, tail)
-		return
-	}
-
-	size := entry.size.Load()
-	if size > 0 {
-		if _, err := rb.writer.Write(entry.data[:size]); err != nil {
-			rb.dropped.Add(1)
-		}
-	}
-	entry.size.Store(0)
-	entry.committed.Store(0)
-	entry.expected.Store(tail + uint64(len(rb.entries)))
-	rb.tail.Store(tail + 1)
-}
-
+// Close rejects further writes, drains every accepted record to the underlying
+// writer, and is safe to call concurrently from multiple goroutines: every
+// caller blocks until the same drain completes. The drain can block for as
+// long as the underlying writer blocks.
 func (rb *RingBuffer) Close() error {
-	close(rb.stopCh)
-	rb.wg.Wait()
+	rb.mu.Lock()
+	alreadyClosed := rb.closed
+	rb.closed = true
+	rb.mu.Unlock()
+
+	if !alreadyClosed {
+		close(rb.stopCh)
+	}
+
+	// Nudge so the drainer notices stopCh promptly instead of at the next tick.
+	select {
+	case rb.wake <- struct{}{}:
+	default:
+	}
+
 	<-rb.doneCh
 	return nil
 }

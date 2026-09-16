@@ -121,6 +121,9 @@ func (p *Pretty) Bullet(level int, text string) {
 	}
 	buf := GetBuffer(128)
 	defer PutBuffer(buf)
+	if level < 0 {
+		level = 0 // clamp: negative nesting must not reach strings.Repeat
+	}
 	indent := strings.Repeat("  ", level)
 	bullets := []string{"•", "◦", "▪", "▫"}
 	bullet := bullets[level%len(bullets)]
@@ -274,18 +277,21 @@ func (p *Pretty) printStyled(icon, message, ansiCode string) {
 // Useful for CLI splash screens. Returns a string ready to print or pass to Logger.Banner.
 func CreateBanner(title, version, url string, ascii []string) string {
 	var b strings.Builder
+	// All geometry in terminal cells (visibleLen) so CJK titles and unicode
+	// art keep the double borders aligned; pure-ASCII banners are byte-for-byte
+	// what the byte-length version produced.
 	maxLen := 0
 
 	for _, line := range ascii {
-		if len(line) > maxLen {
-			maxLen = len(line)
+		if n := visibleLen(line); n > maxLen {
+			maxLen = n
 		}
 	}
-	if len(title)+len(version)+3 > maxLen {
-		maxLen = len(title) + len(version) + 3
+	if n := visibleLen(title) + visibleLen(version) + 3; n > maxLen {
+		maxLen = n
 	}
-	if len(url) > maxLen {
-		maxLen = len(url)
+	if n := visibleLen(url); n > maxLen {
+		maxLen = n
 	}
 
 	boxWidth := maxLen + 4
@@ -297,7 +303,7 @@ func CreateBanner(title, version, url string, ascii []string) string {
 	for _, line := range ascii {
 		b.WriteString("║ ")
 		b.WriteString(line)
-		b.WriteString(strings.Repeat(" ", maxLen-len(line)))
+		b.WriteString(strings.Repeat(" ", maxLen-visibleLen(line)))
 		b.WriteString(" ║\n")
 	}
 
@@ -308,19 +314,19 @@ func CreateBanner(title, version, url string, ascii []string) string {
 	}
 
 	titleLine := fmt.Sprintf("%s v%s", title, version)
-	padding := (maxLen - len(titleLine)) / 2
+	padding := (maxLen - visibleLen(titleLine)) / 2
 	b.WriteString("║ ")
 	b.WriteString(strings.Repeat(" ", padding))
 	b.WriteString(titleLine)
-	b.WriteString(strings.Repeat(" ", maxLen-len(titleLine)-padding))
+	b.WriteString(strings.Repeat(" ", maxLen-visibleLen(titleLine)-padding))
 	b.WriteString(" ║\n")
 
 	if url != "" {
-		urlPadding := (maxLen - len(url)) / 2
+		urlPadding := (maxLen - visibleLen(url)) / 2
 		b.WriteString("║ ")
 		b.WriteString(strings.Repeat(" ", urlPadding))
 		b.WriteString(url)
-		b.WriteString(strings.Repeat(" ", maxLen-len(url)-urlPadding))
+		b.WriteString(strings.Repeat(" ", maxLen-visibleLen(url)-urlPadding))
 		b.WriteString(" ║\n")
 	}
 

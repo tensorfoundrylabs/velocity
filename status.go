@@ -151,16 +151,29 @@ func (s *StatusItem) Render(w io.Writer) error {
 // of Render when the caller already knows the TTY state of the destination (e.g.
 // Logger.Render passes the console writer's resolved isTTY flag so that FORCE_COLOR
 // and fd detection are respected even though the intermediate writer is a buffer).
+// Legacy compatibility: with no separate styling input, the TTY bit drives both
+// styling and trust. Callers that need them independent (Logger.Render) use
+// RenderStyled.
 func (s *StatusItem) RenderTTY(w io.Writer, isTTY bool) error {
+	return s.RenderStyled(w, isTTY, isTTY)
+}
+
+// RenderStyled writes the status item with styling and trust as independent
+// inputs: styled controls whether ANSI codes are emitted (the logger's
+// resolved colour permission), trusted controls whether Secure-field plaintext
+// is shown (the actual terminal classification). A trusted terminal with
+// styling disabled shows plaintext without ANSI — colour is presentation,
+// never visibility.
+func (s *StatusItem) RenderStyled(w io.Writer, styled, trusted bool) error {
 	if s == nil {
 		return nil
 	}
 
 	var buf bytes.Buffer
-	if isTTY {
-		renderStatusItemTTY(&buf, s.kind, s.msg, s.theme, s.fields)
+	if styled {
+		renderStatusItemStyled(&buf, s.kind, s.msg, s.theme, s.fields, trusted)
 	} else {
-		renderStatusItemPlain(&buf, s.kind, s.msg, s.fields)
+		renderStatusItemPlain(&buf, s.kind, s.msg, s.fields, trusted)
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
@@ -176,9 +189,10 @@ func (s *StatusItem) String() string {
 	return buf.String()
 }
 
-// renderStatusItemTTY builds the ANSI badge line into buf.
+// renderStatusItemStyled builds the ANSI badge line into buf. Trust controls
+// Secure-field visibility independently of the styling.
 // Format: '[' + <coloured-padded-token> + ']' + "   " + message + fields
-func renderStatusItemTTY(buf *bytes.Buffer, kind StatusKind, msg string, theme *Theme, fields []Field) {
+func renderStatusItemStyled(buf *bytes.Buffer, kind StatusKind, msg string, theme *Theme, fields []Field, trusted bool) {
 	token := kind.String()
 	slot := kind.Slot()
 
@@ -205,24 +219,27 @@ func renderStatusItemTTY(buf *bytes.Buffer, kind StatusKind, msg string, theme *
 		buf.WriteString(theme.ResetStr())
 	}
 
-	// Fields rendered inline with key/value colours from the theme.
-	// TTY console writers are trusted — Secure fields show plaintext on terminal.
-	writeStatusFields(buf, fields, theme, true, true)
+	// Fields rendered inline with key/value colours from the theme. Trust is
+	// passed independently: a trusted terminal shows plaintext even when the
+	// caller disabled styling, an untrusted sink never does.
+	writeStatusFields(buf, fields, theme, true, trusted)
 
 	buf.WriteByte('\n')
 }
 
 // renderStatusItemPlain builds the non-ANSI form. The badge becomes plain text
-// so the output is grep-friendly in pipes and log files.
-func renderStatusItemPlain(buf *bytes.Buffer, kind StatusKind, msg string, fields []Field) {
+// so the output is grep-friendly in pipes and log files. Trust still decides
+// Secure-field visibility: a trusted terminal with styling disabled shows
+// plaintext, an untrusted sink never does — colour is presentation, not
+// visibility.
+func renderStatusItemPlain(buf *bytes.Buffer, kind StatusKind, msg string, fields []Field, trusted bool) {
 	token := kind.String()
 	buf.WriteByte('[')
 	buf.WriteString(token)
 	buf.WriteByte(']')
 	buf.WriteString(statusBadgeSep)
 	buf.WriteString(msg)
-	// Non-TTY output is untrusted — Secure fields are redacted.
-	writeStatusFields(buf, fields, nil, false, false)
+	writeStatusFields(buf, fields, nil, false, trusted)
 	buf.WriteByte('\n')
 }
 
