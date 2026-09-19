@@ -16,6 +16,14 @@ type Entry struct {
 	// Buffer for formatted output - reused across entries
 	buffer *bytes.Buffer
 
+	// barrier is set only on private sentinel entries created by
+	// MultiWriter.WriteReliable (never on pooled or user entries). A worker
+	// that dequeues a barrier entry closes the channel instead of writing it,
+	// acknowledging that everything ahead of it on the same FIFO channel —
+	// including the entry the barrier was sent behind — has been processed.
+	// See the F1 finding: aggregate counters cannot provide this guarantee.
+	barrier chan struct{}
+
 	Message string
 
 	Caller   string
@@ -31,6 +39,11 @@ type Entry struct {
 	// Must be atomic for safe access across goroutines
 	written atomic.Uint32
 
+	// Reference count for pool safety
+	// Starts at 1 when acquired, decremented on Release
+	// Only returned to pool when count reaches 0
+	refCount atomic.Int32
+
 	// forceTreeDisplay indicates that fields should always be displayed in tree format
 	forceTreeDisplay bool
 
@@ -39,24 +52,11 @@ type Entry struct {
 	// Kept on Entry (not inlined into every Field) because the common case is false.
 	maybeSecure bool
 
-	// barrier is set only on private sentinel entries created by
-	// MultiWriter.WriteReliable (never on pooled or user entries). A worker
-	// that dequeues a barrier entry closes the channel instead of writing it,
-	// acknowledging that everything ahead of it on the same FIFO channel —
-	// including the entry the barrier was sent behind — has been processed.
-	// See the F1 finding: aggregate counters cannot provide this guarantee.
-	barrier chan struct{}
-
 	// statusKind carries the StatusKind for Logger.Status calls.
 	// statusKindNone (0xFF) means no status was set; this allows StatusOK (0) to be
 	// a valid value without ambiguity. One byte — measured to have zero hot-path cost
 	// on entries that never call Logger.Status.
 	statusKind StatusKind
-
-	// Reference count for pool safety
-	// Starts at 1 when acquired, decremented on Release
-	// Only returned to pool when count reaches 0
-	refCount atomic.Int32
 }
 
 // entryPool manages Entry object reuse to minimise allocations.
@@ -94,7 +94,7 @@ func (e *Entry) Reset() {
 	e.Message = ""
 	e.logger = nil
 
-	clear(e.Fields)
+	clear(e.Fields[:cap(e.Fields)])
 	e.Fields = e.Fields[:0]
 
 	// Don't reset e.buffer — nil stays nil, allocated buffer keeps its capacity
@@ -153,9 +153,11 @@ func (e *Entry) Release() {
 
 	// We won the race. No asynchronous owner remains, so clear references before
 	// pooling and don't retain unusually large field arrays indefinitely.
-	clear(e.Fields)
 	if cap(e.Fields) > 64 {
 		e.Fields = nil
+	} else {
+		clear(e.Fields[:cap(e.Fields)])
+		e.Fields = e.Fields[:0]
 	}
 	e.Message, e.Caller, e.Function, e.logger = "", "", "", nil
 	if e.buffer != nil && e.buffer.Cap() > 65536 {

@@ -174,7 +174,7 @@ func TestClose_DrainsNotifyFamily(t *testing.T) {
 			name := map[bool]string{true: "with_console", false: "no_console_writer"}[withConsole]
 			t.Run(name, func(t *testing.T) {
 				l, buf, _ := buildNotifyLogger(withConsole)
-				testAdmittedDrain(t, l, buf, func(l *Logger, entered, release chan struct{}, done chan struct{}) {
+				testAdmittedDrain(t, l, buf, func(l *Logger, entered, release, done chan struct{}) {
 					go func() {
 						defer close(done)
 						l.Notify("%s", &sgStringer{entered: entered, release: release})

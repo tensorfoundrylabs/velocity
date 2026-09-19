@@ -49,9 +49,11 @@ type FatalHandler func()
 
 // inlineIndicators holds config for the opt-in compact header indicators feature.
 // The zero value means everything is disabled, so existing behaviour is unchanged
-// unless the caller explicitly enables it via WithComponentField / WithComponentStyling etc.
-// removeFromTree defaults to true only when the feature is actively enabled — it is
-// meaningless when component == false, so we derive the effective value at render time.
+// unless the caller explicitly enables it via WithComponentField /
+// WithComponentStyling / WithCountFields / WithTimingFields /
+// WithStateTransitionPairs. Every indicator-enabling option also sets
+// removeFromTree: a value promoted to the header is not repeated in the tree.
+// There is deliberately no public opt-out; JSON writers are never affected.
 type inlineIndicators struct {
 	componentField string
 	countFields    []string // small N; linear scan is fine

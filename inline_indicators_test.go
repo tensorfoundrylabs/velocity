@@ -130,6 +130,10 @@ func TestInlineIndicators_OptionsWriteConfig(t *testing.T) {
 		if cfg.Indicators.countFields[0] != "total" || cfg.Indicators.countFields[1] != "n" {
 			t.Errorf("countFields = %v, want [total n]", cfg.Indicators.countFields)
 		}
+		// Promoting a count must default to removing it from the tree.
+		if !cfg.Indicators.removeFromTree {
+			t.Error("removeFromTree should default to true after WithCountFields")
+		}
 	})
 
 	t.Run("WithTimingFields", func(t *testing.T) {
@@ -138,6 +142,10 @@ func TestInlineIndicators_OptionsWriteConfig(t *testing.T) {
 		WithTimingFields("startup_ms", "stop_ms")(cfg)
 		if len(cfg.Indicators.timingFields) != 2 {
 			t.Errorf("timingFields len = %d, want 2", len(cfg.Indicators.timingFields))
+		}
+		// Promoting a timing value must default to removing it from the tree.
+		if !cfg.Indicators.removeFromTree {
+			t.Error("removeFromTree should default to true after WithTimingFields")
 		}
 	})
 
@@ -150,6 +158,10 @@ func TestInlineIndicators_OptionsWriteConfig(t *testing.T) {
 		}
 		if cfg.Indicators.statePairs[0] != [2]string{"old_state", "new_state"} {
 			t.Errorf("statePairs[0] = %v, want [old_state new_state]", cfg.Indicators.statePairs[0])
+		}
+		// Promoting a state transition must default to removing both sides from the tree.
+		if !cfg.Indicators.removeFromTree {
+			t.Error("removeFromTree should default to true after WithStateTransitionPairs")
 		}
 	})
 
@@ -1069,4 +1081,164 @@ func TestJSONParity(t *testing.T) {
 			t.Errorf("JSON parity: key %q missing from JSON output: %q", wantKey, jsonOut)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Option-level default removal: each indicator option must, on its own, hide
+// the promoted value from the tree (the documented default), keep unrelated
+// fields in the tree, and leave JSON output with every field intact.
+// ---------------------------------------------------------------------------
+
+// jsonKeysFromEntry renders e through a JSON writer and returns the output, so
+// each subtest can assert the JSON-parity guarantee independently of the console.
+func jsonKeysFromEntry(t *testing.T, e *Entry) string {
+	t.Helper()
+	var jsonBuf bytes.Buffer
+	jw := NewJSONWriter(&jsonBuf)
+	if err := jw.Write(e); err != nil {
+		t.Fatalf("JSONWriter.Write: %v", err)
+	}
+	return jsonBuf.String()
+}
+
+func TestIndicatorOptions_RemovePromotedFieldsByDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("WithCountFields standalone", func(t *testing.T) {
+		t.Parallel()
+		e := GetEntry()
+		defer e.Release()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("items processed")
+		e.SetTime(fixedTime)
+		e.WithFields(Int("count", 4), String("env", "production"))
+
+		cfg := defaultConfig()
+		WithCountFields("count")(cfg)
+		WithInlineGlyphs(false)(cfg)
+
+		got := renderEntry(t, cfg, e)
+		if !strings.Contains(got, "(4)") {
+			t.Errorf("want '(4)' count suffix, got %q", got)
+		}
+		if strings.Contains(got, "count:") {
+			t.Errorf("promoted count should not be duplicated in the tree, got %q", got)
+		}
+		if !strings.Contains(got, "env: production") {
+			t.Errorf("unrelated field should remain in the tree, got %q", got)
+		}
+		if jsonOut := jsonKeysFromEntry(t, e); !strings.Contains(jsonOut, `"count"`) {
+			t.Errorf("JSON parity: count key missing from JSON output: %q", jsonOut)
+		}
+	})
+
+	t.Run("WithTimingFields standalone", func(t *testing.T) {
+		t.Parallel()
+		e := GetEntry()
+		defer e.Release()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("service started")
+		e.SetTime(fixedTime)
+		e.WithFields(Int("startup_ms", 2000), String("env", "production"))
+
+		cfg := defaultConfig()
+		WithTimingFields("startup_ms")(cfg)
+		WithInlineGlyphs(false)(cfg)
+
+		got := renderEntry(t, cfg, e)
+		if !strings.Contains(got, "[2000ms]") && !strings.Contains(got, "[2.00s]") {
+			t.Errorf("want timing bracket, got %q", got)
+		}
+		if strings.Contains(got, "startup_ms:") {
+			t.Errorf("promoted timing field should not be duplicated in the tree, got %q", got)
+		}
+		if !strings.Contains(got, "env: production") {
+			t.Errorf("unrelated field should remain in the tree, got %q", got)
+		}
+		if jsonOut := jsonKeysFromEntry(t, e); !strings.Contains(jsonOut, `"startup_ms"`) {
+			t.Errorf("JSON parity: startup_ms key missing from JSON output: %q", jsonOut)
+		}
+	})
+
+	t.Run("WithStateTransitionPairs standalone", func(t *testing.T) {
+		t.Parallel()
+		e := GetEntry()
+		defer e.Release()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("state change")
+		e.SetTime(fixedTime)
+		e.WithFields(String("old_state", "open"), String("new_state", "closed"), String("env", "production"))
+
+		cfg := defaultConfig()
+		WithStateTransitionPairs([2]string{"old_state", "new_state"})(cfg)
+		WithInlineGlyphs(false)(cfg)
+
+		got := renderEntry(t, cfg, e)
+		if !strings.Contains(got, "open -> closed") {
+			t.Errorf("want 'open -> closed' state suffix, got %q", got)
+		}
+		if strings.Contains(got, "old_state:") || strings.Contains(got, "new_state:") {
+			t.Errorf("promoted state fields should not be duplicated in the tree, got %q", got)
+		}
+		if !strings.Contains(got, "env: production") {
+			t.Errorf("unrelated field should remain in the tree, got %q", got)
+		}
+		jsonOut := jsonKeysFromEntry(t, e)
+		if !strings.Contains(jsonOut, `"old_state"`) || !strings.Contains(jsonOut, `"new_state"`) {
+			t.Errorf("JSON parity: state keys missing from JSON output: %q", jsonOut)
+		}
+	})
+
+	t.Run("combined WithComponentField and all three", func(t *testing.T) {
+		t.Parallel()
+		e := GetEntry()
+		defer e.Release()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("worker transitioned")
+		e.SetTime(fixedTime)
+		e.WithFields(
+			String(fieldNameComponent, "Scout"),
+			Int("count", 7),
+			Int("startup_ms", 300),
+			String("old_state", "idle"),
+			String("new_state", "running"),
+			String("env", "production"),
+		)
+
+		cfg := defaultConfig()
+		WithComponentField(fieldNameComponent)(cfg)
+		WithCountFields("count")(cfg)
+		WithTimingFields("startup_ms")(cfg)
+		WithStateTransitionPairs([2]string{"old_state", "new_state"})(cfg)
+		WithInlineGlyphs(false)(cfg)
+
+		got := renderEntry(t, cfg, e)
+		if !strings.Contains(got, "Scout") {
+			t.Errorf("want 'Scout' component prefix, got %q", got)
+		}
+		if !strings.Contains(got, "(7)") {
+			t.Errorf("want '(7)' count suffix, got %q", got)
+		}
+		if !strings.Contains(got, "[300ms]") {
+			t.Errorf("want '[300ms]' timing bracket, got %q", got)
+		}
+		if !strings.Contains(got, "idle -> running") {
+			t.Errorf("want 'idle -> running' state suffix, got %q", got)
+		}
+		// Every promoted value appears exactly once: in the header, never the tree.
+		for _, treeDup := range []string{"component:", "count:", "startup_ms:", "old_state:", "new_state:"} {
+			if strings.Contains(got, treeDup) {
+				t.Errorf("promoted field %q should not be duplicated in the tree, got %q", treeDup, got)
+			}
+		}
+		if !strings.Contains(got, "env: production") {
+			t.Errorf("unrelated field should remain in the tree, got %q", got)
+		}
+		jsonOut := jsonKeysFromEntry(t, e)
+		for _, wantKey := range []string{fieldNameComponent, "count", "startup_ms", "old_state", "new_state", "env"} {
+			if !strings.Contains(jsonOut, `"`+wantKey+`"`) {
+				t.Errorf("JSON parity: key %q missing from JSON output: %q", wantKey, jsonOut)
+			}
+		}
+	})
 }

@@ -13,6 +13,7 @@ import (
 
 type ConsoleWriter struct {
 	out      io.Writer
+	closeErr error
 	theme    *Theme
 	template *Template
 	timeFunc func() time.Time
@@ -21,23 +22,10 @@ type ConsoleWriter struct {
 	// Logs are always stored in UTC, but this controls how they're displayed
 	displayTimezone *time.Location
 
+	closeDone chan struct{}
+
 	// Cached ANSI colour codes for fast access without repeated theme lookups
 	levelColours [6]string
-	mu           sync.Mutex
-	isTTY        bool
-	closed       bool
-
-	// colourAllowed is the stable presentation permission, resolved once at
-	// construction from NO_COLOR / FORCE_COLOR / terminal detection. Theme
-	// swaps re-derive useColours from this bit; they never re-resolve the
-	// environment and never infer permission from the previous theme's
-	// useColours value (a mono theme must not revoke FORCE_COLOR permission).
-	colourAllowed bool
-
-	// colourExplicitlyDisabled records WithColour(false) from the owning
-	// logger. It outranks colourAllowed forever: no theme swap can restore
-	// ANSI after an explicit disable.
-	colourExplicitlyDisabled bool
 
 	// inFlight tracks admitted write cycles: a caller that passed the closed
 	// check and registered here may still be formatting (a Stringer or
@@ -52,8 +40,21 @@ type ConsoleWriter struct {
 	// and returns the same recorded closeErr rather than racing a flag and
 	// reporting success while the first Close is still draining (WP2 contract).
 	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
+	mu        sync.Mutex
+	isTTY     bool
+	closed    bool
+
+	// colourAllowed is the stable presentation permission, resolved once at
+	// construction from NO_COLOR / FORCE_COLOR / terminal detection. Theme
+	// swaps re-derive useColours from this bit; they never re-resolve the
+	// environment and never infer permission from the previous theme's
+	// useColours value (a mono theme must not revoke FORCE_COLOR permission).
+	colourAllowed bool
+
+	// colourExplicitlyDisabled records WithColour(false) from the owning
+	// logger. It outranks colourAllowed forever: no theme swap can restore
+	// ANSI after an explicit disable.
+	colourExplicitlyDisabled bool
 }
 
 // consoleAdmission carries the state snapshot taken atomically with the
@@ -67,8 +68,8 @@ type consoleAdmission struct {
 	tmpl    *Template
 	theme   *Theme
 	tz      *time.Location
-	isTTY   bool
 	colours [6]string
+	isTTY   bool
 }
 
 // admit is the single admission point for every console write path: the
@@ -261,7 +262,11 @@ func buildStatusLine(buf *bytes.Buffer, e *Entry, theme *Theme, tz *time.Locatio
 		_ = buf.WriteByte('(')
 		buf.WriteString(e.Caller)
 		_ = buf.WriteByte(':')
-		buf.Write(strconv.AppendInt(nil, int64(e.Line), 10))
+		// Stack-buffer form, matching formatEntrySecure: strconv.AppendInt
+		// with a nil slice allocates once per status line.
+		var lineTmp [20]byte
+		n := formatInt(lineTmp[:], int64(e.Line))
+		buf.Write(lineTmp[:n])
 		_ = buf.WriteByte(')')
 	}
 
@@ -424,22 +429,6 @@ func (w *ConsoleWriter) formatEntrySecure(buf *BytesBuffer, e *Entry, theme *The
 	if len(e.Fields) > 0 {
 		w.formatFieldsSecure(buf, e.Fields, trusted, redactionMark)
 	}
-}
-
-func (w *ConsoleWriter) formatLevel(buf *BytesBuffer, level Level) {
-	_ = buf.WriteByte('[')
-
-	if w.isTTY && w.theme != nil && level >= 0 && int(level) < len(w.levelColours) {
-		buf.WriteString(w.levelColours[level])
-	}
-
-	buf.WriteString(level.ConciseLabel())
-
-	if w.isTTY && w.theme != nil && level >= 0 && int(level) < len(w.levelColours) {
-		buf.WriteString(Reset)
-	}
-
-	_ = buf.WriteByte(']')
 }
 
 func (w *ConsoleWriter) formatFieldsSecure(buf *BytesBuffer, fields []Field, trusted bool, redactionMark string) {

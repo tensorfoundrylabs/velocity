@@ -22,7 +22,7 @@ import (
 	"golang.org/x/term"
 )
 
-func ptyIoctl(fd uintptr, req uintptr, arg uintptr) error {
+func ptyIoctl(fd, req, arg uintptr) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, req, arg)
 	if errno != 0 {
 		return errno

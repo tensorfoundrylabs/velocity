@@ -96,6 +96,12 @@ var fieldSnapshotPtrPool = sync.Pool{
 // is far cheaper than the CAS machinery in ringbuffer.go, which is optimised
 // for byte-stream throughput, not snapshot semantics.
 type RingBufferWriter struct {
+	// closedCh is closed exactly once by Close. Subscription cleanup goroutines
+	// select on it so a context.Background subscriber cannot strand a goroutine
+	// after the ring is closed — cleanup must finish on EITHER context
+	// cancellation or ring closure.
+	closedCh chan struct{}
+
 	redactionMark string
 
 	// ring is the fixed-size circular snapshot store.
@@ -114,19 +120,13 @@ type RingBufferWriter struct {
 
 	mu sync.Mutex
 
-	// closed prevents writes after Close().
-	closed bool
-
-	// closedCh is closed exactly once by Close. Subscription cleanup goroutines
-	// select on it so a context.Background subscriber cannot strand a goroutine
-	// after the ring is closed — cleanup must finish on EITHER context
-	// cancellation or ring closure.
-	closedCh chan struct{}
-
 	// isTrusted mirrors the WriterTrusted() opt-in so IsTrusted() works
 	// without the caller needing to inspect writerOptions separately.
 	// Phase 4 reads this to decide whether to redact Secure fields.
 	isTrusted atomic.Bool
+
+	// closed prevents writes after Close().
+	closed bool
 }
 
 // NewRingBufferWriter creates a fixed-capacity snapshot ring.
@@ -208,6 +208,12 @@ func (r *RingBufferWriter) WriteSecure(e *Entry, trusted bool, redactionMark str
 	// Fan-out to subscribers before releasing the lock so they see a
 	// consistent snapshot. Non-blocking send: slow consumers drop, not block.
 	for _, sub := range r.subscribers {
+		// Under r.mu another producer cannot fill a non-full queue, and consumers
+		// only remove. A full queue is therefore dropped at this instant.
+		if len(sub.ch) == cap(sub.ch) {
+			r.drops.Add(1)
+			continue
+		}
 		// A channel handoff transfers ownership. The ring retains snap.Fields and
 		// will reuse it on overflow, therefore each subscriber needs its own copy.
 		delivered := cloneEntrySnapshot(snap)

@@ -80,7 +80,8 @@ func BenchmarkInfo_FiveFields_Inline(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		l.Info("request completed",
+		l.Info(
+			"request completed",
 			String("service", "api-gateway"),
 			Int("port", 8080),
 			Float64("latency_ms", 1.23),
@@ -115,6 +116,46 @@ func BenchmarkInfo_Disabled(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		l.Debug("this is suppressed")
+	}
+	b.StopTimer()
+	reportSink(b, console, structured)
+}
+
+// BenchmarkDebug_DisabledPrebuiltField excludes field construction from the
+// disabled call, which is the shape used for invariant fields.
+func BenchmarkDebug_DisabledPrebuiltField(b *testing.B) {
+	l, console, structured := newSinkLogger()
+	l.SetLevel(LevelInfo)
+	field := String("service", "api-gateway")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Debug("this is suppressed", field)
+	}
+	b.StopTimer()
+	reportSink(b, console, structured)
+}
+
+// BenchmarkDebug_DisabledInlineString includes String construction at the call site.
+func BenchmarkDebug_DisabledInlineString(b *testing.B) {
+	l, console, structured := newSinkLogger()
+	l.SetLevel(LevelInfo)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Debug("this is suppressed", String("service", "api-gateway"))
+	}
+	b.StopTimer()
+	reportSink(b, console, structured)
+}
+
+func BenchmarkDebug_DisabledScalar(b *testing.B) {
+	l, console, structured := newSinkLogger()
+	l.SetLevel(LevelInfo)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Debug("this is suppressed", Int("port", 8080))
 	}
 	b.StopTimer()
 	reportSink(b, console, structured)
@@ -238,6 +279,38 @@ func BenchmarkJSONWriter_FiveFields(b *testing.B) {
 	reportSink(b, sink)
 }
 
+// unicodeFields mirrors fiveFields with realistic non-ASCII content so the JSON
+// encoder's multibyte path stays measured alongside the ASCII control benchmark.
+func unicodeFields() []Field {
+	return []Field{
+		String("service", "api-gateway"),
+		String("payload", "ユーザー λογ audit ✓ 🎉 — done"),
+		Int("port", 8080),
+		Float64("latency_ms", 1.23),
+		Bool("success", true),
+	}
+}
+
+func BenchmarkJSONWriter_FiveFields_Unicode(b *testing.B) {
+	sink := &benchSink{}
+	w := NewJSONWriter(sink)
+	fields := unicodeFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		e := GetEntry()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("request completed ✓ 日本語")
+		e.SetTime(time.Now())
+		e.WithFields(fields...)
+		_ = w.Write(e)
+		e.Write()
+		e.Release()
+	}
+	b.StopTimer()
+	reportSink(b, sink)
+}
+
 func BenchmarkConsoleWriter_FiveFields(b *testing.B) {
 	// Template path (default): exercises theme + template formatting.
 	sink := &benchSink{}
@@ -276,6 +349,34 @@ func BenchmarkConsoleWriter_NoTemplate(b *testing.B) {
 		e.SetTime(time.Now())
 		e.WithFields(fields...)
 		_ = w.Write(e)
+		e.Write()
+		e.Release()
+	}
+	b.StopTimer()
+	reportSink(b, sink)
+}
+
+// BenchmarkConsoleWriter_WriteStatus_WithCaller measures the direct status
+// path (WriteStatus/WriteStatusSecure with caller information), which only
+// runs on TTY consoles via buildStatusLine. The caller line number formats
+// through the stack-buffer helper, so this path must stay allocation-free.
+func BenchmarkConsoleWriter_WriteStatus_WithCaller(b *testing.B) {
+	sink := &benchSink{}
+	w := NewConsoleWriter(sink, ThemeNightOwl)
+	// buildStatusLine runs only when the writer is a TTY; force it (the sink
+	// is not a terminal) so the benchmark covers the status-shaped path.
+	w.isTTY = true
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		e := GetEntry()
+		e.SetLevel(LevelInfo)
+		e.SetMessage("deployed")
+		e.SetTime(time.Now())
+		e.statusKind = StatusOK
+		e.Caller = "deploy/run.go"
+		e.Line = 42
+		_ = w.WriteStatus(e)
 		e.Write()
 		e.Release()
 	}
@@ -698,4 +799,31 @@ func BenchmarkIndicators_Disabled(b *testing.B) {
 	}
 	b.StopTimer()
 	reportSink(b, console, structured)
+}
+
+// BenchmarkIndicators_Timing_IntMs isolates the timing-render path: an integer
+// millisecond field promoted into the timing bracket and formatted by
+// writeSmartDuration. Integer input now formats in ms units directly, so this
+// path must stay allocation-free.
+func BenchmarkIndicators_Timing_IntMs(b *testing.B) {
+	console := &benchSink{}
+	cfg := defaultConfig()
+	cfg.ConsoleOutput = console
+	cfg.StructuredOutput = nil
+	cfg.ConsoleLevel = LevelDebug
+	cfg.Indicators = inlineIndicators{
+		timingFields:   []string{"startup_ms"},
+		removeFromTree: true,
+		showGlyphs:     false,
+		glyphsExplicit: true,
+	}
+	l := newFromConfig(cfg)
+	fields := []Field{Int("startup_ms", 2000)}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Info("started", fields...)
+	}
+	b.StopTimer()
+	reportSink(b, console)
 }

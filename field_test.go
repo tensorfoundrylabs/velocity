@@ -1,9 +1,9 @@
 package velocity
 
 import (
+	"bytes"
 	"fmt"
 	"math"
-	"strings"
 	"testing"
 )
 
@@ -34,7 +34,7 @@ func TestError_TypedNil(t *testing.T) {
 		t.Errorf("expected FieldTypeString for typed nil, got %v", f.Type)
 	}
 
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormatted(&buf)
 
 	if got := buf.String(); got != "<nil>" {
@@ -51,7 +51,7 @@ func TestStringer_TypedNil(t *testing.T) {
 		t.Errorf("expected FieldTypeString for typed nil, got %v", f.Type)
 	}
 
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormatted(&buf)
 
 	if got := buf.String(); got != "<nil>" {

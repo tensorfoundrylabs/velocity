@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,13 +10,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type JSONWriter struct {
-	out     io.Writer
-	bufPool *BufferPool
-	mu      sync.Mutex
-	closed  bool
+	out       io.Writer
+	closeErr  error
+	jsonPool  sync.Pool
+	closeDone chan struct{}
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
 	// still formatting (a Stringer, Error or Any marshal can block or reenter)
@@ -27,8 +29,8 @@ type JSONWriter struct {
 	// and ConsoleWriter: concurrent Closes wait for the same completed drain
 	// and return the same recorded closeErr (WP2 contract).
 	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
+	mu        sync.Mutex
+	closed    bool
 }
 
 // admit is the admission critical section: the closed check and the in-flight
@@ -45,10 +47,32 @@ func (w *JSONWriter) admit() bool {
 }
 
 func NewJSONWriter(out io.Writer) *JSONWriter {
-	return &JSONWriter{
-		out:     out,
-		bufPool: NewBufferPool(),
+	w := &JSONWriter{
+		out: out,
 	}
+	w.jsonPool.New = func() any { return bytes.NewBuffer(make([]byte, 0, bufMediumSize)) }
+	return w
+}
+
+// getJSONBuffer retains each JSON buffer up to 32 KiB. This keeps common
+// structured records reusable without retaining exceptional input.
+func (w *JSONWriter) getJSONBuffer() *bytes.Buffer {
+	buf, ok := w.jsonPool.Get().(*bytes.Buffer)
+	if !ok || buf == nil {
+		buf = bytes.NewBuffer(make([]byte, 0, bufMediumSize))
+	}
+	buf.Reset()
+	return buf
+}
+
+func (w *JSONWriter) putJSONBuffer(buf *bytes.Buffer) {
+	if buf != nil && buf.Cap() <= bufXLargeSize {
+		w.jsonPool.Put(buf)
+	}
+}
+
+func appendFloat(buf *bytes.Buffer, f float64) {
+	buf.Write(strconv.AppendFloat(buf.AvailableBuffer(), f, 'g', -1, 64))
 }
 
 func (w *JSONWriter) Write(e *Entry) error {
@@ -71,7 +95,7 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONStatusSecure(buf, e, trusted, redactionMark)
@@ -84,7 +108,7 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}
@@ -157,7 +181,7 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
@@ -167,7 +191,7 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}
@@ -261,7 +285,7 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	// Format entirely outside the lock; entry is immutable at this point.
@@ -272,7 +296,7 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}
@@ -340,8 +364,41 @@ const jsonHexDigits = "0123456789abcdef"
 func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 	_ = buf.WriteByte('"')
 
-	for i := range len(s) {
+	for i := 0; i < len(s); {
 		c := s[i]
+
+		// Multibyte sequences are decoded so malformed UTF-8 never reaches the
+		// stream raw: each undecodable byte becomes one \ufffd escape, matching
+		// encoding/json, which keeps the output valid UTF-8 for strict
+		// consumers. Valid runes are written through as their original bytes
+		// (U+2028 stays unescaped; it is legal raw in a JSON string).
+		if c >= utf8.RuneSelf {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				buf.WriteString(`\ufffd`)
+				i++
+			} else {
+				buf.WriteString(s[i : i+size])
+				i += size
+			}
+			continue
+		}
+
+		// Plain printable ASCII is copied as one run rather than byte-by-byte;
+		// the scan costs less than the per-byte WriteByte calls it replaces.
+		if c >= 0x20 && c != '"' && c != '\\' {
+			j := i + 1
+			for j < len(s) {
+				d := s[j]
+				if d < 0x20 || d >= utf8.RuneSelf || d == '"' || d == '\\' {
+					break
+				}
+				j++
+			}
+			buf.WriteString(s[i:j])
+			i = j
+			continue
+		}
 
 		switch c {
 		case '"':
@@ -359,21 +416,20 @@ func (*JSONWriter) writeJSONString(buf *BytesBuffer, s string) {
 		case '\f':
 			buf.WriteString(`\f`)
 		default:
-			if c < 32 {
-				// Inline the \uXXXX escape using a stack buffer to avoid the fmt.Fprintf
-				// allocation and the intermediate string that fmt.Sprintf would produce.
-				var seq [6]byte
-				seq[0] = '\\'
-				seq[1] = 'u'
-				seq[2] = '0'
-				seq[3] = '0'
-				seq[4] = jsonHexDigits[c>>4]
-				seq[5] = jsonHexDigits[c&0x0f]
-				_, _ = buf.Write(seq[:])
-			} else {
-				_ = buf.WriteByte(c)
-			}
+			// Only control bytes reach the default: quote and backslash are
+			// cases above, and printable ASCII took the run path.
+			// Inline the \uXXXX escape using a stack buffer to avoid the fmt.Fprintf
+			// allocation and the intermediate string that fmt.Sprintf would produce.
+			var seq [6]byte
+			seq[0] = '\\'
+			seq[1] = 'u'
+			seq[2] = '0'
+			seq[3] = '0'
+			seq[4] = jsonHexDigits[c>>4]
+			seq[5] = jsonHexDigits[c&0x0f]
+			_, _ = buf.Write(seq[:])
 		}
+		i++
 	}
 
 	_ = buf.WriteByte('"')
@@ -439,7 +495,7 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		case math.IsInf(floatValue, -1):
 			buf.WriteString(`"-Infinity"`)
 		default:
-			buf.WriteString(strconv.FormatFloat(floatValue, 'g', -1, 64))
+			appendFloat(buf.buf, floatValue)
 		}
 
 	case FieldTypeBool:
@@ -578,7 +634,7 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
@@ -588,7 +644,7 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}

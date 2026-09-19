@@ -5,13 +5,13 @@ Standalone Go logging library. Zero-allocation hot path, rich terminal output, h
 ## Commands
 
 ```bash
-make ready              # Pre-commit gate: tidy, fmt, align, lint, vet, test-race
+make ready              # Pre-commit gate (read-only): pinned tools, tidy, fmt, align, lint, vet, test-race
 make perf-gate          # Alloc-regression gate vs docs/bench-baseline.txt (slow; pre-tag)
 make test               # Run all tests
 make test-race          # Tests with race detector
 make test-cover         # Tests with coverage report
-make lint               # golangci-lint (strict, all linters)
-make fmt                # goimports + gofumpt
+make lint               # golangci-lint (strict, all linters, read-only; lint-fix mutates)
+make fmt                # goimports + gofumpt -extra (rewrites files; fmt-check is the gate)
 make bench              # Quick bench (count=3) with allocs
 make bench-baseline     # Capture count=10 run to docs/bench-baseline.txt
 make install-tools      # golangci-lint, betteralign, goimports, gofumpt, benchstat
