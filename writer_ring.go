@@ -208,6 +208,12 @@ func (r *RingBufferWriter) WriteSecure(e *Entry, trusted bool, redactionMark str
 	// Fan-out to subscribers before releasing the lock so they see a
 	// consistent snapshot. Non-blocking send: slow consumers drop, not block.
 	for _, sub := range r.subscribers {
+		// Under r.mu another producer cannot fill a non-full queue, and consumers
+		// only remove. A full queue is therefore dropped at this instant.
+		if len(sub.ch) == cap(sub.ch) {
+			r.drops.Add(1)
+			continue
+		}
 		// A channel handoff transfers ownership. The ring retains snap.Fields and
 		// will reuse it on overflow, therefore each subscriber needs its own copy.
 		delivered := cloneEntrySnapshot(snap)

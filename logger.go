@@ -886,15 +886,20 @@ func (l *Logger) LogEntry(e *Entry) {
 		return
 	}
 	// Prepend base fields from With() so child loggers propagate their fields.
-	// Copy existing into a separate slice before zeroing e.Fields; if we simply
-	// re-slice to [:0] and append baseFields, the backing array is shared and
-	// the first len(baseFields) user fields get silently overwritten.
+	// Shift user fields right before filling the prefix to preserve aliased input.
 	if len(l.baseFields) > 0 {
-		saved := make([]Field, len(e.Fields))
-		copy(saved, e.Fields)
-		e.Fields = e.Fields[:0]
-		e.WithFields(l.baseFields...)
-		e.WithFields(saved...)
+		baseLen := len(l.baseFields)
+		fieldLen := len(e.Fields)
+		if cap(e.Fields) >= baseLen+fieldLen {
+			e.Fields = e.Fields[:baseLen+fieldLen]
+			copy(e.Fields[baseLen:], e.Fields[:fieldLen])
+			copy(e.Fields[:baseLen], l.baseFields)
+		} else {
+			fields := make([]Field, baseLen+fieldLen)
+			copy(fields, l.baseFields)
+			copy(fields[baseLen:], e.Fields)
+			e.Fields = fields
+		}
 	}
 	// Apply the same <secure> tag scan as logInternal so entries routed through
 	// external adapters (e.g. slogbridge) benefit from message-level redaction.
@@ -1154,11 +1159,8 @@ func (l *Logger) Detailed() *Logger {
 	}
 	child.level.Store(l.level.Load())
 	// scanSecure and themes live on the shared writerSet/themeState — no copy needed.
-	if len(l.baseFields) > 0 {
-		newBase := make([]Field, len(l.baseFields))
-		copy(newBase, l.baseFields)
-		child.baseFields = newBase
-	}
+	// baseFields are immutable. With always constructs a fresh combined slice.
+	child.baseFields = l.baseFields
 	return child
 }
 

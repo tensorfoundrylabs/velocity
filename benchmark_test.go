@@ -121,6 +121,46 @@ func BenchmarkInfo_Disabled(b *testing.B) {
 	reportSink(b, console, structured)
 }
 
+// BenchmarkDebug_DisabledPrebuiltField excludes field construction from the
+// disabled call, which is the shape used for invariant fields.
+func BenchmarkDebug_DisabledPrebuiltField(b *testing.B) {
+	l, console, structured := newSinkLogger()
+	l.SetLevel(LevelInfo)
+	field := String("service", "api-gateway")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Debug("this is suppressed", field)
+	}
+	b.StopTimer()
+	reportSink(b, console, structured)
+}
+
+// BenchmarkDebug_DisabledInlineString includes String construction at the call site.
+func BenchmarkDebug_DisabledInlineString(b *testing.B) {
+	l, console, structured := newSinkLogger()
+	l.SetLevel(LevelInfo)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Debug("this is suppressed", String("service", "api-gateway"))
+	}
+	b.StopTimer()
+	reportSink(b, console, structured)
+}
+
+func BenchmarkDebug_DisabledScalar(b *testing.B) {
+	l, console, structured := newSinkLogger()
+	l.SetLevel(LevelInfo)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		l.Debug("this is suppressed", Int("port", 8080))
+	}
+	b.StopTimer()
+	reportSink(b, console, structured)
+}
+
 func BenchmarkInfo_WithSampler(b *testing.B) {
 	l, console, structured := newSinkLogger()
 	l.sampler = NewCountSampler(1000, 100)

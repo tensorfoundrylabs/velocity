@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"net/url"
@@ -353,12 +354,7 @@ func (f Field) Value() any {
 	return nil
 }
 
-func (f Field) writeFormatted(buf interface {
-	WriteString(string) (int, error)
-	WriteRune(rune) (int, error)
-	Write([]byte) (int, error)
-},
-) {
+func (f Field) writeFormatted(buf *bytes.Buffer) {
 	switch f.Type {
 	case FieldTypeString:
 		val := *(*string)(f.value)
@@ -374,7 +370,7 @@ func (f Field) writeFormatted(buf interface {
 		_, _ = buf.Write(tmp[:n])
 	case FieldTypeFloat64:
 		val := math.Float64frombits(uint64(f.num)) //nolint:gosec // G115: bit-pattern reinterpretation, not value conversion
-		_, _ = buf.WriteString(strconv.FormatFloat(val, 'g', -1, 64))
+		buf.Write(strconv.AppendFloat(buf.AvailableBuffer(), val, 'g', -1, 64))
 	case FieldTypeBool:
 		if f.num != 0 {
 			_, _ = buf.WriteString("true")
@@ -411,7 +407,7 @@ func (f Field) writeFormatted(buf interface {
 		}
 	case FieldTypeBytes:
 		val := *(*[]byte)(f.value)
-		_, _ = buf.WriteString(string(val))
+		_, _ = buf.Write(val)
 	case FieldTypeAny:
 		val := *(*any)(f.value)
 		_, _ = fmt.Fprintf(buf, "%v", val)
@@ -458,12 +454,7 @@ func (f Field) writeFormatted(buf interface {
 
 // writeFormattedTrusted writes the field to buf, using plaintext for Secure/SecureURL.
 // Call this only from writers that have been explicitly opted into trust.
-func (f Field) writeFormattedTrusted(buf interface {
-	WriteString(string) (int, error)
-	WriteRune(rune) (int, error)
-	Write([]byte) (int, error)
-},
-) {
+func (f Field) writeFormattedTrusted(buf *bytes.Buffer) {
 	switch f.Type {
 	case FieldTypeSecure, FieldTypeSecureURL:
 		if f.value != nil {
@@ -479,12 +470,7 @@ func (f Field) writeFormattedTrusted(buf interface {
 
 // writeFormattedWithMark writes the field to buf, replacing Secure/SecureURL values
 // with the given redactionMark. Use on untrusted writer paths.
-func (f Field) writeFormattedWithMark(buf interface {
-	WriteString(string) (int, error)
-	WriteRune(rune) (int, error)
-	Write([]byte) (int, error)
-}, redactionMark string,
-) {
+func (f Field) writeFormattedWithMark(buf *bytes.Buffer, redactionMark string) {
 	switch f.Type {
 	case FieldTypeSecure, FieldTypeSecureURL:
 		if f.value != nil {

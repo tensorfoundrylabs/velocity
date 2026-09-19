@@ -94,7 +94,7 @@ func (e *Entry) Reset() {
 	e.Message = ""
 	e.logger = nil
 
-	clear(e.Fields)
+	clear(e.Fields[:cap(e.Fields)])
 	e.Fields = e.Fields[:0]
 
 	// Don't reset e.buffer — nil stays nil, allocated buffer keeps its capacity
@@ -153,9 +153,11 @@ func (e *Entry) Release() {
 
 	// We won the race. No asynchronous owner remains, so clear references before
 	// pooling and don't retain unusually large field arrays indefinitely.
-	clear(e.Fields)
 	if cap(e.Fields) > 64 {
 		e.Fields = nil
+	} else {
+		clear(e.Fields[:cap(e.Fields)])
+		e.Fields = e.Fields[:0]
 	}
 	e.Message, e.Caller, e.Function, e.logger = "", "", "", nil
 	if e.buffer != nil && e.buffer.Cap() > 65536 {

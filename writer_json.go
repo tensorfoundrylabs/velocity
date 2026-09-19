@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +16,7 @@ import (
 type JSONWriter struct {
 	out       io.Writer
 	closeErr  error
-	bufPool   *BufferPool
+	jsonPool  sync.Pool
 	closeDone chan struct{}
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
@@ -46,10 +47,32 @@ func (w *JSONWriter) admit() bool {
 }
 
 func NewJSONWriter(out io.Writer) *JSONWriter {
-	return &JSONWriter{
-		out:     out,
-		bufPool: NewBufferPool(),
+	w := &JSONWriter{
+		out: out,
 	}
+	w.jsonPool.New = func() any { return bytes.NewBuffer(make([]byte, 0, bufMediumSize)) }
+	return w
+}
+
+// getJSONBuffer retains each JSON buffer up to 32 KiB. This keeps common
+// structured records reusable without retaining exceptional input.
+func (w *JSONWriter) getJSONBuffer() *bytes.Buffer {
+	buf, ok := w.jsonPool.Get().(*bytes.Buffer)
+	if !ok || buf == nil {
+		buf = bytes.NewBuffer(make([]byte, 0, bufMediumSize))
+	}
+	buf.Reset()
+	return buf
+}
+
+func (w *JSONWriter) putJSONBuffer(buf *bytes.Buffer) {
+	if buf != nil && buf.Cap() <= bufXLargeSize {
+		w.jsonPool.Put(buf)
+	}
+}
+
+func appendFloat(buf *bytes.Buffer, f float64) {
+	buf.Write(strconv.AppendFloat(buf.AvailableBuffer(), f, 'g', -1, 64))
 }
 
 func (w *JSONWriter) Write(e *Entry) error {
@@ -72,7 +95,7 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONStatusSecure(buf, e, trusted, redactionMark)
@@ -85,7 +108,7 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}
@@ -158,7 +181,7 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
@@ -168,7 +191,7 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}
@@ -262,7 +285,7 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	// Format entirely outside the lock; entry is immutable at this point.
@@ -273,7 +296,7 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}
@@ -472,7 +495,7 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		case math.IsInf(floatValue, -1):
 			buf.WriteString(`"-Infinity"`)
 		default:
-			buf.WriteString(strconv.FormatFloat(floatValue, 'g', -1, 64))
+			appendFloat(buf.buf, floatValue)
 		}
 
 	case FieldTypeBool:
@@ -611,7 +634,7 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	}
 	defer w.inFlight.Done()
 
-	rawBuf := w.bufPool.Get(HintStructuredLog)
+	rawBuf := w.getJSONBuffer()
 	buf := NewBytesBuffer(rawBuf)
 
 	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
@@ -621,7 +644,7 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	_, err := w.out.Write(buf.Bytes())
 	w.mu.Unlock()
 
-	w.bufPool.Put(rawBuf)
+	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
 	}

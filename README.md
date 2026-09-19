@@ -74,7 +74,7 @@ medians and the harness are kept in the development tree under
 `docs/benchmarks/hardening-finish/` (the `docs/` directory is not published
 with the repository).
 
-### Logging (console and JSON writers both active, both at Debug)
+### Logging baseline (console and JSON writers both active, both at Debug)
 
 | Operation | ns/op | B/op | allocs/op |
 |-----------|------:|-----:|----------:|
@@ -90,6 +90,10 @@ with the repository).
 | Async MultiWriter drop path | 101.1 | 0 | 0 |
 | Disabled level | 2.1 | 0 | 0 |
 
+Disabled logging excludes writer work. A pre-built `String` field and scalar
+fields can remain allocation-free; constructing `String("key", "value")` in
+the call costs 16 B and one allocation before the level check runs.
+
 The async rows are enqueue attempts, not guaranteed delivery: the timed loop's
 non-blocking send drops when the worker channel is full, and the drain runs
 after the timer stops with every drop counted. Against this benchmark's single
@@ -99,7 +103,7 @@ treat it as a workload property, not a library constant. End-to-end cost per
 delivered record — timed loop plus Close drain divided by records actually
 written — is ~440 ns.
 
-Provenance: all rows except "Disabled level" were re-measured on 2026-09-16,
+Provenance: all rows except "Disabled level" were measured on 2026-09-16,
 after two reliability reworks changed the serialisation paths — delivery
 acknowledgement became per-item, and every console/JSON write now registers
 as in-flight so Close drains admitted calls. That registration initially

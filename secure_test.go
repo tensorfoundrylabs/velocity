@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func TestSecureField_WriteFormatted_Untrusted(t *testing.T) {
 	t.Parallel()
 
 	f := Secure("token", "supersecret")
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormatted(&buf)
 	if got := buf.String(); got != redactedMark {
 		t.Errorf("untrusted default: want %q, got %q", redactedMark, got)
@@ -39,7 +40,7 @@ func TestSecureField_WriteFormattedTrusted(t *testing.T) {
 	t.Parallel()
 
 	f := Secure("token", "supersecret")
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormattedTrusted(&buf)
 	if got := buf.String(); got != "supersecret" {
 		t.Errorf("trusted: want %q, got %q", "supersecret", got)
@@ -104,7 +105,7 @@ func TestRedactedField(t *testing.T) {
 		t.Fatalf("expected FieldTypeRedacted, got %v", f.Type)
 	}
 	// Trusted writers still see [REDACTED] — Redacted is unconditional.
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormattedTrusted(&buf)
 	if got := buf.String(); got != redactedMark {
 		t.Errorf("trusted Redacted field must still show %q, got %q", redactedMark, got)
@@ -118,7 +119,7 @@ func TestTruncatedField_Fits(t *testing.T) {
 	if f.Type != FieldTypeTruncated {
 		t.Fatalf("expected FieldTypeTruncated, got %v", f.Type)
 	}
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormatted(&buf)
 	if got := buf.String(); got != "short" {
 		t.Errorf("want %q, got %q", "short", got)
@@ -129,7 +130,7 @@ func TestTruncatedField_Clipped(t *testing.T) {
 	t.Parallel()
 
 	f := Truncated("tok", "Bearer eyJhbGciOiJSUzI1NiJ9.longpayload", 16)
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormatted(&buf)
 	got := buf.String()
 	if strings.Contains(got, "longpayload") {
@@ -144,7 +145,7 @@ func TestTruncatedField_ZeroMaxLen(t *testing.T) {
 	t.Parallel()
 
 	f := Truncated("tok", "anything", 0)
-	var buf strings.Builder
+	var buf bytes.Buffer
 	f.writeFormatted(&buf)
 	// Zero maxLen returns empty.
 	if got := buf.String(); got != "" {

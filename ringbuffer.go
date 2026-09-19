@@ -11,12 +11,20 @@ const (
 	DefaultRingBufferSize = 1024
 	DefaultBatchSize      = 64
 	DefaultFlushInterval  = 10 * time.Millisecond
+	maxIdleBatchCapacity  = 1 << 20
 )
 
 // RingBufferEntry is one queued record. The queue owns the payload copy held in
 // data; producers never retain access to it after Write returns.
 type RingBufferEntry struct {
 	data []byte
+}
+
+func resetBatchBuffer(buf []byte) []byte {
+	if cap(buf) > maxIdleBatchCapacity {
+		return make([]byte, 0, DefaultBatchSize*512)
+	}
+	return buf[:0]
 }
 
 // RingBuffer implements a bounded byte queue for batched writing.
@@ -189,7 +197,7 @@ func (rb *RingBuffer) drainer() {
 				break
 			}
 			rb.writeBatch(batchBuf, n)
-			batchBuf = batchBuf[:0]
+			batchBuf = resetBatchBuffer(batchBuf)
 		}
 
 		select {
@@ -205,7 +213,7 @@ func (rb *RingBuffer) drainer() {
 					return
 				}
 				rb.writeBatch(batchBuf, n)
-				batchBuf = batchBuf[:0]
+				batchBuf = resetBatchBuffer(batchBuf)
 			}
 		case <-rb.wake:
 		case <-ticker.C:
