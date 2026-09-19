@@ -73,12 +73,12 @@ fmt: verify-tools
 
 fmt-check: verify-tools
 	@echo "Checking formatting..."
-	@out=$$(goimports -l -local $(PKG) .); \
+	@out=$$(goimports -l -local $(PKG) .) || exit $$?; \
 	if [ -n "$$out" ]; then \
 		printf "\033[31m  goimports would rewrite:\n%s\033[0m\n" "$$out"; \
 		exit 1; \
 	fi; \
-	out=$$(gofumpt -l -extra .); \
+	out=$$(gofumpt -l -extra .) || exit $$?; \
 	if [ -n "$$out" ]; then \
 		printf "\033[31m  gofumpt -extra would rewrite:\n%s\033[0m\n" "$$out"; \
 		exit 1; \
