@@ -1,5 +1,44 @@
 # Changelog
 
+## v2.2.1 (2026-09-19)
+
+Fixes and allocation work from the post-v2.2.0 review round. No public API
+changes.
+
+### Bug fixes
+
+- Malformed UTF-8 in JSON strings is now replaced with `U+FFFD` escape
+  sequences instead of producing invalid JSON; valid Unicode is passed through
+  untouched.
+- Integer millisecond timings in inline indicators no longer overflow into
+  nanoseconds.
+- The count, timing and state-transition indicator options now consistently
+  remove promoted fields from the pretty tree.
+- Pooled entries clear hidden field references through the slice's full
+  capacity on reset and release, so a later reuse cannot observe stale
+  pointers.
+
+### Performance
+
+- Floats are formatted with appends into concrete buffers, avoiding temporary
+  allocations on the formatting path.
+- JSON buffers are reused up to 32 KiB; larger ones are dropped instead of
+  retaining peak capacity in the pool.
+- Oversized ring batches are released rather than kept at peak capacity.
+- Snapshot copies are skipped when a subscriber queue is already full and the
+  entry would be dropped anyway.
+- `slogbridge` field prepending shifts fields without a temporary slice.
+- `Detailed` children share the parent's immutable base fields instead of
+  copying them.
+- Status caller line numbers are formatted through the stack buffer.
+
+### Tooling
+
+- Gate tools are pinned to exact versions and `make ready` is read-only;
+  formatter failures now surface instead of passing silently. Development
+  tooling needs a newer toolchain than the library's Go 1.24 minimum; the
+  library itself still supports Go 1.24.
+
 ## 2.2.0 (2026-09-16)
 
 Behaviour and API changes from the logging-hardening fix-and-finish run
