@@ -527,6 +527,52 @@ func TestAsyncOutput_FlushBarrierDrainsAcceptedRecords(t *testing.T) {
 	}
 }
 
+// Flush begun after Close has stopped admission must wait for Close's drain:
+// returning early would violate Flush's guarantee for records Close accepted.
+func TestAsyncOutput_FlushWaitsForConcurrentCloseDrain(t *testing.T) {
+	sink := newGatedSink()
+	logger := newAsyncTestLogger(sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
+	logger.Info("accepted-before-close")
+	<-sink.entered
+
+	closed := make(chan error, 1)
+	go func() { closed <- logger.Close() }()
+	waitFor(t, func() bool {
+		logger.jsonWriter.mu.Lock()
+		defer logger.jsonWriter.mu.Unlock()
+		return logger.jsonWriter.closed
+	}, time.Second, time.Millisecond, "Close to stop JSON writer admission")
+
+	flushed := make(chan error, 1)
+	go func() { flushed <- logger.jsonWriter.Flush() }()
+	select {
+	case err := <-flushed:
+		t.Fatalf("Flush returned before Close drained its accepted record: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(sink.release)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not drain accepted record")
+	}
+	select {
+	case err := <-flushed:
+		if err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Flush did not wait for Close completion")
+	}
+	if got := sink.count(); got != 1 {
+		t.Fatalf("drained %d lines, want accepted record", got)
+	}
+}
+
 // Child loggers share the async writer through writerSet: one queue, one
 // drainer, one drop counter visible from every member, and a parent Close
 // drains the children's records too. Post-close writes are rejected, not

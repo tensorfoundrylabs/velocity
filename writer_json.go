@@ -635,8 +635,13 @@ func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 		return
 	}
 	if m, ok := v.(json.Marshaler); ok {
-		if raw, err := m.MarshalJSON(); err == nil {
-			_, _ = buf.Write(raw)
+		if raw, err := m.MarshalJSON(); err == nil && json.Valid(raw) {
+			// MarshalJSON promises one valid JSON value, but custom marshalers
+			// can return malformed or pretty-printed bytes. Validate before
+			// adding them to the surrounding record, then compact so a single
+			// log record remains a single JSON line. An invalid result follows
+			// the normal fallback ladder below rather than corrupting the stream.
+			_ = json.Compact(buf.buf, raw)
 			return
 		}
 	}
@@ -807,6 +812,11 @@ func (w *JSONWriter) Flush() error {
 		// this barrier is still in flight; a closed writer was already
 		// drained and flushed by Close itself.
 		if !w.admit() {
+			// Close has stopped admission but can still be draining records that
+			// were accepted before it. Preserve Flush's barrier contract by
+			// waiting for that drain rather than returning while those records
+			// remain in flight.
+			<-w.closeDone
 			return nil
 		}
 		b := make(chan struct{})

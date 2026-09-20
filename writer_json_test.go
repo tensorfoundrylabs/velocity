@@ -657,3 +657,105 @@ func TestJSONWriter_AnyFailingMarshalJSONFallsBackToError(t *testing.T) {
 		t.Fatalf("line %q rendered the marshal diagnostic instead of falling back to Error()", line)
 	}
 }
+
+// rawJSONMarshaler lets the JSON-lines tests exercise custom MarshalJSON
+// implementations alongside json.RawMessage, which uses the same interface.
+type rawJSONMarshaler []byte
+
+func (m rawJSONMarshaler) MarshalJSON() ([]byte, error) { return m, nil }
+
+func TestJSONWriter_AnyMarshalerOutputIsValidCompactJSONLine(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%t", async), func(t *testing.T) {
+			var sink safeBuffer
+			var w *JSONWriter
+			if async {
+				w = NewAsyncJSONWriter(&sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
+			} else {
+				w = NewJSONWriter(&sink)
+			}
+
+			entry := &Entry{
+				Time:    time.Now(),
+				Level:   LevelInfo,
+				Message: "pretty raw JSON",
+				Fields: []Field{
+					Any("raw", json.RawMessage([]byte("{\n  \"nested\": true\n}"))),
+					Any("custom", rawJSONMarshaler([]byte("[\n  1,\n  2\n]"))),
+				},
+			}
+			if err := w.Write(entry); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			line := sink.String()
+			if got := strings.Count(line, "\n"); got != 1 {
+				t.Fatalf("output has %d physical newlines, want one JSON line: %q", got, line)
+			}
+			var record struct {
+				Raw    json.RawMessage `json:"raw"`
+				Custom json.RawMessage `json:"custom"`
+			}
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				t.Fatalf("output is not valid JSON: %v", err)
+			}
+			if got := string(record.Raw); got != `{"nested":true}` {
+				t.Fatalf("raw field = %q, want compact JSON", got)
+			}
+			if got := string(record.Custom); got != `[1,2]` {
+				t.Fatalf("custom field = %q, want compact JSON", got)
+			}
+		})
+	}
+}
+
+func TestJSONWriter_AnyMalformedMarshalerOutputFallsBackToDiagnostic(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%t", async), func(t *testing.T) {
+			var sink safeBuffer
+			var w *JSONWriter
+			if async {
+				w = NewAsyncJSONWriter(&sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
+			} else {
+				w = NewJSONWriter(&sink)
+			}
+
+			entry := &Entry{
+				Time:    time.Now(),
+				Level:   LevelInfo,
+				Message: "malformed raw JSON",
+				Fields: []Field{
+					Any("raw", json.RawMessage([]byte(`{"unterminated":`))),
+					Any("custom", rawJSONMarshaler([]byte(`[`))),
+				},
+			}
+			if err := w.Write(entry); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			line := sink.String()
+			if got := strings.Count(line, "\n"); got != 1 {
+				t.Fatalf("output has %d physical newlines, want one JSON line: %q", got, line)
+			}
+			var record struct {
+				Raw    string `json:"raw"`
+				Custom string `json:"custom"`
+			}
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				t.Fatalf("output is not valid JSON: %v", err)
+			}
+			if !strings.Contains(record.Raw, "<velocity: JSON marshal failed:") {
+				t.Fatalf("raw field = %q, want marshal diagnostic", record.Raw)
+			}
+			if !strings.Contains(record.Custom, "<velocity: JSON marshal failed:") {
+				t.Fatalf("custom field = %q, want marshal diagnostic", record.Custom)
+			}
+		})
+	}
+}
