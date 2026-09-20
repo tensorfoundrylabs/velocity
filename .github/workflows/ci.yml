@@ -29,6 +29,13 @@ jobs:
       - name: Test (race)
         run: go test -race -count=1 ./...
 
+      # Both steps are needed: allocation gates such as
+      # TestAsyncOutput_ParallelSteadyStateAllocations skip under -race
+      # (race instrumentation allocates through sync.Pool), so the plain run
+      # is the only place they actually gate.
+      - name: Test (plain, for alloc gates that skip under race)
+        run: go test -count=1 ./...
+
   lint:
     runs-on: ubuntu-latest
     steps:

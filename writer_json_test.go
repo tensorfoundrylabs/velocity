@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -468,4 +469,293 @@ func jsonStringField(t *testing.T, m map[string]any, key string) string {
 		t.Fatalf("decoded object has no string field %q: %v", key, m)
 	}
 	return v
+}
+
+// An Any field holding an error must render its message text, not the {} that
+// json.Marshal produces for values whose content lives in unexported fields
+// (errors.New, fmt.Errorf, every runtime.Error including recovered panics).
+func TestJSONWriter_AnyErrorRendersMessage(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("write panicked: %v", r)
+		}
+	}()
+
+	// A recovered index-out-of-range is a runtime.Error; its Error() carries
+	// the panic message json.Marshal would discard.
+	var panicErr error
+	func() {
+		defer func() { panicErr, _ = recover().(error) }()
+		s := []int{1}
+		_ = s[5] //nolint:gosec // the out-of-range index is the point: it yields a runtime.Error
+	}()
+	if panicErr == nil {
+		t.Fatal("recover did not yield a runtime error")
+	}
+
+	inner := errors.New("inner failure")
+	var nilErr *typedNilError
+	var nilStr *typedNilStringer
+	cases := []struct {
+		key string
+		val any
+	}{
+		{"plain", errors.New("plain failure")},
+		{"wrapped", fmt.Errorf("outer: %w", inner)},
+		{"panic", panicErr},
+		{"nilErr", nilErr},
+		{"nilStr", nilStr},
+	}
+	fields := make([]Field, 0, len(cases))
+	for _, c := range cases {
+		fields = append(fields, Any(c.key, c.val))
+	}
+
+	e := &Entry{Time: time.Now(), Level: LevelInfo, Message: "any errors", Fields: fields}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	for _, want := range []string{
+		"plain failure",
+		"outer: inner failure",
+		"index out of range",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line %q does not contain %q: error message lost in Any rendering", line, want)
+		}
+	}
+
+	// Typed nils must fall through to json.Marshal and render null, never
+	// call a method on the nil receiver.
+	if !strings.Contains(line, `"nilErr":null`) || !strings.Contains(line, `"nilStr":null`) {
+		t.Fatalf("line %q does not render typed nils as null", line)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+}
+
+// typedNilError dereferences its receiver, so calling Error() on the typed
+// nil panics; exactly the case the guard must keep away from the method.
+type typedNilError struct {
+	msg string
+}
+
+func (e *typedNilError) Error() string { return e.msg }
+
+type typedNilStringer struct {
+	msg string
+}
+
+func (s *typedNilStringer) String() string { return s.msg }
+
+// A Stringer whose marshaled form is an empty object must render String()
+// rather than {}.
+func TestJSONWriter_AnyStringerEmptyMarshalPrefersString(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	type opaque struct{ secret int }
+	fields := []Field{Any("v", stringerVal{opaque{7}})}
+
+	e := &Entry{Time: time.Now(), Level: LevelInfo, Message: "stringer", Fields: fields}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, "opaque value 7") {
+		t.Fatalf("line %q does not contain the Stringer text", line)
+	}
+}
+
+type stringerVal struct {
+	inner any
+}
+
+func (s stringerVal) String() string { return "opaque value 7" }
+
+// structuredDeployError carries both an Error() message and an explicit JSON form;
+// the explicit form must win so structured errors keep their shape.
+type structuredDeployError struct {
+	Code  int
+	Stage string
+}
+
+func (e *structuredDeployError) Error() string {
+	return "stage " + e.Stage + " failed with code 42"
+}
+
+func (e *structuredDeployError) MarshalJSON() ([]byte, error) {
+	return []byte(`{"code":42,"stage":"` + e.Stage + `"}`), nil
+}
+
+func TestJSONWriter_AnyMarshalerErrorKeepsJSONForm(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: "marshaler error",
+		Fields:  []Field{Any("err", &structuredDeployError{Code: 42, Stage: "deploy"})},
+	}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, `"code":42`) {
+		t.Fatalf("line %q does not carry the MarshalJSON form", line)
+	}
+	if strings.Contains(line, "failed with code") {
+		t.Fatalf("line %q rendered Error() over the explicit JSON form", line)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+}
+
+// marshalFailError's MarshalJSON always fails; the ladder must fall through
+// to Error() rather than emitting a marshal diagnostic.
+type marshalFailError struct{}
+
+func (e *marshalFailError) Error() string { return "marshal failed but message survives" }
+
+func (e *marshalFailError) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("unserialisable")
+}
+
+func TestJSONWriter_AnyFailingMarshalJSONFallsBackToError(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: "failing marshaler",
+		Fields:  []Field{Any("err", &marshalFailError{})},
+	}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, "marshal failed but message survives") {
+		t.Fatalf("line %q lost the Error() message behind a failing MarshalJSON", line)
+	}
+	if strings.Contains(line, "marshal failed: unserialisable") {
+		t.Fatalf("line %q rendered the marshal diagnostic instead of falling back to Error()", line)
+	}
+}
+
+// rawJSONMarshaler lets the JSON-lines tests exercise custom MarshalJSON
+// implementations alongside json.RawMessage, which uses the same interface.
+type rawJSONMarshaler []byte
+
+func (m rawJSONMarshaler) MarshalJSON() ([]byte, error) { return m, nil }
+
+func TestJSONWriter_AnyMarshalerOutputIsValidCompactJSONLine(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%t", async), func(t *testing.T) {
+			var sink safeBuffer
+			var w *JSONWriter
+			if async {
+				w = NewAsyncJSONWriter(&sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
+			} else {
+				w = NewJSONWriter(&sink)
+			}
+
+			entry := &Entry{
+				Time:    time.Now(),
+				Level:   LevelInfo,
+				Message: "pretty raw JSON",
+				Fields: []Field{
+					Any("raw", json.RawMessage([]byte("{\n  \"nested\": true\n}"))),
+					Any("custom", rawJSONMarshaler([]byte("[\n  1,\n  2\n]"))),
+				},
+			}
+			if err := w.Write(entry); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			line := sink.String()
+			if got := strings.Count(line, "\n"); got != 1 {
+				t.Fatalf("output has %d physical newlines, want one JSON line: %q", got, line)
+			}
+			var record struct {
+				Raw    json.RawMessage `json:"raw"`
+				Custom json.RawMessage `json:"custom"`
+			}
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				t.Fatalf("output is not valid JSON: %v", err)
+			}
+			if got := string(record.Raw); got != `{"nested":true}` {
+				t.Fatalf("raw field = %q, want compact JSON", got)
+			}
+			if got := string(record.Custom); got != `[1,2]` {
+				t.Fatalf("custom field = %q, want compact JSON", got)
+			}
+		})
+	}
+}
+
+func TestJSONWriter_AnyMalformedMarshalerOutputFallsBackToDiagnostic(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%t", async), func(t *testing.T) {
+			var sink safeBuffer
+			var w *JSONWriter
+			if async {
+				w = NewAsyncJSONWriter(&sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
+			} else {
+				w = NewJSONWriter(&sink)
+			}
+
+			entry := &Entry{
+				Time:    time.Now(),
+				Level:   LevelInfo,
+				Message: "malformed raw JSON",
+				Fields: []Field{
+					Any("raw", json.RawMessage([]byte(`{"unterminated":`))),
+					Any("custom", rawJSONMarshaler([]byte(`[`))),
+				},
+			}
+			if err := w.Write(entry); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			line := sink.String()
+			if got := strings.Count(line, "\n"); got != 1 {
+				t.Fatalf("output has %d physical newlines, want one JSON line: %q", got, line)
+			}
+			var record struct {
+				Raw    string `json:"raw"`
+				Custom string `json:"custom"`
+			}
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				t.Fatalf("output is not valid JSON: %v", err)
+			}
+			if !strings.Contains(record.Raw, "<velocity: JSON marshal failed:") {
+				t.Fatalf("raw field = %q, want marshal diagnostic", record.Raw)
+			}
+			if !strings.Contains(record.Custom, "<velocity: JSON marshal failed:") {
+				t.Fatalf("custom field = %q, want marshal diagnostic", record.Custom)
+			}
+		})
+	}
 }

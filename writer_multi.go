@@ -97,8 +97,14 @@ func (mw *MultiWriter) AddWriter(name string, w Writer, opts ...WriterOption) {
 	}
 	mw.workers[name] = ws
 
-	// Buffer size trades latency vs blocking: smaller = less latency, larger = less blocking
-	ch := make(chan *Entry, 256)
+	// Buffer size trades latency vs blocking: smaller = less latency, larger
+	// = less blocking. Depth is configurable per writer; non-positive options
+	// fall back to the historical default.
+	depth := o.queueDepth
+	if depth <= 0 {
+		depth = defaultWriterQueueDepth
+	}
+	ch := make(chan *Entry, depth)
 	mw.writeChans[name] = ch
 
 	mw.wg.Add(1)

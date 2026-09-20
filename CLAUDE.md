@@ -36,6 +36,7 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 | `writer_console.go` | Themed ANSI console output; colour permission fixed at construction (`colourAllowed`/`colourExplicitlyDisabled`) |
 | `writer_console_rb.go` | Deprecated batching console writer over the bounded byte queue; use `ConsoleWriter` |
 | `writer_json.go` | Hand-rolled JSON (no `encoding/json`); `encoding/json` only on the `Any` fallback |
+| `writer_json_async.go` | Opt-in async structured output: `AsyncConfig`/`AsyncPolicy`, bounded queue, single drainer, `DroppedCount`; Fatal rides a barrier, Close drains via stop sentinel |
 | `writer_multi.go` | Async fan-out to named writers; `WriteReliable` barrier for Fatal/Close; workers close own writer, errors joined |
 | `writer_ring.go` | `RingBufferWriter`, `EntrySnapshot`, `Snapshot`, `Subscribe`, `Stats` |
 | `ringbuffer.go` | Bounded power-of-2 byte queue: short mutex, owned byte storage, single drainer goroutine, drop-on-full counted |
@@ -75,6 +76,7 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 - **`Logger.Status`** renders inline (indented under parent log line, no own timestamp) on the console; JSON writers still receive structured records with `status` field.
 - **Shared `writerSet`**: parent and child loggers (`With`, `Detailed`, `WithComponent`, `Request`) share writer topology and `scanSecure` atomic, so `AddWriter` after child creation is visible everywhere.
 - **No `encoding/json`** in hot paths.
+- **Async structured output** (opt-in via `WithAsyncOutput`, which must follow any preset): the caller formats each record, a single drainer goroutine performs the write from a bounded queue (default `DefaultAsyncQueue` = 8192), so no syscall or mutex held across one runs on the logging goroutine. `AsyncBlock` (zero value) back-pressures losslessly; `AsyncDrop` never blocks and counts losses in `Logger.StructuredDroppedCount`. Fatal rides a barrier so it and everything before it are written before the `FatalHandler`; Flush/Close drain everything accepted, with no timeout. Console output stays synchronous; without the option behaviour is unchanged.
 - **Inline indicators** (opt-in, pretty-only, JSON unaffected): `WithComponentStyling()` enables compact header indicators — a hashed-colour component name + muted `│` bar, `(N)` count suffix, `⏱ …` timing suffix, and `⟳ from → to` state-transition arrows. Promoted fields are removed from the tree by default (`removeFromTree=true`). Configured via `WithComponentField`, `WithComponentColumnWidth`, `WithCountFields`, `WithTimingFields`, `WithStateTransitionPairs`, `WithInlineGlyphs`. The component palette is set via `WithComponentPalette` / `WithComponentColour` `ThemeOption`s. JSON writers are never affected.
 
 ## Concurrency

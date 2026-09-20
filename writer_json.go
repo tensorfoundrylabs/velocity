@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,10 +14,20 @@ import (
 	"unicode/utf8"
 )
 
-type JSONWriter struct {
-	out       io.Writer
-	closeErr  error
+// JSONWriter emits structured JSON records. Its field order is hand-chosen,
+// not betteralign-sorted: async sits immediately after out so the sync
+// path's nil check on it shares the hot cache line. With the pointer
+// elsewhere the check cost the parallel structured path a measured ~5%.
+type JSONWriter struct { // betteralign:ignore
+	out io.Writer
+	// async, when non-nil, routes completed records through a bounded queue
+	// drained by one goroutine so callers never wait on the write syscall.
+	// Set once at construction and read-only afterwards. A nil check on the
+	// sync path is its only cost.
+	async *jsonAsync
+
 	jsonPool  sync.Pool
+	closeErr  error
 	closeDone chan struct{}
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
@@ -104,10 +115,13 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	// line — halving the number of syscalls per entry versus a separate Write(newlineByte).
 	_ = buf.WriteByte('\n')
 
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
 	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
+	_, err := w.out.Write(rawBuf.Bytes())
 	w.mu.Unlock()
-
 	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
@@ -187,10 +201,13 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
 	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
+	_, err := w.out.Write(rawBuf.Bytes())
 	w.mu.Unlock()
-
 	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
@@ -292,10 +309,13 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	w.formatJSONSecure(buf, e, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
 	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
+	_, err := w.out.Write(rawBuf.Bytes())
 	w.mu.Unlock()
-
 	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
@@ -572,14 +592,7 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		_ = buf.WriteByte('"')
 
 	case FieldTypeAny:
-		// Preserve arbitrary values as JSON. A marshal error still produces valid
-		// JSON with an explicit diagnostic rather than corrupting the log stream.
-		v := *(*any)(f.value)
-		if raw, err := json.Marshal(v); err == nil {
-			_, _ = buf.Write(raw)
-		} else {
-			w.writeJSONString(buf, "<velocity: JSON marshal failed: "+err.Error()+">")
-		}
+		w.writeJSONAnyValue(buf, f)
 
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.
@@ -593,6 +606,74 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 	case FieldTypeUnknown:
 		// Null prevents JSON parsing errors when field type cannot be determined
 		buf.WriteString("null")
+	}
+}
+
+// writeJSONAnyValue preserves an arbitrary value as JSON, with this
+// ladder: a json.Marshaler's explicit form wins when MarshalJSON succeeds
+// (a structured error carrying MarshalJSON keeps its shape); a failing
+// MarshalJSON falls through. An error then renders Error() as a JSON
+// string, because json.Marshal only sees exported fields and would turn
+// errors.New, fmt.Errorf and every runtime.Error, including recovered
+// panics, into a message-less {}; this includes errors whose MarshalJSON
+// failed. Otherwise json.Marshal runs, a Stringer whose marshaled form is
+// {} renders String(), and anything else passes the marshaled bytes
+// through. Marshaler and error are settled by type assertion before any
+// marshal call so a plain error never pays json.Marshal's reflection cost.
+// Typed nils render JSON null rather than calling a method on a nil
+// receiver. A marshal error still produces valid JSON with an explicit
+// diagnostic rather than corrupting the log stream.
+func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
+	v := *(*any)(f.value)
+	// Typed nils (a nil *T stored in the interface) pass the error and
+	// Stringer assertions, and a pointer-receiver method dereferences nil and
+	// panics inside the caller's log statement. The guard is deliberately
+	// broader than the Error and Stringer field constructors' (which check
+	// pointers only), and the value renders as JSON null.
+	if isTypedNilAny(v) {
+		buf.WriteString("null")
+		return
+	}
+	if m, ok := v.(json.Marshaler); ok {
+		if raw, err := m.MarshalJSON(); err == nil && json.Valid(raw) {
+			// MarshalJSON promises one valid JSON value, but custom marshalers
+			// can return malformed or pretty-printed bytes. Validate before
+			// adding them to the surrounding record, then compact so a single
+			// log record remains a single JSON line. An invalid result follows
+			// the normal fallback ladder below rather than corrupting the stream.
+			_ = json.Compact(buf.buf, raw)
+			return
+		}
+	}
+	if err, ok := v.(error); ok {
+		w.writeJSONString(buf, err.Error())
+		return
+	}
+	raw, mErr := json.Marshal(v)
+	if mErr != nil {
+		w.writeJSONString(buf, "<velocity: JSON marshal failed: "+mErr.Error()+">")
+		return
+	}
+	if s, ok := v.(fmt.Stringer); ok && len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
+		w.writeJSONString(buf, s.String())
+		return
+	}
+	_, _ = buf.Write(raw)
+}
+
+// isTypedNilAny reports whether an Any value is a nil interface or an
+// interface holding a nil pointer, map, slice or func: shapes whose methods
+// would run on a nil receiver. reflect.Interface cannot appear here because
+// reflect.ValueOf unwraps the interface before reporting a kind.
+func isTypedNilAny(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch rv := reflect.ValueOf(v); rv.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -640,10 +721,13 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
 	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
+	_, err := w.out.Write(rawBuf.Bytes())
 	w.mu.Unlock()
-
 	w.putJSONBuffer(rawBuf)
 	if err != nil {
 		return fmt.Errorf("json write failed: %w", err)
@@ -720,8 +804,47 @@ func (w *JSONWriter) formatJSONContinueSecure(buf *BytesBuffer, e *Entry, lines 
 // Flush drains any buffered output without closing the writer.
 // Only has effect when the underlying io.Writer implements Flush.
 func (w *JSONWriter) Flush() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	if a := w.async; a != nil {
+		// Drain through the queue rather than flushing underneath it: the
+		// barrier acknowledges only after the drainer wrote everything ahead
+		// of it, so the underlying flush sees every accepted record. The
+		// inFlight registration keeps Close from retiring the drainer while
+		// this barrier is still in flight; a closed writer was already
+		// drained and flushed by Close itself.
+		if !w.admit() {
+			// Close has stopped admission but can still be draining records that
+			// were accepted before it. Preserve Flush's barrier contract by
+			// waiting for that drain rather than returning while those records
+			// remain in flight.
+			<-w.closeDone
+			return nil
+		}
+		b := make(chan struct{})
+		a.ch <- jsonAsyncItem{barrier: b}
+		<-b
+
+		// Serialise the underlying flush with the drainer's writes via the
+		// async I/O mutex; w.mu is admission-only here, so a concurrent
+		// caller never waits behind this flush either. The in-flight slot
+		// spans the flush too: released only after the mutex section, so
+		// Close's inFlight.Wait covers the whole operation, not just the
+		// barrier. The ordering of Done versus a concurrent Close's final
+		// writeMu acquisition has no deterministic test: whether this Flush
+		// or Close wins the lock decides only which flush runs last, and
+		// both orders are correct, so only the race detector's overlap
+		// check (TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush)
+		// observes it.
+		a.writeMu.Lock()
+		// Defer registration order is deliberate: LIFO runs Unlock first,
+		// then Done, so the in-flight slot is released only after the mutex
+		// section has fully unwound and Close's inFlight.Wait covers the
+		// whole flush.
+		defer w.inFlight.Done()
+		defer a.writeMu.Unlock()
+	} else {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+	}
 
 	if f, ok := w.out.(interface{ Flush() error }); ok {
 		return f.Flush()
@@ -746,8 +869,43 @@ func (w *JSONWriter) Close() error {
 		// flush below is the last underlying write.
 		w.inFlight.Wait()
 
-		if f, ok := w.out.(interface{ Flush() error }); ok {
-			w.closeErr = f.Flush()
+		flushSink := func() {
+			if f, ok := w.out.(interface{ Flush() error }); ok {
+				if err := f.Flush(); err != nil && w.closeErr == nil {
+					w.closeErr = err
+				}
+			}
+		}
+
+		if a := w.async; a != nil {
+			// Admission is gone and every admitted caller has finished its
+			// enqueue, so nothing else can enter the queue. The stop sentinel
+			// rides behind the last buffered record; its ack means the queue
+			// is empty, and done proves the drainer's final write finished
+			// before the flush below. There is deliberately no timeout: a
+			// stalled sink blocks Close, same as the synchronous contract.
+			b := make(chan struct{})
+			a.ch <- jsonAsyncItem{barrier: b, stop: true}
+			<-b
+			<-a.done
+
+			a.writeErrMu.Lock()
+			err := a.writeErr
+			a.writeErrMu.Unlock()
+			if err != nil && w.closeErr == nil {
+				w.closeErr = err
+			}
+
+			// Hold the drainer's I/O mutex across the final flush. An async
+			// Flush that admitted before close releases its in-flight slot
+			// only after its own writeMu section, so inFlight.Wait covers it;
+			// the mutex additionally excludes a Flush that admitted but has
+			// not yet reached its section, keeping the sink flush exclusive.
+			a.writeMu.Lock()
+			flushSink()
+			a.writeMu.Unlock()
+		} else {
+			flushSink()
 		}
 	})
 	// A second concurrent Close waits for the same completed drain and

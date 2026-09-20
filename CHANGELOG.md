@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `WithAsyncOutput(AsyncConfig{Queue, OnFull})` makes the primary structured
+  (JSON) output non-blocking. Callers format each record exactly as before,
+  then enqueue the finished bytes onto a bounded queue drained by a single
+  goroutine that performs the write, so no syscall (and no mutex held across
+  one) runs on the logging goroutine. `OnFull` selects `AsyncBlock`
+  (lossless back-pressure over Queue records of headroom, then the caller
+  back-pressures to the sink's write rate; the default) or `AsyncDrop`
+  (never block; losses counted and reported via
+  `Logger.StructuredDroppedCount` and `JSONWriter.DroppedCount`; the choice
+  for availability-critical request paths). Default queue depth is `DefaultAsyncQueue`
+  (8192), about 140ms of burst headroom at 60k lines/s; formatting buffers
+  live in `sync.Pool`, so the queue retains nothing itself and the collector
+  reclaims idle buffers (the first Queue records warm the pool once, 16 MiB
+  at the default depth). Fatal delivery stays reliable and ordered behind a barrier
+  before the FatalHandler runs; Flush and Close drain everything accepted,
+  with no timeout (a stalled sink blocks Close as it would synchronously),
+  and worst-case Close performs Queue sink writes, so a deadline-bounded
+  caller must bound Close itself.
+  Console output is unaffected. Without the option, behaviour is unchanged
+  and the synchronous path gains no allocations.
+- `NewAsyncJSONWriter(out, AsyncConfig)` constructs the async JSON writer
+  directly.
+- `WithWriterQueueDepth(n)` (`WriterOption`) configures the per-writer
+  channel depth `MultiWriter` allocates in `AddWriter`, previously hardcoded
+  at 256 (still the default; non-positive values fall back to it).
+
+### Fixed
+
+- An `Any` field holding an error now renders its `Error()` message as a
+  JSON string, and a `fmt.Stringer` whose marshaled form is an empty object
+  renders `String()`. Since v2.2.0 `Any` renders through `json.Marshal`,
+  which only sees exported fields, so `errors.New`, `fmt.Errorf`, every
+  `runtime.Error` and any opaque struct logged as `{}` and a recovered
+  panic lost its message. This is a behaviour change from v2.2.0's `{}`
+  output: those values now appear as their text. Precedence: a
+  `json.Marshaler`'s explicit form wins when `MarshalJSON` succeeds (a
+  structured error carrying `MarshalJSON` keeps its shape); a failing
+  `MarshalJSON` falls through, then `Error()` for errors, then `String()`
+  for stringers that marshal to `{}`. Typed nils render null instead of
+  panicking on a nil receiver.
+
 ## v2.2.1 (2026-09-19)
 
 Fixes and allocation work from the post-v2.2.0 review round. No public API

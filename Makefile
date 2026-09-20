@@ -167,7 +167,7 @@ verify-tools:
 ready-tools: verify-tools fmt-check align-check lint vet
 	@printf "\033[32mCode quality checks passed.\033[0m\n"
 
-ready: verify-tools tidy-check fmt-check align-check lint vet test-race
+ready: verify-tools tidy-check fmt-check align-check lint vet test test-race
 	@printf "\033[32mReady for commit.\033[0m\n"
 
 # ── CI ───────────────────────────────────────────────────────────────────────
