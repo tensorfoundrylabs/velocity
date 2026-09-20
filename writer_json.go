@@ -825,8 +825,12 @@ func (w *JSONWriter) Flush() error {
 		// check (TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush)
 		// observes it.
 		a.writeMu.Lock()
-		defer a.writeMu.Unlock()
+		// Defer registration order is deliberate: LIFO runs Unlock first,
+		// then Done, so the in-flight slot is released only after the mutex
+		// section has fully unwound and Close's inFlight.Wait covers the
+		// whole flush.
 		defer w.inFlight.Done()
+		defer a.writeMu.Unlock()
 	} else {
 		w.mu.Lock()
 		defer w.mu.Unlock()
