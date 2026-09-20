@@ -74,6 +74,7 @@ type WriterOption func(*writerOptions)
 type writerOptions struct {
 	redactionMark string // overrides "[REDACTED]" when non-empty
 	isTrusted     bool
+	queueDepth    int // per-writer channel capacity; 0 selects defaultWriterQueueDepth
 }
 
 // WriterTrusted marks a writer as trusted.
@@ -83,6 +84,22 @@ type writerOptions struct {
 func WriterTrusted() WriterOption {
 	return func(o *writerOptions) {
 		o.isTrusted = true
+	}
+}
+
+// defaultWriterQueueDepth is the per-writer buffer MultiWriter allocates when
+// WithWriterQueueDepth is not supplied.
+const defaultWriterQueueDepth = 256
+
+// WithWriterQueueDepth sets the capacity of the per-writer buffer channel a
+// MultiWriter worker drains. Deeper queues absorb longer sinks stalls before
+// entries drop (AsyncDrop-style behaviour is MultiWriter's built-in contract:
+// a full channel drops, it never blocks the logging goroutine); shallower
+// ones bound memory and shorten the Close drain. Non-positive values are
+// rejected to the default (256), matching NewMultiWriter's historical depth.
+func WithWriterQueueDepth(n int) WriterOption {
+	return func(o *writerOptions) {
+		o.queueDepth = n
 	}
 }
 
