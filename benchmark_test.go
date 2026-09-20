@@ -2,6 +2,9 @@ package velocity
 
 import (
 	"io"
+	"runtime"
+	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 )
@@ -862,4 +865,71 @@ func BenchmarkIndicators_Timing_IntMs(b *testing.B) {
 	}
 	b.StopTimer()
 	reportSink(b, console)
+}
+
+// slowSink charges a real serialised cost per write, standing in for a disk
+// or socket: a mutex held across a 2µs busy wait. Unlike the free benchSink
+// it makes the async drainer's writes visible as contention rather than
+// letting them hide behind in-memory speed.
+type slowSink struct {
+	mu sync.Mutex //nolint:unused // used by the parallel sink benchmarks
+	n  int
+}
+
+func (s *slowSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Microsecond)
+	for time.Now().Before(deadline) {
+	}
+	s.n++
+	return len(p), nil
+}
+
+// BenchmarkJSONWriterAsync_SlowSinkParallel is the regression guard for the
+// async buffer handoff: sync.Pool is per-P, the drainer Puts from its own P
+// while logging goroutines Get from theirs, so without the recycle channel
+// every handoff misses the pool and allocates a fresh buffer (~90 B/op). The
+// assertion makes any reintroduction of that path a hard failure.
+func BenchmarkJSONWriterAsync_SlowSinkParallel(b *testing.B) {
+	// A shallow queue keeps the buffer population small enough that the
+	// warm-up below closes the allocation ramp; the assertion, not the
+	// timing, is this benchmark's job.
+	sink := &slowSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink), WithAsyncOutput(AsyncConfig{Queue: 64}))
+	defer func() { _ = logger.Close() }()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			logger.Info("request completed", fields...)
+		}
+	})
+	b.StopTimer()
+	// Assert zero steady-state allocations with a windowed malloc counter
+	// rather than testing.AllocsPerRun: that helper pins GOMAXPROCS(1), which
+	// starves the drainer goroutine, forces every getJSONBuffer to miss and
+	// fabricates two allocations per call. Pacing with Gosched lets the
+	// drainer run between writes so the recycle channel actually turns over.
+	old := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(old)
+	var before, after runtime.MemStats
+	for range 20000 {
+		logger.Info("request completed", fields...)
+		runtime.Gosched()
+	}
+	runtime.ReadMemStats(&before)
+	for range 1000 {
+		logger.Info("request completed", fields...)
+		runtime.Gosched()
+	}
+	runtime.ReadMemStats(&after)
+	// Not a strict zero: a caller's next buffer can legitimately beat the
+	// drainer's recycle by a scheduling hiccup, costing a couple of one-off
+	// allocations. The regression this guards (sync.Pool per-P misses, one
+	// buffer pair per call) measures in the thousands.
+	if mallocs := after.Mallocs - before.Mallocs; mallocs > 5 {
+		b.Fatalf("async path allocated %d times over 1000 steady-state calls; buffer recycling regressed", mallocs)
+	}
 }

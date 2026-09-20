@@ -69,6 +69,14 @@ type jsonAsync struct {
 	writeErr error
 	ch       chan jsonAsyncItem
 
+	// recycle hands formatted buffers back from the drainer to logging
+	// goroutines. sync.Pool is per-P: the drainer Puts from its P while
+	// callers Get from theirs, so the pool caches never warm and every
+	// handoff misses into a fresh 2KiB allocation. A channel recycles across
+	// goroutines directly. Sized to the queue depth because that is the
+	// maximum number of buffers simultaneously in flight.
+	recycle chan *bytes.Buffer
+
 	// done closes when the drainer exits, so Close can prove no write is in
 	// progress before flushing the underlying sink.
 	done chan struct{}
@@ -101,9 +109,10 @@ func (w *JSONWriter) startAsync(cfg AsyncConfig) {
 		depth = DefaultAsyncQueue
 	}
 	w.async = &jsonAsync{
-		ch:     make(chan jsonAsyncItem, depth),
-		policy: cfg.OnFull,
-		done:   make(chan struct{}),
+		ch:      make(chan jsonAsyncItem, depth),
+		recycle: make(chan *bytes.Buffer, depth),
+		policy:  cfg.OnFull,
+		done:    make(chan struct{}),
 	}
 	go w.drainAsync()
 }
@@ -126,7 +135,7 @@ func (w *JSONWriter) enqueueAsync(rawBuf *bytes.Buffer, reliable bool) {
 			return
 		default:
 			a.dropped.Add(1)
-			w.putJSONBuffer(rawBuf)
+			w.recycleBuffer(rawBuf)
 			return
 		}
 	}
@@ -146,7 +155,7 @@ func (w *JSONWriter) drainAsync() {
 			a.writeMu.Lock()
 			_, err := w.out.Write(item.buf.Bytes())
 			a.writeMu.Unlock()
-			w.putJSONBuffer(item.buf)
+			w.recycleBuffer(item.buf)
 			if err != nil {
 				a.writeErrMu.Lock()
 				if a.writeErr == nil {
