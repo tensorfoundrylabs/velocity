@@ -972,13 +972,13 @@ func reportSlowSink(b *testing.B, s *slowSink) {
 // allocations: the ladder settles Marshaler and error by type assertion
 // before any json.Marshal reflection runs. A regression to one allocation
 // per plain error (the round-3 finding) shows here as 1 allocs/op.
-var benchPlainErr = errors.New("request failed")
+var errPlainBenchmark = errors.New("request failed")
 
 func BenchmarkJSONWriter_AnyPlainError(b *testing.B) {
 	sink := &benchSink{}
 	logger := New(WithProduction(), WithStructuredOutput(sink))
 	defer func() { _ = logger.Close() }()
-	fields := []Field{Any("err", benchPlainErr)}
+	fields := []Field{Any("err", errPlainBenchmark)}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
