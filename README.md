@@ -103,6 +103,17 @@ treat it as a workload property, not a library constant. End-to-end cost per
 delivered record — timed loop plus Close drain divided by records actually
 written — is ~440 ns.
 
+`WithAsyncOutput` (measured 2026-09-20, after the table above was taken) moves
+the structured write off the caller's goroutine. Against a free in-memory sink
+the channel handoff costs ~520 ns sync versus ~681 ns async per call, both
+allocation-free. Against a sink charging a serialised 2µs per write at 32
+goroutines: ~2750 ns sync, ~2390 ns with `AsyncBlock` (the queue absorbs the
+stall until it fills, then the caller pays the sink rate) and ~560 ns with
+`AsyncDrop` (96% of records dropped under that flood, every loss counted).
+`WithWriterQueueDepth` sizes `MultiWriter`'s per-writer channel (256 by
+default); it does not affect the primary structured output, which
+`WithAsyncOutput` governs.
+
 Provenance: all rows except "Disabled level" were measured on 2026-09-16,
 after two reliability reworks changed the serialisation paths — delivery
 acknowledgement became per-item, and every console/JSON write now registers
