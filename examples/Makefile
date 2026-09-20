@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-notify run-secure run-ring-buffer run-status-items run-groups run-continuation run-hyperlinks run-component-logging run-all build-all clean help
+.PHONY: run-basic run-json run-themes run-custom-theme run-pretty run-tables run-progress run-slog run-multi-writer run-sampling run-terminal-velocity run-notify run-secure run-ring-buffer run-status-items run-groups run-continuation run-hyperlinks run-component-logging run-async-output run-all build-all clean help
 
 SEPARATOR = @echo "" && echo "============================================================" && echo ""
 
@@ -79,6 +79,10 @@ run-hyperlinks:
 ## run-component-logging: Run the component-aware inline-indicator example
 run-component-logging:
 	go run ./component-logging
+
+## run-async-output: Run the async structured output example
+run-async-output:
+	go run ./async-output
 
 ## run-all: Run all examples sequentially with a separator between each
 run-all:
@@ -178,6 +182,11 @@ run-all:
 	@echo "  EXAMPLE 19: component-logging"
 	@echo "============================================================"
 	go run ./component-logging
+	$(SEPARATOR)
+	@echo "============================================================"
+	@echo "  EXAMPLE 20: async-output"
+	@echo "============================================================"
+	go run ./async-output
 
 ## build-all: Compile all examples to binaries in examples/bin/
 build-all:
@@ -200,13 +209,15 @@ build-all:
 	go build -o bin/continuation       ./continuation
 	go build -o bin/hyperlinks          ./hyperlinks
 	go build -o bin/component-logging  ./component-logging
+	go build -o bin/async-output       ./async-output
 
 ## clean: Remove compiled example binaries
 clean:
 	go clean ./basic ./json-logging ./themes ./custom-theme ./pretty-output \
 		./tables ./progress ./slog-bridge ./multi-writer ./sampling \
 		./terminal-velocity ./notify ./secure ./ring-buffer ./status-items \
-		./groups ./continuation ./hyperlinks ./component-logging
+		./groups ./continuation ./hyperlinks ./component-logging \
+		./async-output
 	-rm -rf bin
 
 ## help: Show this help message
