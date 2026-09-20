@@ -92,6 +92,7 @@ func main() {
 		}),
 	)
 
+	fmt.Println("=== AsyncDrop: never stall the caller ===")
 	start = time.Now()
 	for i := range dropRecords {
 		dropLog.Info("request handled", velocity.Int("seq", i))
@@ -104,7 +105,6 @@ func main() {
 	}
 	elapsed = time.Since(start)
 
-	fmt.Println("=== AsyncDrop: never stall the caller ===")
 	fmt.Printf("logged %d records in %s while the sink slept 2ms per write\n",
 		dropRecords, elapsed.Round(time.Millisecond))
 	fmt.Printf("(synchronously the same calls would inherit ~%s of sink latency)\n",
