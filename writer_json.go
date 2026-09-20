@@ -810,7 +810,12 @@ func (w *JSONWriter) Flush() error {
 		// caller never waits behind this flush either. The in-flight slot
 		// spans the flush too: released only after the mutex section, so
 		// Close's inFlight.Wait covers the whole operation, not just the
-		// barrier.
+		// barrier. The ordering of Done versus a concurrent Close's final
+		// writeMu acquisition has no deterministic test: whether this Flush
+		// or Close wins the lock decides only which flush runs last, and
+		// both orders are correct, so only the race detector's overlap
+		// check (TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush)
+		// observes it.
 		a.writeMu.Lock()
 		defer a.writeMu.Unlock()
 		defer w.inFlight.Done()
@@ -869,10 +874,11 @@ func (w *JSONWriter) Close() error {
 				w.closeErr = err
 			}
 
-			// Hold the drainer's I/O mutex across the final flush: an async
-			// Flush that admitted before close ends its in-flight slot at its
-			// barrier, before its own writeMu section, so inFlight.Wait alone
-			// does not exclude it from the sink yet.
+			// Hold the drainer's I/O mutex across the final flush. An async
+			// Flush that admitted before close releases its in-flight slot
+			// only after its own writeMu section, so inFlight.Wait covers it;
+			// the mutex additionally excludes a Flush that admitted but has
+			// not yet reached its section, keeping the sink flush exclusive.
 			a.writeMu.Lock()
 			flushSink()
 			a.writeMu.Unlock()
