@@ -68,14 +68,6 @@ func NewJSONWriter(out io.Writer) *JSONWriter {
 // getJSONBuffer retains each JSON buffer up to 32 KiB. This keeps common
 // structured records reusable without retaining exceptional input.
 func (w *JSONWriter) getJSONBuffer() *bytes.Buffer {
-	if a := w.async; a != nil {
-		select {
-		case buf := <-a.recycle:
-			buf.Reset()
-			return buf
-		default:
-		}
-	}
 	buf, ok := w.jsonPool.Get().(*bytes.Buffer)
 	if !ok || buf == nil {
 		buf = bytes.NewBuffer(make([]byte, 0, bufMediumSize))
@@ -88,23 +80,6 @@ func (w *JSONWriter) putJSONBuffer(buf *bytes.Buffer) {
 	if buf != nil && buf.Cap() <= bufXLargeSize {
 		w.jsonPool.Put(buf)
 	}
-}
-
-// recycleBuffer returns a used formatting buffer for reuse. In async mode it
-// prefers the drainer-to-caller recycle channel (see jsonAsync.recycle); when
-// that is full, or in sync mode, it falls back to the pool.
-func (w *JSONWriter) recycleBuffer(buf *bytes.Buffer) {
-	if buf == nil || buf.Cap() > bufXLargeSize {
-		return
-	}
-	if a := w.async; a != nil {
-		select {
-		case a.recycle <- buf:
-			return
-		default:
-		}
-	}
-	w.jsonPool.Put(buf)
 }
 
 func appendFloat(buf *bytes.Buffer, f float64) {

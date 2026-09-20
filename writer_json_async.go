@@ -29,14 +29,17 @@ const (
 // 8192 records absorb roughly 130-400ms of burst at tens of thousands of
 // lines per second (at 60k lines/s — two INFO lines per request at 30k req/s —
 // it is ~140ms of headroom), which rides out scheduler spikes and short page
-// cache flushes without the caller noticing. Steady-state retention at the
-// default depth is 16 MiB of pooled 2KiB buffers (8192 x 2KiB), not entries.
-// Records larger than the 32KiB pool-eligibility cap are not pooled after
-// writing, but while one waits in the queue it occupies a slot at full size,
-// so the true worst case scales with the largest records still queued, not
-// with the pool cap. Close drains every queued record, so its worst case is
-// Queue sink writes with no library-side timeout; a deadline-bounded caller
-// must bound Close itself.
+// cache flushes without the caller noticing. Buffers come from sync.Pool and
+// return to it after the drainer writes, so the queue holds no buffer memory
+// of its own: the one-off cost is the first Queue records allocating one 2KiB
+// buffer per slot (16 MiB at the default depth) while the pool warms, after
+// which the pool serves steady state and the collector can reclaim idle
+// buffers between GC cycles. Records larger than the 32KiB pool-eligibility
+// cap are not pooled, so while one waits in the queue it occupies a slot at
+// full size: the worst case scales with the largest records still queued,
+// not with the pool cap. Close drains every queued record, so its worst case
+// is Queue sink writes with no library-side timeout; a deadline-bounded
+// caller must bound Close itself.
 const DefaultAsyncQueue = 8192
 
 // AsyncConfig configures the opt-in asynchronous structured output. Supply it
@@ -68,14 +71,6 @@ type jsonAsync struct {
 	// and surfaced through Close.
 	writeErr error
 	ch       chan jsonAsyncItem
-
-	// recycle hands formatted buffers back from the drainer to logging
-	// goroutines. sync.Pool is per-P: the drainer Puts from its P while
-	// callers Get from theirs, so the pool caches never warm and every
-	// handoff misses into a fresh 2KiB allocation. A channel recycles across
-	// goroutines directly. Sized to the queue depth because that is the
-	// maximum number of buffers simultaneously in flight.
-	recycle chan *bytes.Buffer
 
 	// done closes when the drainer exits, so Close can prove no write is in
 	// progress before flushing the underlying sink.
@@ -109,10 +104,9 @@ func (w *JSONWriter) startAsync(cfg AsyncConfig) {
 		depth = DefaultAsyncQueue
 	}
 	w.async = &jsonAsync{
-		ch:      make(chan jsonAsyncItem, depth),
-		recycle: make(chan *bytes.Buffer, depth),
-		policy:  cfg.OnFull,
-		done:    make(chan struct{}),
+		ch:     make(chan jsonAsyncItem, depth),
+		policy: cfg.OnFull,
+		done:   make(chan struct{}),
 	}
 	go w.drainAsync()
 }
@@ -135,7 +129,7 @@ func (w *JSONWriter) enqueueAsync(rawBuf *bytes.Buffer, reliable bool) {
 			return
 		default:
 			a.dropped.Add(1)
-			w.recycleBuffer(rawBuf)
+			w.putJSONBuffer(rawBuf)
 			return
 		}
 	}
@@ -155,7 +149,7 @@ func (w *JSONWriter) drainAsync() {
 			a.writeMu.Lock()
 			_, err := w.out.Write(item.buf.Bytes())
 			a.writeMu.Unlock()
-			w.recycleBuffer(item.buf)
+			w.putJSONBuffer(item.buf)
 			if err != nil {
 				a.writeErrMu.Lock()
 				if a.writeErr == nil {

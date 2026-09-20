@@ -14,8 +14,10 @@
   (never block; losses counted and reported via
   `Logger.StructuredDroppedCount` and `JSONWriter.DroppedCount`; the choice
   for availability-critical request paths). Default queue depth is `DefaultAsyncQueue`
-  (8192), about 140ms of burst headroom at 60k lines/s for 16 MiB of pooled
-  buffers. Fatal delivery stays reliable and ordered behind a barrier
+  (8192), about 140ms of burst headroom at 60k lines/s; formatting buffers
+  live in `sync.Pool`, so the queue retains nothing itself and the collector
+  reclaims idle buffers (the first Queue records warm the pool once, 16 MiB
+  at the default depth). Fatal delivery stays reliable and ordered behind a barrier
   before the FatalHandler runs; Flush and Close drain everything accepted,
   with no timeout (a stalled sink blocks Close as it would synchronously),
   and worst-case Close performs Queue sink writes, so a deadline-bounded
