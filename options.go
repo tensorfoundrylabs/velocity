@@ -202,6 +202,38 @@ func WithStructuredOutput(w io.Writer) Option {
 	}
 }
 
+// WithAsyncOutput makes the primary structured (JSON) output non-blocking.
+// Callers still format each record (formatting was already outside the
+// writer's mutex) but then enqueue the finished bytes onto a bounded queue
+// drained by a single background goroutine that performs the write. No
+// syscall — and no mutex held across one — ever runs on the logging
+// goroutine, so a slow disk serialises nothing: at high request rates the
+// synchronous writer's mutex-across-write otherwise parks most request
+// goroutines on one lock.
+//
+// By default the queue holds DefaultAsyncQueue (8192) records; AsyncConfig.Queue
+// overrides it (non-positive values get the default). AsyncConfig.OnFull
+// selects block (lossless back-pressure, the zero value) or drop (never block
+// the caller; losses are counted and reported by Logger.StructuredDroppedCount
+// and JSONWriter.DroppedCount).
+//
+// Fatal delivery stays reliable and ordered: a Fatal record rides the queue
+// behind a barrier, so it and every entry accepted before it are written
+// before Logger.Fatal proceeds to the FatalHandler. Flush and Close drain
+// everything already accepted — Close stops admission first, the drainer
+// empties the queue, and there is no timeout, so a permanently stalled sink
+// blocks Close exactly as it would synchronously. Console output is
+// unaffected and stays synchronous.
+//
+// The option must come after any preset option (WithProduction and friends
+// reset the whole config). Without this option behaviour is unchanged and
+// the synchronous path gains no allocations.
+func WithAsyncOutput(acfg AsyncConfig) Option {
+	return func(c *config) {
+		c.AsyncOutput = &acfg
+	}
+}
+
 func WithFormat(format Format) Option {
 	return func(c *config) {
 		c.StructuredFormat = format

@@ -1,7 +1,7 @@
 package velocity
 
 import (
-	"io"
+	"fmt"
 	"testing"
 )
 
@@ -39,8 +39,8 @@ func TestMultiWriter_QueueDepthOption(t *testing.T) {
 		t.Parallel()
 		mw := NewMultiWriter()
 		defer func() { _ = mw.Close() }()
-		for _, n := range []int{0, -1} {
-			mw.AddWriter(io.Discard, depthNopWriter{}, WithWriterQueueDepth(n))
+		for i, n := range []int{0, -1} {
+			mw.AddWriter(fmt.Sprintf("w%d", i), depthNopWriter{}, WithWriterQueueDepth(n))
 		}
 		for name, ch := range mw.writeChans {
 			if got := cap(ch); got != 256 {

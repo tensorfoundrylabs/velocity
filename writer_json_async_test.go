@@ -91,7 +91,9 @@ func TestAsyncOutput_ReturnsWithoutWaitingForSlowWriter(t *testing.T) {
 func TestAsyncOutput_AbsentByDefault(t *testing.T) {
 	t.Parallel()
 
-	logger := New(WithProduction(), WithStructuredOutput(io.Discard))
+	// A real sink: newFromConfig treats io.Discard as "no output" and never
+	// constructs the JSON writer at all.
+	logger := New(WithProduction(), WithStructuredOutput(&asyncTestWriter{}))
 	if logger.jsonWriter.async != nil {
 		t.Fatal("async state constructed without WithAsyncOutput")
 	}
@@ -259,7 +261,6 @@ func TestAsyncOutput_CloseDrainsEverythingEnqueued(t *testing.T) {
 func TestAsyncOutput_FatalWrittenInOrderBeforeHandler(t *testing.T) {
 	t.Parallel()
 
-	w := &asyncTestWriter{}
 	var mu sync.Mutex
 	var events []string
 	record := func(s string) {

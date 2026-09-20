@@ -31,6 +31,12 @@ type JSONWriter struct {
 	closeOnce sync.Once
 	mu        sync.Mutex
 	closed    bool
+
+	// async, when non-nil, routes completed records through a bounded queue
+	// drained by one goroutine so callers never wait on the write syscall.
+	// Set once at construction and read-only afterwards. nil keeps the
+	// synchronous path byte-for-byte identical (and allocation-free).
+	async *jsonAsync
 }
 
 // admit is the admission critical section: the closed check and the in-flight
@@ -71,6 +77,28 @@ func (w *JSONWriter) putJSONBuffer(buf *bytes.Buffer) {
 	}
 }
 
+// emitJSON performs the I/O for a fully formatted record. The synchronous
+// path is unchanged: a short mutex around the write, buffer returned here.
+// The async path hands the bytes to the drainer instead, so the caller holds
+// no mutex across a syscall; the buffer returns to the pool from the drainer.
+// Reliable records (Fatal) always travel the queue behind a barrier so they
+// are written — in order with everything accepted before them — before the
+// call returns.
+func (w *JSONWriter) emitJSON(rawBuf *bytes.Buffer, reliable bool) error {
+	if a := w.async; a != nil {
+		w.enqueueAsync(rawBuf, reliable)
+		return nil
+	}
+	w.mu.Lock()
+	_, err := w.out.Write(rawBuf.Bytes())
+	w.mu.Unlock()
+	w.putJSONBuffer(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
+}
+
 func appendFloat(buf *bytes.Buffer, f float64) {
 	buf.Write(strconv.AppendFloat(buf.AvailableBuffer(), f, 'g', -1, 64))
 }
@@ -104,15 +132,7 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	// line — halving the number of syscalls per entry versus a separate Write(newlineByte).
 	_ = buf.WriteByte('\n')
 
-	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
-	w.mu.Unlock()
-
-	w.putJSONBuffer(rawBuf)
-	if err != nil {
-		return fmt.Errorf("json write failed: %w", err)
-	}
-	return nil
+	return w.emitJSON(rawBuf, e.Level == LevelFatal)
 }
 
 func (w *JSONWriter) formatJSONStatusSecure(buf *BytesBuffer, e *Entry, trusted bool, redactionMark string) {
@@ -187,15 +207,7 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
-	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
-	w.mu.Unlock()
-
-	w.putJSONBuffer(rawBuf)
-	if err != nil {
-		return fmt.Errorf("json write failed: %w", err)
-	}
-	return nil
+	return w.emitJSON(rawBuf, e.Level == LevelFatal)
 }
 
 func (w *JSONWriter) formatJSONGroupSecure(buf *BytesBuffer, e *Entry, items []GroupItem, trusted bool, redactionMark string) {
@@ -292,15 +304,7 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	w.formatJSONSecure(buf, e, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
-	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
-	w.mu.Unlock()
-
-	w.putJSONBuffer(rawBuf)
-	if err != nil {
-		return fmt.Errorf("json write failed: %w", err)
-	}
-	return nil
+	return w.emitJSON(rawBuf, e.Level == LevelFatal)
 }
 
 func (w *JSONWriter) formatJSONSecure(buf *BytesBuffer, e *Entry, trusted bool, redactionMark string) {
@@ -640,15 +644,7 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
-	w.mu.Lock()
-	_, err := w.out.Write(buf.Bytes())
-	w.mu.Unlock()
-
-	w.putJSONBuffer(rawBuf)
-	if err != nil {
-		return fmt.Errorf("json write failed: %w", err)
-	}
-	return nil
+	return w.emitJSON(rawBuf, e.Level == LevelFatal)
 }
 
 func (w *JSONWriter) formatJSONContinueSecure(buf *BytesBuffer, e *Entry, lines []string, trusted bool, redactionMark string) {
@@ -720,8 +716,30 @@ func (w *JSONWriter) formatJSONContinueSecure(buf *BytesBuffer, e *Entry, lines 
 // Flush drains any buffered output without closing the writer.
 // Only has effect when the underlying io.Writer implements Flush.
 func (w *JSONWriter) Flush() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	if a := w.async; a != nil {
+		// Drain through the queue rather than flushing underneath it: the
+		// barrier acknowledges only after the drainer wrote everything ahead
+		// of it, so the underlying flush sees every accepted record. The
+		// inFlight registration keeps Close from retiring the drainer while
+		// this barrier is still in flight; a closed writer was already
+		// drained and flushed by Close itself.
+		if !w.admit() {
+			return nil
+		}
+		b := make(chan struct{})
+		a.ch <- jsonAsyncItem{barrier: b}
+		<-b
+		w.inFlight.Done()
+
+		// Serialise the underlying flush with the drainer's writes via the
+		// async I/O mutex; w.mu is admission-only here, so a concurrent
+		// caller never waits behind this flush either.
+		a.writeMu.Lock()
+		defer a.writeMu.Unlock()
+	} else {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+	}
 
 	if f, ok := w.out.(interface{ Flush() error }); ok {
 		return f.Flush()
@@ -746,8 +764,30 @@ func (w *JSONWriter) Close() error {
 		// flush below is the last underlying write.
 		w.inFlight.Wait()
 
+		if a := w.async; a != nil {
+			// Admission is gone and every admitted caller has finished its
+			// enqueue, so nothing else can enter the queue. The stop sentinel
+			// rides behind the last buffered record; its ack means the queue
+			// is empty, and done proves the drainer's final write finished
+			// before the flush below. There is deliberately no timeout: a
+			// stalled sink blocks Close, same as the synchronous contract.
+			b := make(chan struct{})
+			a.ch <- jsonAsyncItem{barrier: b, stop: true}
+			<-b
+			<-a.done
+
+			a.writeErrMu.Lock()
+			err := a.writeErr
+			a.writeErrMu.Unlock()
+			if err != nil && w.closeErr == nil {
+				w.closeErr = err
+			}
+		}
+
 		if f, ok := w.out.(interface{ Flush() error }); ok {
-			w.closeErr = f.Flush()
+			if err := f.Flush(); err != nil && w.closeErr == nil {
+				w.closeErr = err
+			}
 		}
 	})
 	// A second concurrent Close waits for the same completed drain and

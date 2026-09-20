@@ -303,7 +303,11 @@ func newFromConfig(cfg *config) *Logger {
 	}
 
 	if cfg.StructuredOutput != nil && cfg.StructuredOutput != io.Discard {
-		logger.jsonWriter = NewJSONWriter(cfg.StructuredOutput)
+		if cfg.AsyncOutput != nil {
+			logger.jsonWriter = NewAsyncJSONWriter(cfg.StructuredOutput, *cfg.AsyncOutput)
+		} else {
+			logger.jsonWriter = NewJSONWriter(cfg.StructuredOutput)
+		}
 	}
 
 	return logger
@@ -460,6 +464,17 @@ func (l *Logger) Writer(name string) Writer {
 		return nil
 	}
 	return l.writers.mw.WriterByName(name)
+}
+
+// StructuredDroppedCount reports how many structured records the async drop
+// policy (WithAsyncOutput with OnFull: AsyncDrop) has discarded because the
+// queue was full. It is always 0 without that option and never counts
+// MultiWriter drops, which remain on MultiWriter.DroppedCount. Nil-safe.
+func (l *Logger) StructuredDroppedCount() uint64 {
+	if l == nil || l.jsonWriter == nil {
+		return 0
+	}
+	return l.jsonWriter.DroppedCount()
 }
 
 // Close flushes and shuts down all writers owned by the logger.

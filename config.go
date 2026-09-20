@@ -78,6 +78,11 @@ type config struct {
 	StructuredOutput io.Writer
 	Sampler          Sampler
 
+	// AsyncOutput opts the structured (JSON) writer into non-blocking
+	// delivery when non-nil; see WithAsyncOutput. Preset options reset it, so
+	// apply WithAsyncOutput after any preset.
+	AsyncOutput *AsyncConfig
+
 	// NotifyOutput is the destination for Notify/NotifyLines/NotifyBox calls.
 	// Defaults to os.Stderr. Override via WithNotifyOutput — useful in tests
 	// where stderr is not captured by the test runner.
