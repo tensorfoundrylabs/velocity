@@ -885,6 +885,12 @@ func (s *slowSink) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (s *slowSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.n
+}
+
 // BenchmarkJSONWriterAsync_SlowSinkParallel measures the async caller path
 // against a real serialised sink cost. The steady-state allocation gate for
 // the buffer handoff lives in TestAsyncOutput_ParallelSteadyStateAllocations:
@@ -938,6 +944,9 @@ func BenchmarkJSONWriterParallel_SlowSinkAsyncBlock(b *testing.B) {
 		}
 	})
 	b.StopTimer()
+	if err := logger.Close(); err != nil {
+		b.Fatal(err)
+	}
 	reportSlowSink(b, sink)
 }
 
@@ -954,6 +963,9 @@ func BenchmarkJSONWriterParallel_SlowSinkAsyncDrop(b *testing.B) {
 		}
 	})
 	b.StopTimer()
+	if err := logger.Close(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportMetric(float64(logger.StructuredDroppedCount())/float64(b.N), "dropped/op")
 	reportSlowSink(b, sink)
 }
@@ -965,7 +977,7 @@ func reportSlowSink(b *testing.B, s *slowSink) {
 	if b.N == 0 {
 		return
 	}
-	b.ReportMetric(float64(s.n)/float64(b.N), "sinkW/op")
+	b.ReportMetric(float64(s.count())/float64(b.N), "sinkW/op")
 }
 
 // BenchmarkJSONWriter_AnyPlainError pins the Any(error) hot path to zero
