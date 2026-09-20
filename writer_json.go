@@ -795,13 +795,16 @@ func (w *JSONWriter) Flush() error {
 		b := make(chan struct{})
 		a.ch <- jsonAsyncItem{barrier: b}
 		<-b
-		w.inFlight.Done()
 
 		// Serialise the underlying flush with the drainer's writes via the
 		// async I/O mutex; w.mu is admission-only here, so a concurrent
-		// caller never waits behind this flush either.
+		// caller never waits behind this flush either. The in-flight slot
+		// spans the flush too: released only after the mutex section, so
+		// Close's inFlight.Wait covers the whole operation, not just the
+		// barrier.
 		a.writeMu.Lock()
 		defer a.writeMu.Unlock()
+		defer w.inFlight.Done()
 	} else {
 		w.mu.Lock()
 		defer w.mu.Unlock()
