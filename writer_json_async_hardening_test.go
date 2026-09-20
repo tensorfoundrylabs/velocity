@@ -102,7 +102,7 @@ func waitForParkedSend(t *testing.T, fn string, deadline time.Duration) bool {
 	for time.Now().Before(deadlineAt) {
 		stacks := make([]byte, 1<<20)
 		n := runtime.Stack(stacks, true)
-		for _, block := range strings.Split(string(stacks[:n]), "\n\n") {
+		for block := range strings.SplitSeq(string(stacks[:n]), "\n\n") {
 			if strings.Contains(block, "[chan send]") && strings.Contains(block, fn) {
 				return true
 			}

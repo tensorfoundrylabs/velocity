@@ -120,9 +120,11 @@ func TestMultiWriter_QueueDepth1DeliversOrDropsExactly(t *testing.T) {
 	wg.Wait()
 
 	waitFor(t, func() bool {
+		//nolint:gosec // test-only accounting against a fixed entry count
 		return delivered.Load()+int64(mw.DroppedCount()) == int64(total)
 	}, 5*time.Second, time.Millisecond, "depth-1 worker to settle")
 
+	//nolint:gosec // test-only accounting against a fixed entry count
 	if got := delivered.Load() + int64(mw.DroppedCount()); got != int64(total) {
 		t.Fatalf("delivered %d + dropped %d != sent %d", delivered.Load(), mw.DroppedCount(), total)
 	}
