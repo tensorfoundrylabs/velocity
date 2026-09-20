@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -728,5 +729,61 @@ func TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush(t *testing.T) {
 		if len(sink.lines) != 1 {
 			t.Fatalf("delivered %d lines, want 1", len(sink.lines))
 		}
+	}
+}
+
+// TestAsyncOutput_ParallelSteadyStateAllocations is the allocation gate for
+// the async buffer handoff: default queue depth, parallel producers against
+// a sink charging a real serialised cost, measured once the one-off ramp
+// (one 2KiB buffer per queue slot warming sync.Pool) has been paid. Steady
+// state on the pool allocates nothing; a per-record allocation on the handoff
+// path allocates a buffer pair per record and lands far over the budget.
+// Runs under make ready's test phase, unlike a benchmark-body assertion.
+func TestAsyncOutput_ParallelSteadyStateAllocations(t *testing.T) {
+	sink := &slowSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink), WithAsyncOutput(AsyncConfig{}))
+	fields := fiveFields()
+
+	// Ramp: 8 producers until the queue has been full, so the buffer
+	// population exists and the pool is warm before the measured window.
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 12000 {
+				logger.Info("request completed", fields...)
+			}
+		}()
+	}
+	wg.Wait()
+
+	old := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(old)
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 5000 {
+				logger.Info("request completed", fields...)
+			}
+		}()
+	}
+	wg.Wait()
+	runtime.ReadMemStats(&after)
+
+	const measured = 4 * 5000
+	// A per-record regression allocates one buffer pair per record (20000
+	// over this window); the pool serves steady state with nothing but rare
+	// scheduler-driven misses, so the budget is a sliver of the records.
+	if mallocs := after.Mallocs - before.Mallocs; mallocs > measured/1000*5 {
+		t.Fatalf("async parallel steady state allocated %d times over %d records; buffer pooling regressed", mallocs, measured)
+	}
+
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
