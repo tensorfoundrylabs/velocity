@@ -786,6 +786,14 @@ func (w *JSONWriter) Close() error {
 		// flush below is the last underlying write.
 		w.inFlight.Wait()
 
+		flushSink := func() {
+			if f, ok := w.out.(interface{ Flush() error }); ok {
+				if err := f.Flush(); err != nil && w.closeErr == nil {
+					w.closeErr = err
+				}
+			}
+		}
+
 		if a := w.async; a != nil {
 			// Admission is gone and every admitted caller has finished its
 			// enqueue, so nothing else can enter the queue. The stop sentinel
@@ -804,12 +812,16 @@ func (w *JSONWriter) Close() error {
 			if err != nil && w.closeErr == nil {
 				w.closeErr = err
 			}
-		}
 
-		if f, ok := w.out.(interface{ Flush() error }); ok {
-			if err := f.Flush(); err != nil && w.closeErr == nil {
-				w.closeErr = err
-			}
+			// Hold the drainer's I/O mutex across the final flush: an async
+			// Flush that admitted before close ends its in-flight slot at its
+			// barrier, before its own writeMu section, so inFlight.Wait alone
+			// does not exclude it from the sink yet.
+			a.writeMu.Lock()
+			flushSink()
+			a.writeMu.Unlock()
+		} else {
+			flushSink()
 		}
 	})
 	// A second concurrent Close waits for the same completed drain and

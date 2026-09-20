@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -666,6 +667,66 @@ func TestAsyncOutput_RichRecordsStayWholeAndOrdered(t *testing.T) {
 	for i, want := range wantMsgs {
 		if !strings.HasPrefix(lines[i].Message, want) {
 			t.Fatalf("line %d message %q, want prefix %q: rich records broke FIFO ordering", i, lines[i].Message, want)
+		}
+	}
+}
+
+// flushSpySink detects concurrent entry into Flush: Close's final flush must
+// be exclusive with a still-running async Flush that admitted before close
+// (review finding F1 — the race detector flags the overlap, the counter makes
+// it observable without one).
+type flushSpySink struct {
+	mu       sync.Mutex
+	lines    []string
+	inFlush  atomic.Int32
+	flushMax atomic.Int32
+}
+
+func (s *flushSpySink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	s.lines = append(s.lines, strings.TrimRight(string(p), "\n"))
+	s.mu.Unlock()
+	return len(p), nil
+}
+
+func (s *flushSpySink) Flush() error {
+	now := s.inFlush.Add(1)
+	for {
+		old := s.flushMax.Load()
+		if now <= old || s.flushMax.CompareAndSwap(old, now) {
+			break
+		}
+	}
+	time.Sleep(time.Millisecond)
+	s.inFlush.Add(-1)
+	return nil
+}
+
+func TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush(t *testing.T) {
+	t.Parallel()
+
+	for range 25 {
+		sink := &flushSpySink{}
+		logger := newAsyncTestLogger(sink, AsyncConfig{Queue: 8, OnFull: AsyncBlock})
+		logger.Info("record")
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = logger.jsonWriter.Flush()
+		}()
+		go func() {
+			defer wg.Done()
+			_ = logger.Close()
+		}()
+		wg.Wait()
+
+		if got := sink.flushMax.Load(); got > 1 {
+			t.Fatalf(" Flush overlapped %d deep with Close's final flush", got)
+		}
+		if len(sink.lines) != 1 {
+			t.Fatalf("delivered %d lines, want 1", len(sink.lines))
 		}
 	}
 }
