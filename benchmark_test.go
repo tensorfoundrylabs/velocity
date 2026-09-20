@@ -444,6 +444,42 @@ func BenchmarkJSONWriter_Parallel(b *testing.B) {
 	reportSink(b, sink)
 }
 
+// BenchmarkJSONWriterSync and BenchmarkJSONWriterAsync compare the per-call
+// cost of the structured path through a full Logger, with and without
+// WithAsyncOutput. Both write to the same bench sink with the console output
+// discarded, so the only difference is where the finished bytes are handed
+// off: in-line under the writer mutex versus a channel enqueue to the
+// drainer. The async number excludes the drainer's write cost (it runs on
+// its own goroutine against an in-memory sink), which is the point: the
+// caller no longer pays for the syscall.
+func BenchmarkJSONWriterSync(b *testing.B) {
+	sink := &benchSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink))
+	defer func() { _ = logger.Close() }()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		logger.Info("request completed", fields...)
+	}
+	b.StopTimer()
+	reportSink(b, sink)
+}
+
+func BenchmarkJSONWriterAsync(b *testing.B) {
+	sink := &benchSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink), WithAsyncOutput(AsyncConfig{}))
+	defer func() { _ = logger.Close() }()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		logger.Info("request completed", fields...)
+	}
+	b.StopTimer()
+	reportSink(b, sink)
+}
+
 // ---- Tree-mode rendering benchmarks ----------------------------------------
 //
 // Console-only serialization (no structured writer), with the display-mode
