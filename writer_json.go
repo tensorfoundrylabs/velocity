@@ -13,10 +13,10 @@ import (
 	"unicode/utf8"
 )
 
-// The field order below is hand-chosen, not betteralign-sorted: async sits
-// immediately after out so the sync path's nil check on it shares the hot
-// cache line. With the pointer elsewhere the check cost the parallel
-// structured path a measured ~5%.
+// JSONWriter emits structured JSON records. Its field order is hand-chosen,
+// not betteralign-sorted: async sits immediately after out so the sync
+// path's nil check on it shares the hot cache line. With the pointer
+// elsewhere the check cost the parallel structured path a measured ~5%.
 type JSONWriter struct { // betteralign:ignore
 	out io.Writer
 	// async, when non-nil, routes completed records through a bounded queue
@@ -616,29 +616,7 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		_ = buf.WriteByte('"')
 
 	case FieldTypeAny:
-		// Preserve arbitrary values as JSON. A marshal error still produces valid
-		// JSON with an explicit diagnostic rather than corrupting the log stream.
-		v := *(*any)(f.value)
-		// json.Marshal only sees exported fields, so an error value (errors.New,
-		// fmt.Errorf, every runtime.Error, including recovered panics) would
-		// render as {} and lose its message. Error() is the content that
-		// matters, so render it as a JSON string.
-		if err, ok := v.(error); ok {
-			w.writeJSONString(buf, err.Error())
-			return
-		}
-		raw, mErr := json.Marshal(v)
-		if mErr != nil {
-			w.writeJSONString(buf, "<velocity: JSON marshal failed: "+mErr.Error()+">")
-			return
-		}
-		// A Stringer marshaling to an empty object carries its real content in
-		// String(); prefer that over a useless {}.
-		if s, ok := v.(fmt.Stringer); ok && len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
-			w.writeJSONString(buf, s.String())
-			return
-		}
-		_, _ = buf.Write(raw)
+		w.writeJSONAnyValue(buf, f)
 
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.
@@ -653,6 +631,31 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		// Null prevents JSON parsing errors when field type cannot be determined
 		buf.WriteString("null")
 	}
+}
+
+// writeJSONAnyValue preserves an arbitrary value as JSON. json.Marshal only
+// sees exported fields, so an error value (errors.New, fmt.Errorf, every
+// runtime.Error, including recovered panics) would render as {} and lose its
+// message; Error() is the content that matters, so it renders as a JSON
+// string. A Stringer whose marshaled form is an empty object gets the same
+// treatment. A marshal error still produces valid JSON with an explicit
+// diagnostic rather than corrupting the log stream.
+func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
+	v := *(*any)(f.value)
+	if err, ok := v.(error); ok {
+		w.writeJSONString(buf, err.Error())
+		return
+	}
+	raw, mErr := json.Marshal(v)
+	if mErr != nil {
+		w.writeJSONString(buf, "<velocity: JSON marshal failed: "+mErr.Error()+">")
+		return
+	}
+	if s, ok := v.(fmt.Stringer); ok && len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
+		w.writeJSONString(buf, s.String())
+		return
+	}
+	_, _ = buf.Write(raw)
 }
 
 // writeJSONSliceCount emits the element count for typed-slice fields (GroupItems,

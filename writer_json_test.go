@@ -490,7 +490,7 @@ func TestJSONWriter_AnyErrorRendersMessage(t *testing.T) {
 	func() {
 		defer func() { panicErr, _ = recover().(error) }()
 		s := []int{1}
-		_ = s[5]
+		_ = s[5] //nolint:gosec // the out-of-range index is the point: it yields a runtime.Error
 	}()
 	if panicErr == nil {
 		t.Fatal("recover did not yield a runtime error")
