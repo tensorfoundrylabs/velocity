@@ -610,36 +610,43 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 }
 
 // writeJSONAnyValue preserves an arbitrary value as JSON, with this
-// precedence: a json.Marshaler's explicit form always wins (a structured
-// error carrying MarshalJSON keeps its shape); otherwise an error renders
-// Error() as a JSON string, because json.Marshal only sees exported fields
-// and would turn errors.New, fmt.Errorf and every runtime.Error, including
-// recovered panics, into a message-less {}; otherwise a Stringer whose
-// marshaled form is {} renders String(); otherwise the marshaled bytes pass
-// through. Typed nils fall through to null rather than calling a method on a
-// nil receiver. A marshal error still produces valid JSON with an explicit
+// ladder: a json.Marshaler's explicit form wins when MarshalJSON succeeds
+// (a structured error carrying MarshalJSON keeps its shape); a failing
+// MarshalJSON falls through. An error then renders Error() as a JSON
+// string, because json.Marshal only sees exported fields and would turn
+// errors.New, fmt.Errorf and every runtime.Error, including recovered
+// panics, into a message-less {}; this includes errors whose MarshalJSON
+// failed. Otherwise json.Marshal runs, a Stringer whose marshaled form is
+// {} renders String(), and anything else passes the marshaled bytes
+// through. Marshaler and error are settled by type assertion before any
+// marshal call so a plain error never pays json.Marshal's reflection cost.
+// Typed nils render JSON null rather than calling a method on a nil
+// receiver. A marshal error still produces valid JSON with an explicit
 // diagnostic rather than corrupting the log stream.
 func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 	v := *(*any)(f.value)
 	// Typed nils (a nil *T stored in the interface) pass the error and
 	// Stringer assertions, and a pointer-receiver method dereferences nil and
-	// panics inside the caller's log statement. Guard exactly as the Error
-	// and Stringer field constructors do and let json.Marshal render null.
+	// panics inside the caller's log statement. The guard is deliberately
+	// broader than the Error and Stringer field constructors' (which check
+	// pointers only), and the value renders as JSON null.
 	if isTypedNilAny(v) {
 		buf.WriteString("null")
+		return
+	}
+	if m, ok := v.(json.Marshaler); ok {
+		if raw, err := m.MarshalJSON(); err == nil {
+			_, _ = buf.Write(raw)
+			return
+		}
+	}
+	if err, ok := v.(error); ok {
+		w.writeJSONString(buf, err.Error())
 		return
 	}
 	raw, mErr := json.Marshal(v)
 	if mErr != nil {
 		w.writeJSONString(buf, "<velocity: JSON marshal failed: "+mErr.Error()+">")
-		return
-	}
-	if _, ok := v.(json.Marshaler); ok {
-		_, _ = buf.Write(raw)
-		return
-	}
-	if err, ok := v.(error); ok {
-		w.writeJSONString(buf, err.Error())
 		return
 	}
 	if s, ok := v.(fmt.Stringer); ok && len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
@@ -650,14 +657,15 @@ func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 }
 
 // isTypedNilAny reports whether an Any value is a nil interface or an
-// interface holding a nil pointer, map, slice, interface or func: shapes
-// whose methods would run on a nil receiver.
+// interface holding a nil pointer, map, slice or func: shapes whose methods
+// would run on a nil receiver. reflect.Interface cannot appear here because
+// reflect.ValueOf unwraps the interface before reporting a kind.
 func isTypedNilAny(v any) bool {
 	if v == nil {
 		return true
 	}
 	switch rv := reflect.ValueOf(v); rv.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func:
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func:
 		return rv.IsNil()
 	default:
 		return false

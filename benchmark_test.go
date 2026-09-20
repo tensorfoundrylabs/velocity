@@ -1,6 +1,7 @@
 package velocity
 
 import (
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -965,4 +966,24 @@ func reportSlowSink(b *testing.B, s *slowSink) {
 		return
 	}
 	b.ReportMetric(float64(s.n)/float64(b.N), "sinkW/op")
+}
+
+// BenchmarkJSONWriter_AnyPlainError pins the Any(error) hot path to zero
+// allocations: the ladder settles Marshaler and error by type assertion
+// before any json.Marshal reflection runs. A regression to one allocation
+// per plain error (the round-3 finding) shows here as 1 allocs/op.
+var benchPlainErr = errors.New("request failed")
+
+func BenchmarkJSONWriter_AnyPlainError(b *testing.B) {
+	sink := &benchSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink))
+	defer func() { _ = logger.Close() }()
+	fields := []Field{Any("err", benchPlainErr)}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		logger.Info("request completed", fields...)
+	}
+	b.StopTimer()
+	reportSink(b, sink)
 }

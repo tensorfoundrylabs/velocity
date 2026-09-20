@@ -39,10 +39,11 @@
   `runtime.Error` and any opaque struct logged as `{}` and a recovered
   panic lost its message. This is a behaviour change from v2.2.0's `{}`
   output: those values now appear as their text. Precedence: a
-  `json.Marshaler`'s explicit form always wins (a structured error carrying
-  `MarshalJSON` keeps its shape), then `Error()` for errors, then
-  `String()` for stringers that marshal to `{}`. Typed nils render null
-  instead of panicking on a nil receiver.
+  `json.Marshaler`'s explicit form wins when `MarshalJSON` succeeds (a
+  structured error carrying `MarshalJSON` keeps its shape); a failing
+  `MarshalJSON` falls through, then `Error()` for errors, then `String()`
+  for stringers that marshal to `{}`. Typed nils render null instead of
+  panicking on a nil receiver.
 
 ## v2.2.1 (2026-09-19)
 

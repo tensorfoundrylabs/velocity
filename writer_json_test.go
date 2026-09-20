@@ -624,3 +624,36 @@ func TestJSONWriter_AnyMarshalerErrorKeepsJSONForm(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 }
+
+// marshalFailError's MarshalJSON always fails; the ladder must fall through
+// to Error() rather than emitting a marshal diagnostic.
+type marshalFailError struct{}
+
+func (e *marshalFailError) Error() string { return "marshal failed but message survives" }
+
+func (e *marshalFailError) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("unserialisable")
+}
+
+func TestJSONWriter_AnyFailingMarshalJSONFallsBackToError(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: "failing marshaler",
+		Fields:  []Field{Any("err", &marshalFailError{})},
+	}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, "marshal failed but message survives") {
+		t.Fatalf("line %q lost the Error() message behind a failing MarshalJSON", line)
+	}
+	if strings.Contains(line, "marshal failed: unserialisable") {
+		t.Fatalf("line %q rendered the marshal diagnostic instead of falling back to Error()", line)
+	}
+}
