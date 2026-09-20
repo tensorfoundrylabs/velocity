@@ -92,10 +92,12 @@ func waitForQueueSettled(t *testing.T, l *Logger) {
 
 // waitForParkedSend polls goroutine stacks until some goroutine is PARKED in
 // a channel send inside the named function. Unlike waitForStack it ties the
-// [chan send] state to the function frame, so an unrelated blocked sender in
-// a parallel test can never satisfy it. Used as the deterministic handshake
-// proving a caller's record is already admitted (admit runs before the send)
-// before Close starts racing admission.
+// [chan send] state to the function frame. The match is process-wide, so
+// callers must ensure no other running test can park a sender in fn: use
+// from sequential tests only (parallel tests are paused while a sequential
+// test runs). Used as the deterministic handshake proving a caller's record
+// is already admitted (admit runs before the send) before Close starts
+// racing admission.
 func waitForParkedSend(t *testing.T, fn string, deadline time.Duration) bool {
 	t.Helper()
 	deadlineAt := time.Now().Add(deadline)
@@ -163,8 +165,14 @@ func checkPerGoroutineOrder(t *testing.T, msgs []string, prefix string, goroutin
 // blocks. Interleaved enqueue/drain must not deadlock, ordering must hold,
 // and Close must still drain the blocked caller's record (its in-flight
 // registration holds the Close drain open until the send lands).
+//
+// Deliberately NOT t.Parallel: waitForParkedSend matches any goroutine
+// parked in a chan send inside enqueueAsync, and the other async tests park
+// their own senders there. A parallel neighbour can satisfy the handshake
+// before this test's caller has admitted its final record, letting Close
+// win the admission race and legitimately reject it. Sequential tests run
+// alone (parallel ones are paused), so the park is provably ours.
 func TestAsyncOutput_QueueDepth1_InterleavingAndCloseStillDrains(t *testing.T) {
-	t.Parallel()
 
 	sink := newGatedSink()
 	logger := newAsyncTestLogger(sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
