@@ -634,12 +634,15 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 	}
 }
 
-// writeJSONAnyValue preserves an arbitrary value as JSON. json.Marshal only
-// sees exported fields, so an error value (errors.New, fmt.Errorf, every
-// runtime.Error, including recovered panics) would render as {} and lose its
-// message; Error() is the content that matters, so it renders as a JSON
-// string. A Stringer whose marshaled form is an empty object gets the same
-// treatment. A marshal error still produces valid JSON with an explicit
+// writeJSONAnyValue preserves an arbitrary value as JSON, with this
+// precedence: a json.Marshaler's explicit form always wins (a structured
+// error carrying MarshalJSON keeps its shape); otherwise an error renders
+// Error() as a JSON string, because json.Marshal only sees exported fields
+// and would turn errors.New, fmt.Errorf and every runtime.Error, including
+// recovered panics, into a message-less {}; otherwise a Stringer whose
+// marshaled form is {} renders String(); otherwise the marshaled bytes pass
+// through. Typed nils fall through to null rather than calling a method on a
+// nil receiver. A marshal error still produces valid JSON with an explicit
 // diagnostic rather than corrupting the log stream.
 func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 	v := *(*any)(f.value)
@@ -651,13 +654,17 @@ func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 		buf.WriteString("null")
 		return
 	}
-	if err, ok := v.(error); ok {
-		w.writeJSONString(buf, err.Error())
-		return
-	}
 	raw, mErr := json.Marshal(v)
 	if mErr != nil {
 		w.writeJSONString(buf, "<velocity: JSON marshal failed: "+mErr.Error()+">")
+		return
+	}
+	if _, ok := v.(json.Marshaler); ok {
+		_, _ = buf.Write(raw)
+		return
+	}
+	if err, ok := v.(error); ok {
+		w.writeJSONString(buf, err.Error())
 		return
 	}
 	if s, ok := v.(fmt.Stringer); ok && len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {

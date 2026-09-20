@@ -581,3 +581,46 @@ type stringerVal struct {
 }
 
 func (s stringerVal) String() string { return "opaque value 7" }
+
+// structuredErr carries both an Error() message and an explicit JSON form;
+// the explicit form must win so structured errors keep their shape.
+type structuredErr struct {
+	Code  int
+	Stage string
+}
+
+func (e *structuredErr) Error() string {
+	return "stage " + e.Stage + " failed with code 42"
+}
+
+func (e *structuredErr) MarshalJSON() ([]byte, error) {
+	return []byte(`{"code":42,"stage":"` + e.Stage + `"}`), nil
+}
+
+func TestJSONWriter_AnyMarshalerErrorKeepsJSONForm(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	e := &Entry{
+		Time:    time.Now(),
+		Level:   LevelInfo,
+		Message: "marshaler error",
+		Fields:  []Field{Any("err", &structuredErr{Code: 42, Stage: "deploy"})},
+	}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, `"code":42`) {
+		t.Fatalf("line %q does not carry the MarshalJSON form", line)
+	}
+	if strings.Contains(line, "failed with code") {
+		t.Fatalf("line %q rendered Error() over the explicit JSON form", line)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+}
