@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -469,3 +470,90 @@ func jsonStringField(t *testing.T, m map[string]any, key string) string {
 	}
 	return v
 }
+
+// An Any field holding an error must render its message text, not the {} that
+// json.Marshal produces for values whose content lives in unexported fields
+// (errors.New, fmt.Errorf, every runtime.Error including recovered panics).
+func TestJSONWriter_AnyErrorRendersMessage(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("write panicked: %v", r)
+		}
+	}()
+
+	// A recovered index-out-of-range is a runtime.Error; its Error() carries
+	// the panic message json.Marshal would discard.
+	var panicErr error
+	func() {
+		defer func() { panicErr, _ = recover().(error) }()
+		s := []int{1}
+		_ = s[5]
+	}()
+	if panicErr == nil {
+		t.Fatal("recover did not yield a runtime error")
+	}
+
+	inner := errors.New("inner failure")
+	cases := []struct {
+		key string
+		val any
+	}{
+		{"plain", errors.New("plain failure")},
+		{"wrapped", fmt.Errorf("outer: %w", inner)},
+		{"panic", panicErr},
+	}
+	fields := make([]Field, 0, len(cases))
+	for _, c := range cases {
+		fields = append(fields, Any(c.key, c.val))
+	}
+
+	e := &Entry{Time: time.Now(), Level: LevelInfo, Message: "any errors", Fields: fields}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	for _, want := range []string{
+		"plain failure",
+		"outer: inner failure",
+		"index out of range",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line %q does not contain %q: error message lost in Any rendering", line, want)
+		}
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+}
+
+// A Stringer whose marshaled form is an empty object must render String()
+// rather than {}.
+func TestJSONWriter_AnyStringerEmptyMarshalPrefersString(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewJSONWriter(&buf)
+
+	type opaque struct{ secret int }
+	fields := []Field{Any("v", stringerVal{opaque{7}})}
+
+	e := &Entry{Time: time.Now(), Level: LevelInfo, Message: "stringer", Fields: fields}
+	if err := w.Write(e); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, "opaque value 7") {
+		t.Fatalf("line %q does not contain the Stringer text", line)
+	}
+}
+
+type stringerVal struct {
+	inner any
+}
+
+func (s stringerVal) String() string { return "opaque value 7" }

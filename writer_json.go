@@ -590,11 +590,26 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 		// Preserve arbitrary values as JSON. A marshal error still produces valid
 		// JSON with an explicit diagnostic rather than corrupting the log stream.
 		v := *(*any)(f.value)
-		if raw, err := json.Marshal(v); err == nil {
-			_, _ = buf.Write(raw)
-		} else {
-			w.writeJSONString(buf, "<velocity: JSON marshal failed: "+err.Error()+">")
+		// json.Marshal only sees exported fields, so an error value (errors.New,
+		// fmt.Errorf, every runtime.Error, including recovered panics) would
+		// render as {} and lose its message. Error() is the content that
+		// matters, so render it as a JSON string.
+		if err, ok := v.(error); ok {
+			w.writeJSONString(buf, err.Error())
+			return
 		}
+		raw, mErr := json.Marshal(v)
+		if mErr != nil {
+			w.writeJSONString(buf, "<velocity: JSON marshal failed: "+mErr.Error()+">")
+			return
+		}
+		// A Stringer marshaling to an empty object carries its real content in
+		// String(); prefer that over a useless {}.
+		if s, ok := v.(fmt.Stringer); ok && len(raw) == 2 && raw[0] == '{' && raw[1] == '}' {
+			w.writeJSONString(buf, s.String())
+			return
+		}
+		_, _ = buf.Write(raw)
 
 	case FieldTypeSecure, FieldTypeSecureURL, FieldTypeRedacted, FieldTypeTruncated:
 		// Handled upstream by writeJSONFieldValueSecure before writeJSONFieldValueCore is called.

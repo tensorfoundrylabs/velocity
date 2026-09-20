@@ -28,6 +28,16 @@
   channel depth `MultiWriter` allocates in `AddWriter`, previously hardcoded
   at 256 (still the default; non-positive values fall back to it).
 
+### Fixed
+
+- An `Any` field holding an error now renders its `Error()` message as a
+  JSON string, and a `fmt.Stringer` whose marshaled form is an empty object
+  renders `String()`. Since v2.2.0 `Any` renders through `json.Marshal`,
+  which only sees exported fields, so `errors.New`, `fmt.Errorf`, every
+  `runtime.Error` and any opaque struct logged as `{}` and a recovered
+  panic lost its message. This is a behaviour change from v2.2.0's `{}`
+  output: those values now appear as their text.
+
 ## v2.2.1 (2026-09-19)
 
 Fixes and allocation work from the post-v2.2.0 review round. No public API
