@@ -207,15 +207,17 @@ func WithStructuredOutput(w io.Writer) Option {
 // writer's mutex) but then enqueue the finished bytes onto a bounded queue
 // drained by a single background goroutine that performs the write. No
 // syscall — and no mutex held across one — ever runs on the logging
-// goroutine, so a slow disk serialises nothing: at high request rates the
-// synchronous writer's mutex-across-write otherwise parks most request
-// goroutines on one lock.
+// goroutine: at high request rates the synchronous writer's
+// mutex-across-write otherwise parks most request goroutines on one lock.
 //
 // By default the queue holds DefaultAsyncQueue (8192) records; AsyncConfig.Queue
 // overrides it (non-positive values get the default). AsyncConfig.OnFull
 // selects block (lossless back-pressure, the zero value) or drop (never block
 // the caller; losses are counted and reported by Logger.StructuredDroppedCount
-// and JSONWriter.DroppedCount).
+// and JSONWriter.DroppedCount). AsyncBlock is not non-blocking under
+// sustained load: it buys Queue records of headroom, then the caller
+// back-pressures down to the sink's write rate. Availability-critical
+// request-path callers that must never stall want AsyncDrop.
 //
 // Fatal delivery stays reliable and ordered: a Fatal record rides the queue
 // behind a barrier, so it and every entry accepted before it are written

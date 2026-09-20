@@ -9,9 +9,11 @@
   then enqueue the finished bytes onto a bounded queue drained by a single
   goroutine that performs the write, so no syscall (and no mutex held across
   one) runs on the logging goroutine. `OnFull` selects `AsyncBlock`
-  (lossless back-pressure, the default) or `AsyncDrop` (never block; losses
-  counted and reported via `Logger.StructuredDroppedCount` and
-  `JSONWriter.DroppedCount`). Default queue depth is `DefaultAsyncQueue`
+  (lossless back-pressure over Queue records of headroom, then the caller
+  back-pressures to the sink's write rate; the default) or `AsyncDrop`
+  (never block; losses counted and reported via
+  `Logger.StructuredDroppedCount` and `JSONWriter.DroppedCount`; the choice
+  for availability-critical request paths). Default queue depth is `DefaultAsyncQueue`
   (8192), about 140ms of burst headroom at 60k lines/s for 16 MiB of pooled
   buffers. Fatal delivery stays reliable and ordered behind a barrier
   before the FatalHandler runs; Flush and Close drain everything accepted,
