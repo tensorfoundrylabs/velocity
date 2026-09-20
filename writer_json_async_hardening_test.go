@@ -173,7 +173,6 @@ func checkPerGoroutineOrder(t *testing.T, msgs []string, prefix string, goroutin
 // win the admission race and legitimately reject it. Sequential tests run
 // alone (parallel ones are paused), so the park is provably ours.
 func TestAsyncOutput_QueueDepth1_InterleavingAndCloseStillDrains(t *testing.T) {
-
 	sink := newGatedSink()
 	logger := newAsyncTestLogger(sink, AsyncConfig{Queue: 1, OnFull: AsyncBlock})
 

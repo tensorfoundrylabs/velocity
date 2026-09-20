@@ -14,16 +14,10 @@ import (
 )
 
 type JSONWriter struct {
-	jsonPool  sync.Pool
 	out       io.Writer
 	closeErr  error
+	jsonPool  sync.Pool
 	closeDone chan struct{}
-
-	// async, when non-nil, routes completed records through a bounded queue
-	// drained by one goroutine so callers never wait on the write syscall.
-	// Set once at construction and read-only afterwards. nil keeps the
-	// synchronous path byte-for-byte identical (and allocation-free).
-	async *jsonAsync
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
 	// still formatting (a Stringer, Error or Any marshal can block or reenter)
@@ -37,6 +31,13 @@ type JSONWriter struct {
 	closeOnce sync.Once
 	mu        sync.Mutex
 	closed    bool
+
+	// async, when non-nil, routes completed records through a bounded queue
+	// drained by one goroutine so callers never wait on the write syscall.
+	// Set once at construction and read-only afterwards. Kept after the
+	// hot-path fields so the sync path's field offsets, and therefore its
+	// cache-line behaviour, match the synchronous-only layout exactly.
+	async *jsonAsync
 }
 
 // admit is the admission critical section: the closed check and the in-flight
@@ -77,28 +78,6 @@ func (w *JSONWriter) putJSONBuffer(buf *bytes.Buffer) {
 	}
 }
 
-// emitJSON performs the I/O for a fully formatted record. The synchronous
-// path is unchanged: a short mutex around the write, buffer returned here.
-// The async path hands the bytes to the drainer instead, so the caller holds
-// no mutex across a syscall; the buffer returns to the pool from the drainer.
-// Reliable records (Fatal) always travel the queue behind a barrier so they
-// are written — in order with everything accepted before them — before the
-// call returns.
-func (w *JSONWriter) emitJSON(rawBuf *bytes.Buffer, reliable bool) error {
-	if a := w.async; a != nil {
-		w.enqueueAsync(rawBuf, reliable)
-		return nil
-	}
-	w.mu.Lock()
-	_, err := w.out.Write(rawBuf.Bytes())
-	w.mu.Unlock()
-	w.putJSONBuffer(rawBuf)
-	if err != nil {
-		return fmt.Errorf("json write failed: %w", err)
-	}
-	return nil
-}
-
 func appendFloat(buf *bytes.Buffer, f float64) {
 	buf.Write(strconv.AppendFloat(buf.AvailableBuffer(), f, 'g', -1, 64))
 }
@@ -132,7 +111,18 @@ func (w *JSONWriter) WriteStatusSecure(e *Entry, trusted bool, redactionMark str
 	// line — halving the number of syscalls per entry versus a separate Write(newlineByte).
 	_ = buf.WriteByte('\n')
 
-	return w.emitJSON(rawBuf, e.Level == LevelFatal)
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
+	w.mu.Lock()
+	_, err := w.out.Write(rawBuf.Bytes())
+	w.mu.Unlock()
+	w.putJSONBuffer(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
 }
 
 func (w *JSONWriter) formatJSONStatusSecure(buf *BytesBuffer, e *Entry, trusted bool, redactionMark string) {
@@ -207,7 +197,18 @@ func (w *JSONWriter) WriteGroupSecure(e *Entry, items []GroupItem, trusted bool,
 	w.formatJSONGroupSecure(buf, e, items, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
-	return w.emitJSON(rawBuf, e.Level == LevelFatal)
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
+	w.mu.Lock()
+	_, err := w.out.Write(rawBuf.Bytes())
+	w.mu.Unlock()
+	w.putJSONBuffer(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
 }
 
 func (w *JSONWriter) formatJSONGroupSecure(buf *BytesBuffer, e *Entry, items []GroupItem, trusted bool, redactionMark string) {
@@ -304,7 +305,18 @@ func (w *JSONWriter) WriteSecure(e *Entry, trusted bool, redactionMark string) e
 	w.formatJSONSecure(buf, e, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
-	return w.emitJSON(rawBuf, e.Level == LevelFatal)
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
+	w.mu.Lock()
+	_, err := w.out.Write(rawBuf.Bytes())
+	w.mu.Unlock()
+	w.putJSONBuffer(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
 }
 
 func (w *JSONWriter) formatJSONSecure(buf *BytesBuffer, e *Entry, trusted bool, redactionMark string) {
@@ -644,7 +656,18 @@ func (w *JSONWriter) WriteContinueSecure(e *Entry, lines []string, trusted bool,
 	w.formatJSONContinueSecure(buf, e, lines, trusted, redactionMark)
 	_ = buf.WriteByte('\n')
 
-	return w.emitJSON(rawBuf, e.Level == LevelFatal)
+	if w.async != nil {
+		w.enqueueAsync(rawBuf, e.Level == LevelFatal)
+		return nil
+	}
+	w.mu.Lock()
+	_, err := w.out.Write(rawBuf.Bytes())
+	w.mu.Unlock()
+	w.putJSONBuffer(rawBuf)
+	if err != nil {
+		return fmt.Errorf("json write failed: %w", err)
+	}
+	return nil
 }
 
 func (w *JSONWriter) formatJSONContinueSecure(buf *BytesBuffer, e *Entry, lines []string, trusted bool, redactionMark string) {
