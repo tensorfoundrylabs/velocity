@@ -222,8 +222,13 @@ func WithStructuredOutput(w io.Writer) Option {
 // before Logger.Fatal proceeds to the FatalHandler. Flush and Close drain
 // everything already accepted — Close stops admission first, the drainer
 // empties the queue, and there is no timeout, so a permanently stalled sink
-// blocks Close exactly as it would synchronously. Console output is
-// unaffected and stays synchronous.
+// blocks Close exactly as it would synchronously. Close is also amplified by
+// the queue: worst case it performs Queue sink writes (8192 of them at the
+// default depth, each at the sink's full per-write cost) before returning.
+// The library takes no deadline by standing rule, so a caller that needs a
+// bounded shutdown must bound Close itself (its own timeout around the call,
+// accepting that the drainer may still be writing afterwards). Console output
+// is unaffected and stays synchronous.
 //
 // The option must come after any preset option (WithProduction and friends
 // reset the whole config). Without this option behaviour is unchanged and

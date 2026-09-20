@@ -29,11 +29,14 @@ const (
 // 8192 records absorb roughly 130-400ms of burst at tens of thousands of
 // lines per second (at 60k lines/s — two INFO lines per request at 30k req/s —
 // it is ~140ms of headroom), which rides out scheduler spikes and short page
-// cache flushes without the caller noticing. Steady-state retention is a few
-// MiB of pooled 2KiB buffers, not entries. Records larger than the 32KiB
-// pool-eligibility cap are not pooled after writing, but while one waits in
-// the queue it occupies a slot at full size, so the true worst case scales
-// with the largest records still queued, not with the pool cap.
+// cache flushes without the caller noticing. Steady-state retention at the
+// default depth is 16 MiB of pooled 2KiB buffers (8192 x 2KiB), not entries.
+// Records larger than the 32KiB pool-eligibility cap are not pooled after
+// writing, but while one waits in the queue it occupies a slot at full size,
+// so the true worst case scales with the largest records still queued, not
+// with the pool cap. Close drains every queued record, so its worst case is
+// Queue sink writes with no library-side timeout; a deadline-bounded caller
+// must bound Close itself.
 const DefaultAsyncQueue = 8192
 
 // AsyncConfig configures the opt-in asynchronous structured output. Supply it

@@ -12,10 +12,12 @@
   (lossless back-pressure, the default) or `AsyncDrop` (never block; losses
   counted and reported via `Logger.StructuredDroppedCount` and
   `JSONWriter.DroppedCount`). Default queue depth is `DefaultAsyncQueue`
-  (8192), about 140ms of burst headroom at 60k lines/s for a few MiB of
-  pooled buffers. Fatal delivery stays reliable and ordered behind a barrier
+  (8192), about 140ms of burst headroom at 60k lines/s for 16 MiB of pooled
+  buffers. Fatal delivery stays reliable and ordered behind a barrier
   before the FatalHandler runs; Flush and Close drain everything accepted,
-  with no timeout (a stalled sink blocks Close as it would synchronously).
+  with no timeout (a stalled sink blocks Close as it would synchronously),
+  and worst-case Close performs Queue sink writes, so a deadline-bounded
+  caller must bound Close itself.
   Console output is unaffected. Without the option, behaviour is unchanged
   and the synchronous path gains no allocations.
 - `NewAsyncJSONWriter(out, AsyncConfig)` constructs the async JSON writer
