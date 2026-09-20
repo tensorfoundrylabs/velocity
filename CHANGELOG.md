@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `WithAsyncOutput(AsyncConfig{Queue, OnFull})` makes the primary structured
+  (JSON) output non-blocking. Callers format each record exactly as before,
+  then enqueue the finished bytes onto a bounded queue drained by a single
+  goroutine that performs the write, so no syscall (and no mutex held across
+  one) runs on the logging goroutine. `OnFull` selects `AsyncBlock`
+  (lossless back-pressure, the default) or `AsyncDrop` (never block; losses
+  counted and reported via `Logger.StructuredDroppedCount` and
+  `JSONWriter.DroppedCount`). Default queue depth is `DefaultAsyncQueue`
+  (8192), about 140ms of burst headroom at 60k lines/s for a few MiB of
+  pooled buffers. Fatal delivery stays reliable and ordered behind a barrier
+  before the FatalHandler runs; Flush and Close drain everything accepted,
+  with no timeout (a stalled sink blocks Close as it would synchronously).
+  Console output is unaffected. Without the option, behaviour is unchanged
+  and the synchronous path gains no allocations.
+- `NewAsyncJSONWriter(out, AsyncConfig)` constructs the async JSON writer
+  directly.
+- `WithWriterQueueDepth(n)` (`WriterOption`) configures the per-writer
+  channel depth `MultiWriter` allocates in `AddWriter`, previously hardcoded
+  at 256 (still the default; non-positive values fall back to it).
+
 ## v2.2.1 (2026-09-19)
 
 Fixes and allocation work from the post-v2.2.0 review round. No public API
