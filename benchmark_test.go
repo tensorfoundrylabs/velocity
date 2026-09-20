@@ -447,14 +447,14 @@ func BenchmarkJSONWriter_Parallel(b *testing.B) {
 	reportSink(b, sink)
 }
 
-// BenchmarkJSONWriterSync and BenchmarkJSONWriterAsync compare the per-call
-// cost of the structured path through a full Logger, with and without
-// WithAsyncOutput. Both write to the same bench sink with the console output
-// discarded, so the only difference is where the finished bytes are handed
-// off: in-line under the writer mutex versus a channel enqueue to the
-// drainer. The async number excludes the drainer's write cost (it runs on
-// its own goroutine against an in-memory sink), which is the point: the
-// caller no longer pays for the syscall.
+// BenchmarkJSONWriterSync and BenchmarkJSONWriterAsync are the enqueue-cost
+// microbenchmark: the per-call cost of the structured path through a full
+// Logger, with and without WithAsyncOutput, against a free in-memory sink.
+// The only difference is where the finished bytes are handed off: in-line
+// under the writer mutex versus a channel enqueue to the drainer. The async
+// number excludes the drainer's write cost, so it says nothing about
+// behaviour against a real sink; the SlowSinkParallel family below measures
+// that.
 func BenchmarkJSONWriterSync(b *testing.B) {
 	sink := &benchSink{}
 	logger := New(WithProduction(), WithStructuredOutput(sink))
@@ -932,4 +932,67 @@ func BenchmarkJSONWriterAsync_SlowSinkParallel(b *testing.B) {
 	if mallocs := after.Mallocs - before.Mallocs; mallocs > 5 {
 		b.Fatalf("async path allocated %d times over 1000 steady-state calls; buffer recycling regressed", mallocs)
 	}
+}
+
+// The parallel family against a sink with a real serialised cost (2µs under
+// a mutex): the shape a disk or socket actually presents. Sync pays the
+// serialised write on every goroutine's call; AsyncBlock pays it only when
+// the queue's headroom runs out; AsyncDrop never pays it and counts the loss.
+func BenchmarkJSONWriterParallel_SlowSinkSync(b *testing.B) {
+	sink := &slowSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink))
+	defer func() { _ = logger.Close() }()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			logger.Info("request completed", fields...)
+		}
+	})
+	b.StopTimer()
+	reportSlowSink(b, sink)
+}
+
+func BenchmarkJSONWriterParallel_SlowSinkAsyncBlock(b *testing.B) {
+	sink := &slowSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink), WithAsyncOutput(AsyncConfig{}))
+	defer func() { _ = logger.Close() }()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			logger.Info("request completed", fields...)
+		}
+	})
+	b.StopTimer()
+	reportSlowSink(b, sink)
+}
+
+func BenchmarkJSONWriterParallel_SlowSinkAsyncDrop(b *testing.B) {
+	sink := &slowSink{}
+	logger := New(WithProduction(), WithStructuredOutput(sink), WithAsyncOutput(AsyncConfig{OnFull: AsyncDrop}))
+	defer func() { _ = logger.Close() }()
+	fields := fiveFields()
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			logger.Info("request completed", fields...)
+		}
+	})
+	b.StopTimer()
+	b.ReportMetric(float64(logger.StructuredDroppedCount())/float64(b.N), "dropped/op")
+	reportSlowSink(b, sink)
+}
+
+// reportSlowSink is reportSink's counterpart for slowSink, which counts
+// writes rather than bytes.
+func reportSlowSink(b *testing.B, s *slowSink) {
+	b.Helper()
+	if b.N == 0 {
+		return
+	}
+	b.ReportMetric(float64(s.n)/float64(b.N), "sinkW/op")
 }
