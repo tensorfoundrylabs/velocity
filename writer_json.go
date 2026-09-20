@@ -13,17 +13,21 @@ import (
 	"unicode/utf8"
 )
 
-type JSONWriter struct {
-	jsonPool  sync.Pool
-	out       io.Writer
-	closeErr  error
-	closeDone chan struct{}
-
+// The field order below is hand-chosen, not betteralign-sorted: async sits
+// immediately after out so the sync path's nil check on it shares the hot
+// cache line. With the pointer elsewhere the check cost the parallel
+// structured path a measured ~5%.
+type JSONWriter struct { // betteralign:ignore
+	out io.Writer
 	// async, when non-nil, routes completed records through a bounded queue
 	// drained by one goroutine so callers never wait on the write syscall.
 	// Set once at construction and read-only afterwards. A nil check on the
 	// sync path is its only cost.
 	async *jsonAsync
+
+	jsonPool  sync.Pool
+	closeErr  error
+	closeDone chan struct{}
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
 	// still formatting (a Stringer, Error or Any marshal can block or reenter)
