@@ -740,6 +740,9 @@ func TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush(t *testing.T) {
 // path allocates a buffer pair per record and lands far over the budget.
 // Runs under make ready's test phase, unlike a benchmark-body assertion.
 func TestAsyncOutput_ParallelSteadyStateAllocations(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race instrumentation forces sync.Pool through pinSlow, which allocates per operation; the strict window runs in make ready's plain test phase")
+	}
 	sink := &slowSink{}
 	logger := New(WithProduction(), WithStructuredOutput(sink), WithAsyncOutput(AsyncConfig{}))
 	fields := fiveFields()
