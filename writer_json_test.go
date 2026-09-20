@@ -497,6 +497,8 @@ func TestJSONWriter_AnyErrorRendersMessage(t *testing.T) {
 	}
 
 	inner := errors.New("inner failure")
+	var nilErr *typedNilError
+	var nilStr *typedNilStringer
 	cases := []struct {
 		key string
 		val any
@@ -504,6 +506,8 @@ func TestJSONWriter_AnyErrorRendersMessage(t *testing.T) {
 		{"plain", errors.New("plain failure")},
 		{"wrapped", fmt.Errorf("outer: %w", inner)},
 		{"panic", panicErr},
+		{"nilErr", nilErr},
+		{"nilStr", nilStr},
 	}
 	fields := make([]Field, 0, len(cases))
 	for _, c := range cases {
@@ -526,11 +530,31 @@ func TestJSONWriter_AnyErrorRendersMessage(t *testing.T) {
 		}
 	}
 
+	// Typed nils must fall through to json.Marshal and render null, never
+	// call a method on the nil receiver.
+	if !strings.Contains(line, `"nilErr":null`) || !strings.Contains(line, `"nilStr":null`) {
+		t.Fatalf("line %q does not render typed nils as null", line)
+	}
+
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(line), &parsed); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
 }
+
+// typedNilError dereferences its receiver, so calling Error() on the typed
+// nil panics; exactly the case the guard must keep away from the method.
+type typedNilError struct {
+	msg string
+}
+
+func (e *typedNilError) Error() string { return e.msg }
+
+type typedNilStringer struct {
+	msg string
+}
+
+func (s *typedNilStringer) String() string { return s.msg }
 
 // A Stringer whose marshaled form is an empty object must render String()
 // rather than {}.

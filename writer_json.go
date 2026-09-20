@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -642,6 +643,14 @@ func (w *JSONWriter) writeJSONFieldValueCore(buf *BytesBuffer, f Field) {
 // diagnostic rather than corrupting the log stream.
 func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 	v := *(*any)(f.value)
+	// Typed nils (a nil *T stored in the interface) pass the error and
+	// Stringer assertions, and a pointer-receiver method dereferences nil and
+	// panics inside the caller's log statement. Guard exactly as the Error
+	// and Stringer field constructors do and let json.Marshal render null.
+	if isTypedNilAny(v) {
+		buf.WriteString("null")
+		return
+	}
 	if err, ok := v.(error); ok {
 		w.writeJSONString(buf, err.Error())
 		return
@@ -656,6 +665,21 @@ func (w *JSONWriter) writeJSONAnyValue(buf *BytesBuffer, f Field) {
 		return
 	}
 	_, _ = buf.Write(raw)
+}
+
+// isTypedNilAny reports whether an Any value is a nil interface or an
+// interface holding a nil pointer, map, slice, interface or func: shapes
+// whose methods would run on a nil receiver.
+func isTypedNilAny(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch rv := reflect.ValueOf(v); rv.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // writeJSONSliceCount emits the element count for typed-slice fields (GroupItems,
