@@ -14,10 +14,16 @@ import (
 )
 
 type JSONWriter struct {
+	jsonPool  sync.Pool
 	out       io.Writer
 	closeErr  error
-	jsonPool  sync.Pool
 	closeDone chan struct{}
+
+	// async, when non-nil, routes completed records through a bounded queue
+	// drained by one goroutine so callers never wait on the write syscall.
+	// Set once at construction and read-only afterwards. nil keeps the
+	// synchronous path byte-for-byte identical (and allocation-free).
+	async *jsonAsync
 
 	// inFlight tracks admitted write cycles so Close drains calls that are
 	// still formatting (a Stringer, Error or Any marshal can block or reenter)
@@ -31,12 +37,6 @@ type JSONWriter struct {
 	closeOnce sync.Once
 	mu        sync.Mutex
 	closed    bool
-
-	// async, when non-nil, routes completed records through a bounded queue
-	// drained by one goroutine so callers never wait on the write syscall.
-	// Set once at construction and read-only afterwards. nil keeps the
-	// synchronous path byte-for-byte identical (and allocation-free).
-	async *jsonAsync
 }
 
 // admit is the admission critical section: the closed check and the in-flight

@@ -64,7 +64,7 @@ func TestAsyncOutput_ReturnsWithoutWaitingForSlowWriter(t *testing.T) {
 	defer func() { _ = logger.Close() }()
 
 	start := time.Now()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		logger.Info("fast")
 	}
 	asyncElapsed := time.Since(start)
@@ -117,12 +117,12 @@ func TestAsyncOutput_PerGoroutineOrderingPreserved(t *testing.T) {
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
 			<-start
-			for i := 0; i < perGoroutine; i++ {
+			for i := range perGoroutine {
 				logger.Info(fmt.Sprintf("g%02d-%03d", g, i))
 			}
 		}(g)
@@ -144,12 +144,12 @@ func TestAsyncOutput_PerGoroutineOrderingPreserved(t *testing.T) {
 		if !strings.HasPrefix(line, "{") || !strings.HasSuffix(line, "}") {
 			t.Fatalf("line %d torn or not a JSON object: %q", n, line)
 		}
-		idx := strings.Index(line, `"message":"g`)
-		if idx < 0 {
+		_, rest, found := strings.Cut(line, `"message":"g`)
+		if !found {
 			t.Fatalf("line %d has no message field: %q", n, line)
 		}
 		var g, seq int
-		if _, err := fmt.Sscanf(line[idx+len(`"message":"g`):], "%02d-%03d", &g, &seq); err != nil {
+		if _, err := fmt.Sscanf(rest, "%02d-%03d", &g, &seq); err != nil {
 			t.Fatalf("line %d message unparseable: %q", n, line)
 		}
 		if seq != last[g] {
@@ -169,7 +169,7 @@ func TestAsyncOutput_DropPolicyCountsAndNeverBlocks(t *testing.T) {
 
 	const total = 20
 	start := time.Now()
-	for i := 0; i < total; i++ {
+	for i := range total {
 		logger.Info(fmt.Sprintf("drop-%02d", i))
 	}
 	elapsed := time.Since(start)
@@ -187,7 +187,8 @@ func TestAsyncOutput_DropPolicyCountsAndNeverBlocks(t *testing.T) {
 
 	written := w.count()
 	dropped := logger.StructuredDroppedCount()
-	if written+int(dropped) != total {
+	//nolint:gosec // test-only accounting; dropped is bounded by the 20 logged entries
+	if int64(written)+int64(dropped) != total {
 		t.Fatalf("written %d + dropped %d != logged %d", written, dropped, total)
 	}
 	if dropped == 0 {
@@ -208,7 +209,7 @@ func TestAsyncOutput_BlockPolicyBackpressuresAndLosesNothing(t *testing.T) {
 	defer timer.Stop()
 
 	start := time.Now()
-	for i := 0; i < total; i++ {
+	for i := range total {
 		logger.Info(fmt.Sprintf("bp-%02d", i))
 	}
 	elapsed := time.Since(start)
@@ -239,7 +240,7 @@ func TestAsyncOutput_CloseDrainsEverythingEnqueued(t *testing.T) {
 	logger := newAsyncTestLogger(w, AsyncConfig{Queue: 64, OnFull: AsyncBlock})
 
 	const total = 100
-	for i := 0; i < total; i++ {
+	for i := range total {
 		logger.Info(fmt.Sprintf("drain-%03d", i))
 	}
 	if err := logger.Close(); err != nil {
@@ -279,7 +280,7 @@ func TestAsyncOutput_FatalWrittenInOrderBeforeHandler(t *testing.T) {
 	)
 
 	const total = 50
-	for i := 0; i < total; i++ {
+	for i := range total {
 		logger.Info(fmt.Sprintf("pre-%03d", i))
 	}
 	logger.Fatal("boom")
@@ -289,7 +290,7 @@ func TestAsyncOutput_FatalWrittenInOrderBeforeHandler(t *testing.T) {
 	if len(events) != total+2 {
 		t.Fatalf("recorded %d events, want %d entries + fatal + handler", len(events), total+2)
 	}
-	for i := 0; i < total; i++ {
+	for i := range total {
 		want := fmt.Sprintf("pre-%03d", i)
 		if !strings.Contains(events[i], want) {
 			t.Fatalf("event %d = %q, want entry %q", i, events[i], want)

@@ -61,13 +61,17 @@ type jsonAsyncItem struct {
 // writer is published to its readers, and immutable afterwards except for the
 // dropped counter.
 type jsonAsync struct {
-	ch     chan jsonAsyncItem
-	policy AsyncPolicy
-	dropped atomic.Uint64
+	// writeErr records the first drainer write failure; guarded by writeErrMu
+	// and surfaced through Close.
+	writeErr error
+	ch       chan jsonAsyncItem
 
 	// done closes when the drainer exits, so Close can prove no write is in
 	// progress before flushing the underlying sink.
 	done chan struct{}
+
+	policy  AsyncPolicy
+	dropped atomic.Uint64
 
 	// writeMu serialises the drainer's writes (and Flush's underlying flush)
 	// and is NEVER held across admission: w.mu stays a short admission lock
@@ -75,10 +79,7 @@ type jsonAsync struct {
 	// contention this whole file exists to remove.
 	writeMu sync.Mutex
 
-	// The drainer cannot return write errors to callers, so the first failure
-	// is recorded here and surfaced through Close.
 	writeErrMu sync.Mutex
-	writeErr   error
 }
 
 // NewAsyncJSONWriter builds a JSONWriter whose records are formatted on the

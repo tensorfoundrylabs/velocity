@@ -36,6 +36,7 @@ Three: root `velocity`, `velocity/live`, `velocity/slogbridge`. `live` has no ro
 | `writer_console.go` | Themed ANSI console output; colour permission fixed at construction (`colourAllowed`/`colourExplicitlyDisabled`) |
 | `writer_console_rb.go` | Deprecated batching console writer over the bounded byte queue; use `ConsoleWriter` |
 | `writer_json.go` | Hand-rolled JSON (no `encoding/json`); `encoding/json` only on the `Any` fallback |
+| `writer_json_async.go` | Opt-in async structured output: `AsyncConfig`/`AsyncPolicy`, bounded queue, single drainer, `DroppedCount`; Fatal rides a barrier, Close drains via stop sentinel |
 | `writer_multi.go` | Async fan-out to named writers; `WriteReliable` barrier for Fatal/Close; workers close own writer, errors joined |
 | `writer_ring.go` | `RingBufferWriter`, `EntrySnapshot`, `Snapshot`, `Subscribe`, `Stats` |
 | `ringbuffer.go` | Bounded power-of-2 byte queue: short mutex, owned byte storage, single drainer goroutine, drop-on-full counted |
