@@ -723,7 +723,7 @@ func TestAsyncOutput_CloseFlushExclusiveWithConcurrentFlush(t *testing.T) {
 		wg.Wait()
 
 		if got := sink.flushMax.Load(); got > 1 {
-			t.Fatalf(" Flush overlapped %d deep with Close's final flush", got)
+			t.Fatalf("Flush overlapped %d deep with Close's final flush", got)
 		}
 		if len(sink.lines) != 1 {
 			t.Fatalf("delivered %d lines, want 1", len(sink.lines))
