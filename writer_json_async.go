@@ -29,11 +29,11 @@ const (
 // 8192 records absorb roughly 130-400ms of burst at tens of thousands of
 // lines per second (at 60k lines/s — two INFO lines per request at 30k req/s —
 // it is ~140ms of headroom), which rides out scheduler spikes and short page
-// cache flushes without the caller noticing. The memory bound is honest
-// because the queue holds pooled byte buffers, not entries: worst case every
-// slot holds a buffer grown past its 2KiB pool capacity and is capped at
-// 32KiB, but typical JSON lines sit in reused 2KiB buffers, so steady-state
-// retention is a few MiB, not 8192 x 32KiB.
+// cache flushes without the caller noticing. Steady-state retention is a few
+// MiB of pooled 2KiB buffers, not entries. Records larger than the 32KiB
+// pool-eligibility cap are not pooled after writing, but while one waits in
+// the queue it occupies a slot at full size, so the true worst case scales
+// with the largest records still queued, not with the pool cap.
 const DefaultAsyncQueue = 8192
 
 // AsyncConfig configures the opt-in asynchronous structured output. Supply it

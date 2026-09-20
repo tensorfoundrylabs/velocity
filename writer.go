@@ -92,11 +92,11 @@ func WriterTrusted() WriterOption {
 const defaultWriterQueueDepth = 256
 
 // WithWriterQueueDepth sets the capacity of the per-writer buffer channel a
-// MultiWriter worker drains. Deeper queues absorb longer sinks stalls before
-// entries drop (AsyncDrop-style behaviour is MultiWriter's built-in contract:
-// a full channel drops, it never blocks the logging goroutine); shallower
-// ones bound memory and shorten the Close drain. Non-positive values are
-// rejected to the default (256), matching NewMultiWriter's historical depth.
+// MultiWriter worker drains. Deeper queues absorb longer sink stalls before
+// entries drop (drop-on-full is MultiWriter's built-in contract: a full
+// channel drops, it never blocks the logging goroutine); shallower ones bound
+// memory and shorten the Close drain. Non-positive values fall back to the
+// default (256), matching NewMultiWriter's historical depth.
 func WithWriterQueueDepth(n int) WriterOption {
 	return func(o *writerOptions) {
 		o.queueDepth = n
